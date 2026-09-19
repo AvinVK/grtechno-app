@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+from app.extensions import db
+from app.models import LeadSource, Service, Setting
 from app.timeutil import today_local
 
 
@@ -116,16 +118,26 @@ def test_csv_export_neutralises_formulas(client):
     assert "'=HYPERLINK" in text and ",=HYPERLINK" not in text
 
 
-def test_settings_roundtrip(client):
-    page = client.get("/settings")
-    assert page.status_code == 200
-    with client.session_transaction() as s:
-        s["csrf"] = "tok"
-    res = client.post("/settings", data={"csrf": "tok", "currency": "$", "country_code": "+1", "services": "A\nB\nA", "sources": "X"})
-    assert res.status_code == 302
+def test_dropdown_lists_and_settings_come_from_the_database(client):
+    db.session.add_all([
+        Service(name="B", sort_order=2),
+        Service(name="A", sort_order=1),
+        Service(name="Retired", sort_order=3, is_active=False),
+        LeadSource(name="Referral"),
+        Setting(key="currency", value="$"),
+    ])
+    db.session.commit()
     st = client.get("/api/state").get_json()["settings"]
-    assert st["currency"] == "$" and st["country_code"] == "1" and st["services"] == ["A", "B"]
+    assert st["services"] == ["A", "B"]
+    assert st["sources"] == ["Referral"]
+    assert st["currency"] == "$" and st["country_code"] == "91"
 
 
-def test_settings_needs_csrf(client):
-    assert client.post("/settings", data={"currency": "$"}).status_code == 400
+def test_lists_are_empty_until_rows_exist(client):
+    st = client.get("/api/state").get_json()["settings"]
+    assert st["services"] == [] and st["sources"] == []
+
+
+def test_there_is_no_settings_page(client):
+    assert client.get("/settings").status_code == 404
+    assert client.post("/settings", data={"currency": "$"}).status_code == 404

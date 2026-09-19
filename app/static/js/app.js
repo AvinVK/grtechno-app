@@ -4,13 +4,13 @@
 (() => {
   'use strict';
 
-  const VIEWS = ['active', 'closed', 'status'];
+  const VIEWS = ['active', 'add', 'closed', 'status'];
   const CLOSED_STAGES = ['Won', 'Lost'];
   const SNOOZE = [['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]];
 
   let S = null;                 // latest server state
   let view = 'active';
-  let openId;                   // undefined = drawer closed, null = new lead, number = existing lead
+  let openId;                   // undefined = drawer closed, otherwise the id of the open lead
   let lastFocus = null;
   const filters = { active: { q: '', stage: '' }, closed: { q: '', stage: '' } };
 
@@ -180,11 +180,13 @@
 
   function renderAll() {
     renderNav();
-    renderMain();
+    // Refreshing data must not wipe a half-filled Add lead form.
+    if (!(view === 'add' && $('#view .add-lead'))) renderMain();
   }
 
   function renderMain() {
-    clear($('#view')).append(view === 'status' ? statusView() : listView(view));
+    const screens = { status: statusView, add: addView };
+    clear($('#view')).append(screens[view] ? screens[view]() : listView(view));
   }
 
   /* ---------- lead lists (active and won / lost) ---------- */
@@ -267,22 +269,23 @@
   const overlay = $('#overlay');
 
   function openDrawer(id) {
+    const lead = S.leads.find((l) => l.id === id);
+    if (!lead) return;
     lastFocus = document.activeElement;
     openId = id;
-    const lead = id === null ? null : S.leads.find((l) => l.id === id);
-    if (id !== null && !lead) return;
     buildDrawer(lead);
     overlay.hidden = false;
     drawer.hidden = false;
     document.body.classList.add('locked');
-    (lead ? $('#drawer-title') : $('#f-company')).focus();
-    if (lead) loadActivity(lead.id);
+    $('#drawer-title').focus();
+    loadActivity(lead.id);
   }
 
   function closeDrawer() {
     if (openId === undefined) return;
     openId = undefined;
     drawer.hidden = true;
+    clear(drawer);
     overlay.hidden = true;
     document.body.classList.remove('locked');
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
@@ -302,7 +305,7 @@
     return links.length ? h('div', { class: 'contact-actions' }, links) : null;
   }
 
-  function buildDrawer(lead) {
+  function buildLeadForm(lead, onSaved) {
     const L = lead || {
       company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', source: '',
       est_value: null, stage: S.stages[0], follow_up_date: null, notes: '',
@@ -360,21 +363,6 @@
       ),
     );
 
-    const remove = lead ? h('button', {
-      class: 'btn danger', type: 'button',
-      onclick: async () => {
-        if (!window.confirm(`Delete ${title(lead)}? This also removes its activity log.`)) return;
-        try {
-          await api(`/api/leads/${lead.id}`, { method: 'DELETE' });
-          closeDrawer();
-          toast('Lead deleted');
-        } catch (err) {
-          toast(err.message, true);
-        }
-        await load();
-      },
-    }, 'Delete') : null;
-
     // Won / Lost is only set by pressing Mark won / Mark lost, which saves the form with that outcome.
     let outcome = null;
     const markOutcome = (result) => {
@@ -405,7 +393,7 @@
       try {
         if (isNew) await api('/api/leads', { method: 'POST', body });
         else await api(`/api/leads/${lead.id}`, { method: 'PATCH', body });
-        closeDrawer();
+        onSaved();
         toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}` : 'Changes saved');
         if (isNew && view !== 'active') window.location.hash = '#active';
         await load();
@@ -429,23 +417,55 @@
       }
     });
 
+    // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
+    saveBtn.setAttribute('form', 'lead-form');
+    return { form, saveBtn, outcomeButtons };
+  }
+
+  function buildDrawer(lead) {
+    const { form, saveBtn, outcomeButtons } = buildLeadForm(lead, closeDrawer);
+
+    const remove = lead ? h('button', {
+      class: 'btn danger', type: 'button',
+      onclick: async () => {
+        if (!window.confirm(`Delete ${title(lead)}? This also removes its activity log.`)) return;
+        try {
+          await api(`/api/leads/${lead.id}`, { method: 'DELETE' });
+          closeDrawer();
+          toast('Lead deleted');
+        } catch (err) {
+          toast(err.message, true);
+        }
+        await load();
+      },
+    }, 'Delete') : null;
+
     clear(drawer).append(
       h('div', { class: 'drawer-head' },
-        h('h2', { id: 'drawer-title', tabindex: '-1' }, lead ? title(lead) : 'New lead'),
+        h('h2', { id: 'drawer-title', tabindex: '-1' }, title(lead)),
         h('button', { class: 'btn small', type: 'button', onclick: closeDrawer }, 'Close')),
       h('div', { class: 'drawer-scroll' },
-        lead ? contactLinks(lead) : null,
+        contactLinks(lead),
         outcomeButtons,
         form,
-        lead ? activitySection(lead.id) : null),
+        activitySection(lead.id)),
       h('div', { class: 'drawer-foot' },
         saveBtn,
         h('button', { class: 'btn', type: 'button', onclick: closeDrawer }, 'Cancel'),
         h('span', { class: 'spacer' }),
         remove),
     );
-    // The footer sits outside the <form>, so tie the save button to it explicitly.
-    saveBtn.setAttribute('form', 'lead-form');
+  }
+
+  /* ---------- add lead (a full screen, like the other tabs) ---------- */
+
+  function addView() {
+    const { form, saveBtn } = buildLeadForm(null, () => {});
+    form.append(h('div', { class: 'form-actions' }, saveBtn));
+    return h('div', { class: 'add-lead' },
+      h('h2', {}, 'Add lead'),
+      h('p', { class: 'hint' }, 'A new lead starts at New enquiry.'),
+      form);
   }
 
   /* ---------- activity log ---------- */
@@ -507,7 +527,6 @@
 
   window.addEventListener('hashchange', syncView);
 
-  $('#new-lead').addEventListener('click', () => { if (S) openDrawer(null); });
   overlay.addEventListener('click', closeDrawer);
 
   document.addEventListener('keydown', (e) => {

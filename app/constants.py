@@ -4,30 +4,9 @@ WON = "Won"
 LOST = "Lost"
 CLOSED_STAGES = (WON, LOST)
 
-# Starting lists. Edit them any time from the Settings page.
+# Fallbacks for the two single-value rows in the settings table. The dropdown lists live in the
+# services and lead_sources tables and are maintained directly in the database.
 DEFAULT_SETTINGS = {
-    "currency": "\u20b9",
+    "currency": "₹",
     "country_code": "91",
-    "services": "\n".join(
-        [
-            "Sprinklers",
-            "Fire alarms",
-            "Hydrant and pump room",
-            "Extinguishers",
-            "Gas suppression",
-            "NOC and audits",
-            "AMC",
-        ]
-    ),
-    "sources": "\n".join(
-        [
-            "Referral",
-            "Website",
-            "Walk-in",
-            "Cold call",
-            "Tender / RFQ",
-            "Repeat client",
-            "Consultant / architect",
-        ]
-    ),
 }

@@ -4,7 +4,6 @@
 
 {% block actions %}
   <a class="link-btn hide-narrow" href="{{ url_for('views.export_csv') }}">Export CSV</a>
-  <a class="link-btn" href="{{ url_for('views.settings') }}">Settings</a>
 {% endblock %}
 
 {% block content %}
@@ -16,10 +15,10 @@
     <span>Active leads</span>
     <b class="nav-badge" hidden></b>
   </a>
-  <button class="bottom-nav-item add" id="new-lead" type="button">
+  <a class="bottom-nav-item add" href="#add" data-view="add">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     <span>Add lead</span>
-  </button>
+  </a>
   <a class="bottom-nav-item" href="#closed" data-view="closed">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
     <span>Won / Lost</span>

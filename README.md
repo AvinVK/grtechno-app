@@ -3,18 +3,18 @@
 Lead management for a fire protection installation business. Track enquiries from first call to
 won or lost, see who to call today, and keep notes on every lead. Flask + SQLite, no build step.
 
-- **Bottom tabs** (phone-first): **Active leads**, **Add lead**, and **Won / Lost**.
+- **Bottom tabs** (phone-first): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
+  (open pipeline value, follow-ups due, won this month).
 - **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
   earliest follow-up first, with search and stage filter chips. Tap a lead to update its stage,
   follow-up, notes and activity log. No drag and drop.
-- **Add lead** always starts a lead at New enquiry.
+- **Add lead** is a full screen and always starts a lead at New enquiry.
 - **Won / Lost** are outcomes, set by the user with the Mark won / Mark lost buttons inside a lead.
   Those leads move to the Won / Lost tab; set a lead's Status back to an active stage to reopen it.
 - **Each lead**: contact, company, phone, email, site address, service, estimated value, source,
   follow-up date, notes, one-tap Call / WhatsApp / Email, and an activity log (notes plus automatic
   stage and follow-up changes).
-- **Export CSV** from the top bar (or the bottom of All leads on a phone).
-- **Settings** page to edit the services list, lead sources, currency symbol and WhatsApp country code.
+- **Export CSV** from the top bar (or the bottom of the Won / Lost tab on a phone).
 
 The database is a single SQLite file at `instance/leads.db`. There is no Excel link; the CSV export
 is a one-way copy for reporting.
@@ -123,6 +123,27 @@ then Reload on the Web tab.
 **Back up your data.** Download `instance/leads.db` from the PythonAnywhere Files tab now and then,
 and use Export CSV as a second copy.
 
+## Dropdown lists and settings (kept in the database)
+
+The app has no settings screen. It only reads these tables, so change them straight in `instance/leads.db`
+(any SQLite tool works, for example DB Browser for SQLite):
+
+| Table | One row per | Columns |
+|---|---|---|
+| `services` | Service choice | `name`, `sort_order`, `is_active` |
+| `lead_sources` | Lead source choice | `name`, `sort_order`, `is_active` |
+| `settings` | Single value | `key` = `currency` or `country_code`, `value` |
+
+Set `is_active` to 0 to hide a choice from new leads without touching leads that already use it. Lists are
+sorted by `sort_order`, then name. Changes show up the next time the app loads its data (reload the page).
+`flask db upgrade` fills the tables with a starting set of services and sources on first run.
+
+```sql
+INSERT INTO services (name, sort_order) VALUES ('CCTV', 8);
+UPDATE lead_sources SET is_active = 0 WHERE name = 'Walk-in';
+UPDATE settings SET value = '$' WHERE key = 'currency';
+```
+
 ## Changing the data model
 
 Edit `app/models.py`, then:
@@ -140,13 +161,13 @@ Commit the new file in `migrations/versions/`. Run the same `db upgrade` on Pyth
 app/
   __init__.py        app factory
   config.py          settings read from .env
-  models.py          Lead, Activity, Setting
+  models.py          Lead, Activity, Service, LeadSource, Setting
   api.py             JSON endpoints under /api, validation, summary maths
-  views.py           pages, CSV export, settings form
+  views.py           home page and CSV export
   auth.py            shared-password login and CSRF for forms
   cli.py             `flask seed-demo`
-  constants.py       stage names and default lists
-  templates/         base, index, login, settings
+  constants.py       stage names
+  templates/         base, index, login
   static/            css/app.css, js/app.js
 migrations/          database migrations (Flask-Migrate)
 tests/               pytest suite
@@ -161,4 +182,5 @@ wsgi.py              entry point for the flask command
   that, the API will need paging.
 - Win rate is Won divided by Won plus Lost across all time. "Won this month" uses the date the lead
   moved to Won.
-- The default services and sources are a starting guess. Replace them on the Settings page.
+- The Service and Source dropdowns, the currency symbol and the WhatsApp country code are not edited in the
+  app. They live in database tables (see above).

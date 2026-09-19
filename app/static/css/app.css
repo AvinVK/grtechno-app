@@ -331,6 +331,7 @@ a.stat:hover { border-color: var(--line-strong); }
 .bottom-nav-item span { letter-spacing: 0.02em; white-space: nowrap; }
 .bottom-nav-item[aria-current="page"] { color: #3ec582; }
 .bottom-nav-item.add { color: #fff; }
+.bottom-nav-item.add[aria-current="page"] { color: #3ec582; }
 .bottom-nav-item.add svg { width: 30px; height: 30px; padding: 4px; border-radius: 8px; background: var(--exit); }
 .bottom-nav-item:active { transform: scale(0.96); }
 
@@ -346,6 +347,12 @@ a.stat:hover { border-color: var(--line-strong); }
   font: 600 11px/1 var(--font-display);
   text-align: center;
 }
+
+.add-lead { max-width: 640px; margin: 0 auto; }
+.add-lead h2 { font: 700 26px/1.1 var(--font-display); }
+.add-lead .hint { margin: 4px 0 16px; }
+.form-actions { margin-top: 18px; }
+.form-actions .btn { width: 100%; min-height: 48px; font-size: 16px; }
 
 .outcome { display: flex; gap: 8px; margin-bottom: 16px; }
 .outcome .btn { flex: 1; }
@@ -487,7 +494,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.error { background: var(--signal); }
 
-/* ---------- Login and settings ---------- */
+/* ---------- Login ---------- */
 
 .page-login { display: grid; min-height: 100vh; min-height: 100dvh; place-items: center; padding: 20px; }
 
@@ -504,15 +511,6 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 
 .login-card .brand { color: var(--ink); }
 .login-card h1 { font: 700 26px/1.1 var(--font-display); }
-
-.settings { max-width: 640px; margin: 0 auto; padding: 24px 20px 60px; }
-.settings h1 { margin-bottom: 16px; font: 700 28px/1.1 var(--font-display); }
-.settings-form { display: grid; gap: 18px; }
-.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-
-.notice { margin-bottom: 14px; padding: 10px 12px; border-radius: var(--radius); font-weight: 600; }
-.notice.ok { background: var(--exit-tint); color: var(--exit-dark); }
-.notice.error { background: var(--signal-tint); color: var(--signal); }
 
 /* ---------- Small screens ---------- */
 
@@ -533,7 +531,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   .top-actions { gap: 4px 10px; }
   .hide-narrow { display: none; }
   .view { padding: 14px; }
-  .form-grid, .field-row { grid-template-columns: 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
   .drawer { width: 100%; }
   .drawer-foot { flex-wrap: wrap; }
 }
