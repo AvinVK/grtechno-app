@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Lead desk{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% block header %}
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('views.index') }}"><span class="brand-mark" aria-hidden="true"></span>Lead desk</a>
+    {% block tabs %}{% endblock %}
+    <div class="top-actions">
+      {% block actions %}{% endblock %}
+      {% if auth_enabled %}
+      <form method="post" action="{{ url_for('auth.logout') }}">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <button class="link-btn" type="submit">Sign out</button>
+      </form>
+      {% endif %}
+    </div>
+  </header>
+{% endblock %}
+{% block content %}{% endblock %}
+</body>
+</html>

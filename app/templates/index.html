@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Lead desk{% endblock %}
+{% block body_class %}page-app{% endblock %}
+
+{% block tabs %}
+<nav class="tabs" aria-label="Views">
+  <a href="#pipeline" data-view="pipeline">Pipeline</a>
+  <a href="#followups" data-view="followups">Follow-ups <span class="badge" hidden></span></a>
+  <a href="#leads" data-view="leads">All leads</a>
+</nav>
+{% endblock %}
+
+{% block actions %}
+  <a class="link-btn hide-narrow" href="{{ url_for('views.export_csv') }}">Export CSV</a>
+  <a class="link-btn" href="{{ url_for('views.settings') }}">Settings</a>
+  <button class="btn primary" id="new-lead" type="button">New lead</button>
+{% endblock %}
+
+{% block content %}
+<section class="summary" id="summary" aria-label="Summary"></section>
+<main id="view" class="view" tabindex="-1" data-export-url="{{ url_for('views.export_csv') }}"><p class="loading">Loading leads…</p></main>
+
+<div class="overlay" id="overlay" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden></aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+{% endblock %}

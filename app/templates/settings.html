@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Settings - Lead desk{% endblock %}
+{% block body_class %}page-settings{% endblock %}
+{% block actions %}<a class="link-btn" href="{{ url_for('views.index') }}">Back to leads</a>{% endblock %}
+
+{% block content %}
+<main class="settings">
+  <h1>Settings</h1>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <p class="notice {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</p>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="post" class="settings-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+
+    <div class="field-row">
+      <div class="field">
+        <label for="currency">Currency symbol</label>
+        <input id="currency" name="currency" value="{{ values.currency }}" maxlength="5" required>
+      </div>
+      <div class="field">
+        <label for="country_code">Country code for WhatsApp</label>
+        <input id="country_code" name="country_code" value="{{ values.country_code }}" inputmode="numeric" maxlength="4" required>
+        <p class="hint">Added to 10-digit phone numbers. India is 91.</p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="services">Services</label>
+      <textarea id="services" name="services" rows="9" required>{{ values.services }}</textarea>
+      <p class="hint">One per line. These fill the Service list on each lead.</p>
+    </div>
+
+    <div class="field">
+      <label for="sources">Lead sources</label>
+      <textarea id="sources" name="sources" rows="9" required>{{ values.sources }}</textarea>
+      <p class="hint">One per line. Leads already saved keep their old value if you remove it here.</p>
+    </div>
+
+    <button class="btn primary" type="submit">Save settings</button>
+  </form>
+</main>
+{% endblock %}
