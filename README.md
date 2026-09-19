@@ -3,11 +3,13 @@
 Lead management for a fire protection installation business. Track enquiries from first call to
 won or lost, see who to call today, and keep notes on every lead. Flask + SQLite, no build step.
 
-- **Pipeline**: New enquiry, Site survey, Quote sent, Negotiation, Won, Lost. Drag a card between
-  columns on desktop; change the stage inside the lead on a phone.
-- **Follow-ups**: open leads grouped as Overdue, Today, Next 7 days, Later, No follow-up date, with
-  Call and Tomorrow / In 3 days / Next week buttons.
-- **All leads**: search, filter by service and stage, sort by newest, follow-up date or value.
+- **Bottom tabs** (phone-first): **Active leads**, **Add lead**, and **Won / Lost**.
+- **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
+  earliest follow-up first, with search and stage filter chips. Tap a lead to update its stage,
+  follow-up, notes and activity log. No drag and drop.
+- **Add lead** always starts a lead at New enquiry.
+- **Won / Lost** are outcomes, set by the user with the Mark won / Mark lost buttons inside a lead.
+  Those leads move to the Won / Lost tab; set a lead's Status back to an active stage to reopen it.
 - **Each lead**: contact, company, phone, email, site address, service, estimated value, source,
   follow-up date, notes, one-tap Call / WhatsApp / Email, and an activity log (notes plus automatic
   stage and follow-up changes).

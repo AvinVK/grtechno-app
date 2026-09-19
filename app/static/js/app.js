@@ -4,15 +4,15 @@
 (() => {
   'use strict';
 
-  const VIEWS = ['pipeline', 'followups', 'leads'];
+  const VIEWS = ['active', 'closed'];
+  const CLOSED_STAGES = ['Won', 'Lost'];
   const SNOOZE = [['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]];
-  const CLOSED_COLUMN_LIMIT = 15;
 
   let S = null;                 // latest server state
-  let view = 'pipeline';
+  let view = 'active';
   let openId;                   // undefined = drawer closed, null = new lead, number = existing lead
   let lastFocus = null;
-  const filters = { q: '', service: '', stage: '', sort: 'newest' };
+  const filters = { active: { q: '', stage: '' }, closed: { q: '', stage: '' } };
 
   const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -142,29 +142,6 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 4500 : 2600);
   }
 
-  /* ---------- mutations ---------- */
-
-  async function patchLead(id, body, okMessage) {
-    try {
-      await api(`/api/leads/${id}`, { method: 'PATCH', body });
-      if (okMessage) toast(okMessage);
-    } catch (err) {
-      toast(err.message, true);
-    }
-    await load();
-  }
-
-  async function moveLead(id, stage) {
-    const lead = S.leads.find((l) => l.id === id);
-    if (!lead || lead.stage === stage) return;
-    lead.stage = stage;               // show the move immediately
-    renderMain();
-    await patchLead(id, { stage }, `Moved to ${stage}`);
-  }
-
-  const snooze = (id, days, label) =>
-    patchLead(id, { follow_up_date: addDays(S.today, days) }, `Follow-up set for ${label.toLowerCase()}`);
-
   /* ---------- summary and navigation ---------- */
 
   function renderSummary() {
@@ -190,17 +167,18 @@
       stat('Open pipeline', openValue, [plural(s.open_count, 'open lead', 'open leads')]),
       stat('Follow-ups due', String(s.due_count),
         [s.overdue_count ? `${s.overdue_count} overdue` : 'Nothing overdue'],
-        { href: '#followups', warn: s.overdue_count > 0 }),
-      stat('Won this month', String(s.won_month_count), s.won_month_count ? [worth, winNote] : [winNote]),
+        { href: '#active', warn: s.overdue_count > 0 }),
+      stat('Won this month', String(s.won_month_count), s.won_month_count ? [worth, winNote] : [winNote],
+        { href: '#closed' }),
     );
   }
 
   function renderNav() {
-    document.querySelectorAll('.tabs a').forEach((a) => {
+    document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
-    const badge = $('.tabs a[data-view="followups"] .badge');
+    const badge = $('.bottom-nav .nav-badge');
     badge.textContent = S.summary.due_count;
     badge.hidden = S.summary.due_count === 0;
   }
@@ -212,210 +190,66 @@
   }
 
   function renderMain() {
-    const root = clear($('#view'));
-    if (view === 'pipeline') root.append(pipelineView());
-    else if (view === 'followups') root.append(followupsView());
-    else root.append(leadsView());
+    clear($('#view')).append(listView(view));
   }
 
-  /* ---------- pipeline ---------- */
+  /* ---------- lead lists (active and won / lost) ---------- */
 
-  function leadCard(l) {
-    const sub = subtitle(l);
-    const card = h('article', {
-      class: 'card',
-      tabindex: '0',
-      role: 'button',
-      draggable: 'true',
-      'aria-label': `Open ${title(l)}`,
-      onclick: () => openDrawer(l.id),
-      onkeydown: (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(l.id); }
-      },
-      ondragstart: (e) => {
-        e.dataTransfer.setData('text/plain', String(l.id));
-        e.dataTransfer.effectAllowed = 'move';
-        card.classList.add('dragging');
-      },
-      ondragend: () => card.classList.remove('dragging'),
-    },
-      h('h3', { class: 'card-title' }, title(l)),
-      sub ? h('p', { class: 'card-sub' }, sub) : null,
-      l.service ? h('p', { class: 'card-service' }, l.service) : null,
-      h('div', { class: 'card-foot' },
-        l.est_value !== null ? h('span', { class: 'value' }, fmtMoney(l.est_value)) : null,
-        followChip(l)),
-    );
-    return card;
-  }
-
-  function pipelineView() {
-    const board = h('div', { class: 'board' });
-
-    for (const stage of S.stages) {
-      const all = S.leads.filter((l) => l.stage === stage);
-      const open = S.open_stages.includes(stage);
-      all.sort(open ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
-      const shown = open ? all : all.slice(0, CLOSED_COLUMN_LIMIT);
-      const total = all.reduce((sum, l) => sum + (l.est_value || 0), 0);
-
-      const col = h('section', { class: 'col', 'data-stage': stage, 'aria-label': stage },
-        h('div', { class: 'col-head' },
-          h('h2', {}, stage),
-          h('span', { class: 'col-count' }, all.length),
-          h('span', { class: 'col-total' }, fmtCompact(total))),
-        h('div', { class: 'col-body' },
-          shown.length ? shown.map(leadCard) : h('p', { class: 'col-empty' }, 'No leads here'),
-        ),
-        all.length > shown.length
-          ? h('p', { class: 'col-more' }, `${all.length - shown.length} older. `,
-              h('a', { href: '#leads', onclick: () => { filters.stage = stage; } }, 'See all'))
-          : null,
-      );
-
-      col.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        col.classList.add('drop');
-      });
-      col.addEventListener('dragleave', (e) => {
-        if (!col.contains(e.relatedTarget)) col.classList.remove('drop');
-      });
-      col.addEventListener('drop', (e) => {
-        e.preventDefault();
-        col.classList.remove('drop');
-        const id = Number(e.dataTransfer.getData('text/plain'));
-        if (id) moveLead(id, stage);
-      });
-
-      board.append(col);
-    }
-    return board;
-  }
-
-  /* ---------- follow-ups ---------- */
-
-  function followupsView() {
-    const open = S.leads.filter(isOpen);
-    const buckets = [
-      ['Overdue', 'overdue', (d) => d !== null && d < 0],
-      ['Today', '', (d) => d === 0],
-      ['Next 7 days', '', (d) => d !== null && d >= 1 && d <= 7],
-      ['Later', '', (d) => d !== null && d > 7],
-      ['No follow-up date', '', (d) => d === null],
-    ];
-    const daysOf = (l) => (l.follow_up_date ? diffDays(l.follow_up_date, S.today) : null);
+  function listView(kind) {
+    const isActive = kind === 'active';
+    const stages = isActive ? S.open_stages : CLOSED_STAGES;
+    const f = filters[kind];
+    const pool = S.leads.filter((l) => stages.includes(l.stage));
 
     const wrap = h('div', {});
-    let any = false;
-
-    for (const [label, cls, test] of buckets) {
-      const items = open.filter((l) => test(daysOf(l))).sort(byFollowUp);
-      if (!items.length) continue;
-      any = true;
-      wrap.append(h('section', { class: `group ${cls}` },
-        h('div', { class: 'group-head' }, h('h2', {}, label), h('span', { class: 'count' }, items.length)),
-        items.map(followupRow),
-      ));
-    }
-
-    if (!any) {
-      wrap.append(h('p', { class: 'empty-state' }, 'No open leads to follow up. Add one with New lead.'));
-    }
-    return wrap;
-  }
-
-  function followupRow(l) {
-    const sub = subtitle(l);
-    const d = l.follow_up_date ? diffDays(l.follow_up_date, S.today) : null;
-    const when = d === null ? null : d < 0 ? `${plural(-d, 'day', 'days')} overdue` : fmtDate(l.follow_up_date);
-
-    return h('div', { class: 'followup' },
-      h('div', { class: 'followup-main' },
-        h('button', { class: 'followup-title', type: 'button', onclick: () => openDrawer(l.id) }, title(l)),
-        h('div', { class: 'followup-meta' },
-          sub ? h('span', {}, sub) : null,
-          l.service ? h('span', {}, l.service) : null,
-          h('span', {}, l.stage),
-          l.est_value !== null ? h('span', {}, fmtMoney(l.est_value)) : null,
-          when ? h('span', {}, when) : null),
-      ),
-      h('div', { class: 'followup-actions' },
-        l.phone ? h('a', { class: 'btn small primary', href: `tel:${telNumber(l.phone)}`, 'aria-label': `Call ${title(l)}` }, 'Call') : null,
-        SNOOZE.map(([label, days]) =>
-          h('button', {
-            class: 'btn small', type: 'button',
-            'aria-label': `${label}: set follow-up for ${title(l)}`,
-            onclick: () => snooze(l.id, days, label),
-          }, label)),
-      ),
-    );
-  }
-
-  /* ---------- all leads ---------- */
-
-  function leadsView() {
-    const wrap = h('div', {});
-    const list = h('ul', { class: 'rows' });
+    const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter by stage' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
-
-    const select = (name, blank, options, current) => {
-      const s = h('select', { 'aria-label': blank },
-        h('option', { value: '' }, blank),
-        options.map((o) => (Array.isArray(o) ? h('option', { value: o[0] }, o[1]) : h('option', { value: o }, o))));
-      s.value = current;
-      s.addEventListener('change', () => { filters[name] = s.value; refresh(); });
-      return s;
-    };
+    const list = h('ul', { class: 'rows' });
 
     const search = h('input', {
       type: 'search', placeholder: 'Search name, phone, site, notes', 'aria-label': 'Search leads',
-      value: filters.q,
-      oninput: (e) => { filters.q = e.target.value; refresh(); },
+      value: f.q,
+      oninput: (e) => { f.q = e.target.value; refresh(); },
     });
 
-    const services = [...new Set([...S.settings.services, ...S.leads.map((l) => l.service).filter(Boolean)])];
-    const sortSelect = h('select', { class: 'sort', 'aria-label': 'Sort by' },
-      [['newest', 'Sort: newest'], ['followup', 'Sort: follow-up date'], ['value', 'Sort: value']]
-        .map(([v, t]) => h('option', { value: v }, t)));
-    sortSelect.value = filters.sort;
-    sortSelect.addEventListener('change', () => { filters.sort = sortSelect.value; refresh(); });
-
-    wrap.append(
-      h('div', { class: 'filters' },
-        h('div', { class: 'search' }, search),
-        select('service', 'All services', services, filters.service),
-        select('stage', 'All stages', S.stages, filters.stage),
-        sortSelect),
-      count,
-      list,
-      h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')),
-    );
+    function renderChips() {
+      clear(chips);
+      const options = [['', 'All', pool.length], ...stages.map((s) => [s, s, pool.filter((l) => l.stage === s).length])];
+      for (const [value, label, n] of options) {
+        chips.append(h('button', {
+          class: 'filter-chip', type: 'button', 'aria-pressed': String(f.stage === value),
+          onclick: () => { f.stage = value; renderChips(); refresh(); },
+        }, label, h('span', { class: 'n' }, n)));
+      }
+    }
 
     function refresh() {
-      const q = filters.q.trim().toLowerCase();
-      let items = S.leads.filter((l) => {
-        if (filters.service && l.service !== filters.service) return false;
-        if (filters.stage && l.stage !== filters.stage) return false;
+      const q = f.q.trim().toLowerCase();
+      const items = pool.filter((l) => {
+        if (f.stage && l.stage !== f.stage) return false;
         if (!q) return true;
         return [l.company, l.contact_name, l.phone, l.email, l.site_address, l.service, l.notes]
-          .some((f) => f.toLowerCase().includes(q));
+          .some((v) => v.toLowerCase().includes(q));
       });
-
-      if (filters.sort === 'followup') items.sort(byFollowUp);
-      else if (filters.sort === 'value') items.sort((a, b) => (b.est_value ?? -1) - (a.est_value ?? -1));
-      else items.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
+      items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
 
       count.textContent = plural(items.length, 'lead', 'leads');
       clear(list);
       if (!items.length) {
-        list.append(h('li', { class: 'empty-state' },
-          S.leads.length ? 'No leads match these filters.' : 'No leads yet. Add your first with New lead.'));
+        list.append(h('li', { class: 'empty-state' }, pool.length
+          ? 'No leads match this search.'
+          : isActive ? 'No active leads. Tap Add lead to enter a new enquiry.'
+            : 'Nothing won or lost yet. Open a lead and tap Mark won or Mark lost.'));
         return;
       }
       items.forEach((l) => list.append(h('li', {}, leadRow(l))));
     }
 
+    wrap.append(h('div', { class: 'filters' }, search, chips), count, list);
+    if (!isActive) {
+      wrap.append(h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')));
+    }
+    renderChips();
     refresh();
     return wrap;
   }
@@ -524,7 +358,7 @@
         wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
         wrapField('est_value', `Estimated value (${S.settings.currency})`,
           text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })),
-        wrapField('stage', 'Stage', choice(S.stages, L.stage)),
+        lead ? wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)) : null,
         h('div', { class: 'field wide' },
           wrapField('follow_up_date', 'Follow-up date', dateInput),
           quick),
@@ -547,6 +381,19 @@
       },
     }, 'Delete') : null;
 
+    // Won / Lost is only set by pressing Mark won / Mark lost, which saves the form with that outcome.
+    let outcome = null;
+    const markOutcome = (result) => {
+      if (!window.confirm(`Mark ${title(lead)} as ${result.toLowerCase()}?`)) return;
+      outcome = result;
+      inputs.stage.append(h('option', { value: result }, result));
+      inputs.stage.value = result;
+      saveBtn.click();
+    };
+    const outcomeButtons = lead && isOpen(lead) ? h('div', { class: 'outcome' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won'),
+      h('button', { class: 'btn danger', type: 'button', onclick: () => markOutcome('Lost') }, 'Mark lost')) : null;
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       form.querySelectorAll('.err').forEach((p) => { p.textContent = ''; });
@@ -560,13 +407,20 @@
 
       saveBtn.disabled = true;
       const isNew = !lead;
+      if (isNew) body.stage = S.open_stages[0];
       try {
         if (isNew) await api('/api/leads', { method: 'POST', body });
         else await api(`/api/leads/${lead.id}`, { method: 'PATCH', body });
         closeDrawer();
-        toast(isNew ? 'Lead added' : 'Changes saved');
+        toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}` : 'Changes saved');
+        if (isNew && view !== 'active') window.location.hash = '#active';
         await load();
       } catch (err) {
+        if (outcome) {
+          inputs.stage.querySelector(`option[value="${outcome}"]`)?.remove();
+          inputs.stage.value = lead.stage;
+          outcome = null;
+        }
         errorBox.textContent = err.message;
         errorBox.hidden = false;
         let first = null;
@@ -587,6 +441,7 @@
         h('button', { class: 'btn small', type: 'button', onclick: closeDrawer }, 'Close')),
       h('div', { class: 'drawer-scroll' },
         lead ? contactLinks(lead) : null,
+        outcomeButtons,
         form,
         lead ? activitySection(lead.id) : null),
       h('div', { class: 'drawer-foot' },
@@ -652,7 +507,7 @@
 
   function syncView() {
     const next = window.location.hash.slice(1);
-    view = VIEWS.includes(next) ? next : 'pipeline';
+    view = VIEWS.includes(next) ? next : 'active';
     if (S) { renderNav(); renderMain(); }
   }
 
