@@ -21,6 +21,10 @@ class Lead(db.Model):
     company = db.Column(db.String(160), nullable=False, default="")
     phone = db.Column(db.String(40), nullable=False, default="")
     email = db.Column(db.String(160), nullable=False, default="")
+    site_pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
+    site_state = db.Column(db.String(80), nullable=False, default="", server_default="")
+    site_district = db.Column(db.String(80), nullable=False, default="", server_default="")
+    site_city = db.Column(db.String(120), nullable=False, default="", server_default="")
     site_address = db.Column(db.String(400), nullable=False, default="")
     service = db.Column(db.String(120), nullable=False, default="")
     source = db.Column(db.String(120), nullable=False, default="")
@@ -46,6 +50,10 @@ class Lead(db.Model):
             "company": self.company,
             "phone": self.phone,
             "email": self.email,
+            "site_pincode": self.site_pincode,
+            "site_state": self.site_state,
+            "site_district": self.site_district,
+            "site_city": self.site_city,
             "site_address": self.site_address,
             "service": self.service,
             "source": self.source,
@@ -79,6 +87,19 @@ class Activity(db.Model):
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "text": self.text, "created_at": _iso(self.created_at)}
+
+
+class Pincode(db.Model):
+    """Pincode to state / district / city. Filled from India Post the first time a pincode is used,
+    then served from here. Rows can be corrected directly in the database."""
+
+    __tablename__ = "pincodes"
+
+    pincode = db.Column(db.String(6), primary_key=True)
+    state = db.Column(db.String(80), nullable=False)
+    district = db.Column(db.String(80), nullable=False)
+    city = db.Column(db.String(120), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
 
 class _NamedOption(db.Model):

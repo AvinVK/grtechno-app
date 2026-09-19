@@ -141,3 +141,49 @@ def test_lists_are_empty_until_rows_exist(client):
 def test_there_is_no_settings_page(client):
     assert client.get("/settings").status_code == 404
     assert client.post("/settings", data={"currency": "$"}).status_code == 404
+
+
+def test_lead_stores_site_location(client):
+    lead = make(client, site_pincode="411001", site_state="Maharashtra", site_district="Pune", site_city="Pune City")
+    assert (lead["site_pincode"], lead["site_state"], lead["site_district"], lead["site_city"]) == (
+        "411001", "Maharashtra", "Pune", "Pune City")
+    text = client.get("/export.csv").get_data(as_text=True)
+    assert "Site pincode,State,District,City,Site address" in text and "411001,Maharashtra,Pune,Pune City" in text
+
+
+def test_pincode_must_be_six_digits(client):
+    res = client.post("/api/leads", json={"company": "X", "site_pincode": "4110"})
+    assert res.status_code == 422 and "site_pincode" in res.get_json()["fields"]
+    assert client.post("/api/leads", json={"company": "X", "site_pincode": "011001"}).status_code == 422
+    assert client.post("/api/leads", json={"company": "X", "site_pincode": ""}).status_code == 201
+
+
+def test_pincode_lookup_fetches_once_then_serves_from_the_table(client, monkeypatch):
+    calls = []
+
+    def fake(pin):
+        calls.append(pin)
+        return {"state": "Maharashtra", "district": "Pune", "city": "Pune City"}
+
+    monkeypatch.setattr("app.api._fetch_pincode", fake)
+    first = client.get("/api/pincode/411001")
+    assert first.status_code == 200
+    assert first.get_json() == {"state": "Maharashtra", "district": "Pune", "city": "Pune City"}
+    assert client.get("/api/pincode/411001").get_json() == first.get_json()
+    assert calls == ["411001"]
+
+
+def test_pincode_lookup_rejects_bad_input_and_reports_failures(client, monkeypatch):
+    assert client.get("/api/pincode/41100").status_code == 400
+    assert client.get("/api/pincode/abcdef").status_code == 400
+
+    monkeypatch.setattr("app.api._fetch_pincode", lambda pin: None)
+    missing = client.get("/api/pincode/999999")
+    assert missing.status_code == 404 and "yourself" in missing.get_json()["error"]
+
+    def offline(pin):
+        raise OSError("no network")
+
+    monkeypatch.setattr("app.api._fetch_pincode", offline)
+    down = client.get("/api/pincode/560001")
+    assert down.status_code == 502 and "yourself" in down.get_json()["error"]

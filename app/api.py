@@ -1,12 +1,15 @@
+import json
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from urllib.request import Request, urlopen
 
 from flask import Blueprint, jsonify, request
 from werkzeug.exceptions import HTTPException, abort
 
 from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
 from .extensions import db
-from .models import Activity, Lead, settings_for_client, utcnow
+from .models import Activity, Lead, Pincode, settings_for_client, utcnow
 from .timeutil import to_local, today_local
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -16,12 +19,18 @@ TEXT_LIMITS = {
     "company": 160,
     "phone": 40,
     "email": 160,
+    "site_pincode": 6,
+    "site_state": 80,
+    "site_district": 80,
+    "site_city": 120,
     "site_address": 400,
     "service": 120,
     "source": 120,
     "notes": 5000,
 }
 MAX_VALUE = Decimal("99999999999")
+PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
+PINCODE_SERVICE = "https://api.postalpincode.in/pincode/"
 
 
 @bp.errorhandler(HTTPException)
@@ -57,6 +66,9 @@ def _validate(payload: dict) -> tuple[dict, dict]:
             errors[field] = f"Keep this under {limit} characters"
             continue
         data[field] = value
+
+    if data.get("site_pincode") and not PINCODE_RE.fullmatch(data["site_pincode"]):
+        errors["site_pincode"] = "Enter a 6-digit pincode"
 
     if "est_value" in payload:
         raw = payload["est_value"]
@@ -160,6 +172,37 @@ def state():
         leads=[l.to_dict() for l in leads],
         summary=compute_summary(leads, today),
     )
+
+
+def _fetch_pincode(pin: str):
+    """Ask India Post's public pincode service. Returns a dict, or None if the pincode does not exist."""
+    req = Request(PINCODE_SERVICE + pin, headers={"User-Agent": "lead-desk"})
+    with urlopen(req, timeout=6) as res:
+        payload = json.load(res)
+    entry = payload[0] if payload else {}
+    offices = entry.get("PostOffice") or []
+    if entry.get("Status") != "Success" or not offices:
+        return None
+    block = next((o["Block"] for o in offices if o.get("Block") and o["Block"] != "NA"), None)
+    return {"state": offices[0]["State"], "district": offices[0]["District"], "city": block or offices[0]["Name"]}
+
+
+@bp.get("/pincode/<pin>")
+def pincode_lookup(pin):
+    if not PINCODE_RE.fullmatch(pin):
+        abort(400, "Enter a 6-digit pincode")
+    row = db.session.get(Pincode, pin)
+    if row is None:
+        try:
+            found = _fetch_pincode(pin)
+        except (OSError, ValueError, KeyError, IndexError):
+            abort(502, "Could not reach the pincode service. Enter the details yourself.")
+        if found is None:
+            abort(404, "We could not find that pincode. Enter the details yourself.")
+        row = Pincode(pincode=pin, **found)
+        db.session.add(row)
+        db.session.commit()
+    return jsonify(state=row.state, district=row.district, city=row.city)
 
 
 @bp.post("/leads")

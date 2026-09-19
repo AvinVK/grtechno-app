@@ -9,6 +9,7 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
   earliest follow-up first, with search and stage filter chips. Tap a lead to update its stage,
   follow-up, notes and activity log. No drag and drop.
 - **Add lead** is a full screen and always starts a lead at New enquiry.
+  Typing the site pincode fills in state, district and city.
 - **Won / Lost** are outcomes, set by the user with the Mark won / Mark lost buttons inside a lead.
   Those leads move to the Won / Lost tab; set a lead's Status back to an active stage to reopen it.
 - **Each lead**: contact, company, phone, email, site address, service, estimated value, source,
@@ -133,6 +134,7 @@ The app has no settings screen. It only reads these tables, so change them strai
 | `services` | Service choice | `name`, `sort_order`, `is_active` |
 | `lead_sources` | Lead source choice | `name`, `sort_order`, `is_active` |
 | `settings` | Single value | `key` = `currency` or `country_code`, `value` |
+| `pincodes` | Pincode | `pincode`, `state`, `district`, `city` (filled from India Post on first use; correct a row here if it is wrong) |
 
 Set `is_active` to 0 to hide a choice from new leads without touching leads that already use it. Lists are
 sorted by `sort_order`, then name. Changes show up the next time the app loads its data (reload the page).

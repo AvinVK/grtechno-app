@@ -224,7 +224,8 @@
       const items = pool.filter((l) => {
         if (f.stage && l.stage !== f.stage) return false;
         if (!q) return true;
-        return [l.company, l.contact_name, l.phone, l.email, l.site_address, l.service, l.notes]
+        return [l.company, l.contact_name, l.phone, l.email, l.site_pincode, l.site_city, l.site_district, l.site_state,
+          l.site_address, l.service, l.notes]
           .some((v) => v.toLowerCase().includes(q));
       });
       items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
@@ -308,6 +309,7 @@
   function buildLeadForm(lead, onSaved) {
     const L = lead || {
       company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', source: '',
+      site_pincode: '', site_state: '', site_district: '', site_city: '',
       est_value: null, stage: S.stages[0], follow_up_date: null, notes: '',
     };
     const inputs = {};
@@ -340,6 +342,30 @@
         onclick: () => { dateInput.value = addDays(S.today, days); },
       }, label)));
 
+    // Typing a full pincode fills state, district and city. They stay editable if the lookup is wrong or missing.
+    const pinHint = h('p', { class: 'hint', 'aria-live': 'polite' });
+    let pinSeq = 0;
+    const pinInput = text('text', L.site_pincode, { maxlength: 6, inputmode: 'numeric', autocomplete: 'off' });
+    pinInput.addEventListener('input', async () => {
+      const pin = pinInput.value.replace(/\D/g, '').slice(0, 6);
+      if (pinInput.value !== pin) pinInput.value = pin;
+      const mine = ++pinSeq;
+      if (pin.length < 6) { pinHint.textContent = ''; return; }
+      pinHint.textContent = 'Looking up\u2026';
+      try {
+        const found = await api(`/api/pincode/${pin}`);
+        if (mine !== pinSeq) return;
+        inputs.site_state.value = found.state;
+        inputs.site_district.value = found.district;
+        inputs.site_city.value = found.city;
+        pinHint.textContent = `${found.city}, ${found.district}, ${found.state}`;
+      } catch (err) {
+        if (mine === pinSeq) pinHint.textContent = err.message;
+      }
+    });
+    const pinField = wrapField('site_pincode', 'Site pincode', pinInput);
+    pinField.append(pinHint);
+
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
 
@@ -350,6 +376,10 @@
         wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' })),
         wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' })),
         wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
+        pinField,
+        wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' })),
+        wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' })),
+        wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' })),
         wrapField('site_address', 'Site address', area(2, L.site_address), 'wide'),
         wrapField('service', 'Service', choice(S.settings.services, L.service, 'Not set')),
         wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
