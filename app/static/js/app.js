@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const VIEWS = ['active', 'closed'];
+  const VIEWS = ['active', 'closed', 'status'];
   const CLOSED_STAGES = ['Won', 'Lost'];
   const SNOOZE = [['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]];
 
@@ -144,7 +144,7 @@
 
   /* ---------- summary and navigation ---------- */
 
-  function renderSummary() {
+  function statusView() {
     const s = S.summary;
     const stat = (label, value, notes, opts = {}) => {
       const body = [
@@ -157,14 +157,9 @@
 
     const winNote = s.win_rate === null ? 'No closed leads yet' : `Win rate ${s.win_rate}%`;
     const worth = s.won_month_value ? `Worth ${fmtCompact(s.won_month_value)}` : 'No wins yet this month';
-    // Full figure on wide screens, compact (lakh / crore) on phones. CSS picks which one shows.
-    const openValue = [
-      h('span', { class: 'money-full' }, fmtMoney(s.open_value)),
-      h('span', { class: 'money-compact' }, fmtCompact(s.open_value)),
-    ];
 
-    clear($('#summary')).append(
-      stat('Open pipeline', openValue, [plural(s.open_count, 'open lead', 'open leads')]),
+    return h('div', { class: 'status-cards' },
+      stat('Open pipeline', fmtMoney(s.open_value), [plural(s.open_count, 'open lead', 'open leads')]),
       stat('Follow-ups due', String(s.due_count),
         [s.overdue_count ? `${s.overdue_count} overdue` : 'Nothing overdue'],
         { href: '#active', warn: s.overdue_count > 0 }),
@@ -184,13 +179,12 @@
   }
 
   function renderAll() {
-    renderSummary();
     renderNav();
     renderMain();
   }
 
   function renderMain() {
-    clear($('#view')).append(listView(view));
+    clear($('#view')).append(view === 'status' ? statusView() : listView(view));
   }
 
   /* ---------- lead lists (active and won / lost) ---------- */
