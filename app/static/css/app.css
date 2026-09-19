@@ -1,32 +1,39 @@
-/* Lead desk — fire protection lead management.
-   Palette borrows from safety signage: exit green for action, signal red only for "overdue". */
+/* Lead desk - fire protection lead management.
+   "Sunset" palette: a crimson-to-orange bar over a soft blush-grey page. The accent is flame red-orange;
+   crimson (--signal) is kept for overdue and delete so it never reads as a plain action colour. */
 
 :root {
-  --paper: #edefea;
+  --paper: #f4f0f2;
   --panel: #ffffff;
-  --ink: #18211d;
-  --muted: #55605a;
-  --line: #d5dad3;
-  --line-strong: #b4bdb3;
+  --ink: #231a20;
+  --muted: #6e6068;
+  --line: #e2d9de;
+  --line-strong: #cfc3ca;
 
-  --bar: #16201c;
-  --bar-ink: #eef1ec;
+  --bar: linear-gradient(100deg, #a8102a 0%, #da3a1e 55%, #f26a1a 100%);
+  --bar-ink: #ffffff;
 
-  --exit: #0a7a4a;
-  --exit-dark: #065f39;
-  --exit-tint: #e0f0e7;
+  --nav: #ffffff;
+  --nav-ink: #7a6c74;
+  --nav-active: #c8261e;
 
-  --signal: #c4262e;
-  --signal-tint: #fbe6e6;
-  --amber: #8f5300;
-  --amber-tint: #faedd2;
+  --accent: #d9391f;
+  --accent-dark: #b42d16;
+  --accent-tint: #fbe3dc;
 
-  --st-new: #56708a;
-  --st-survey: #1d7f91;
-  --st-quote: #a86200;
-  --st-negotiation: #b5501f;
-  --st-won: #0a7a4a;
-  --st-lost: #7a6464;
+  --signal: #b3122b;
+  --signal-tint: #f9d9dc;
+  --amber: #7a5200;
+  --amber-tint: #fce8bc;
+  --soon: #4c3f55;
+  --soon-tint: #e9e1ec;
+
+  --st-new: #8a7f92;
+  --st-survey: #f0a020;
+  --st-quote: #ef5a1a;
+  --st-negotiation: #b3122b;
+  --st-won: #23845a;
+  --st-lost: #8d8490;
 
   --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-display: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
@@ -55,7 +62,7 @@ body.locked { overflow: hidden; }
 
 h1, h2, h3, p { margin: 0; }
 
-a { color: var(--exit-dark); }
+a { color: var(--accent-dark); }
 
 :focus-visible {
   outline: 3px solid #1a73e8;
@@ -93,8 +100,8 @@ a { color: var(--exit-dark); }
   width: 14px;
   height: 22px;
   border-radius: 3px;
-  background: var(--exit);
-  box-shadow: inset 0 -8px 0 rgba(255, 255, 255, 0.22);
+  background: #fff;
+  box-shadow: inset 0 -8px 0 rgba(0, 0, 0, 0.16);
 }
 
 .top-actions {
@@ -106,7 +113,7 @@ a { color: var(--exit-dark); }
 
 .top-actions form { margin: 0; }
 
-.topbar .link-btn { color: #cfd7d1; }
+.topbar .link-btn { color: rgba(255, 255, 255, 0.9); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
 .topbar .link-btn:hover { color: #fff; }
 
 /* ---------- Buttons ---------- */
@@ -130,17 +137,17 @@ a { color: var(--exit-dark); }
   color: var(--ink);
 }
 
-.btn:hover { background: #f4f6f2; }
+.btn:hover { background: #f7f1f4; }
 
 .btn.primary {
-  background: var(--exit);
-  border-color: var(--exit);
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
-.btn.primary:hover { background: var(--exit-dark); border-color: var(--exit-dark); }
+.btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
-.btn.danger { color: var(--signal); border-color: #e2b3b5; }
+.btn.danger { color: var(--signal); border-color: #e6b4ba; }
 .btn.danger:hover { background: var(--signal-tint); }
 
 .btn.small { min-height: 34px; padding: 0 12px; font-size: 14px; }
@@ -151,7 +158,7 @@ a { color: var(--exit-dark); }
   padding: 8px 2px;
   border: 0;
   background: none;
-  color: var(--exit-dark);
+  color: var(--accent-dark);
 }
 
 .link-btn:hover { text-decoration: underline; }
@@ -197,7 +204,7 @@ a.stat:hover { border-color: var(--line-strong); }
 .chip {
   padding: 3px 8px;
   border-radius: 4px;
-  background: #e8ebe6;
+  background: #ede6ea;
   color: var(--muted);
   font-size: 13px;
   font-weight: 600;
@@ -207,7 +214,7 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .chip-overdue { background: var(--signal-tint); color: var(--signal); }
 .chip-today { background: var(--amber-tint); color: var(--amber); }
-.chip-soon { background: var(--exit-tint); color: var(--exit-dark); }
+.chip-soon { background: var(--soon-tint); color: var(--soon); }
 
 /* ---------- All leads ---------- */
 
@@ -238,8 +245,8 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .filter-chip .n { color: var(--muted); }
 
-.filter-chip[aria-pressed="true"] { background: var(--bar); border-color: var(--bar); color: #fff; }
-.filter-chip[aria-pressed="true"] .n { color: #b9c3bc; }
+.filter-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.filter-chip[aria-pressed="true"] .n { color: rgba(255, 255, 255, 0.85); }
 
 .export-note { max-width: 1100px; margin: 18px auto 0; padding: 0 10px; font-size: 14px; }
 
@@ -263,7 +270,7 @@ a.stat:hover { border-color: var(--line-strong); }
   cursor: pointer;
 }
 
-.row:hover { background: #f7f8f5; }
+.row:hover { background: #faf6f8; }
 
 .row-main > span { display: block; }
 .row-title { font: 600 18px/1.2 var(--font-display); overflow-wrap: anywhere; }
@@ -303,8 +310,8 @@ a.stat:hover { border-color: var(--line-strong); }
   display: flex;
   gap: 2px;
   padding: 6px calc(6px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left));
-  background: var(--bar);
-  border-top: 1px solid #2a3832;
+  background: var(--nav);
+  border-top: 1px solid var(--line);
 }
 
 .bottom-nav-item {
@@ -321,7 +328,7 @@ a.stat:hover { border-color: var(--line-strong); }
   border: 0;
   border-radius: var(--radius);
   background: none;
-  color: #b9c3bc;
+  color: var(--nav-ink);
   font: 600 12px/1 var(--font-body);
   text-decoration: none;
   cursor: pointer;
@@ -329,10 +336,10 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .bottom-nav-item svg { width: 22px; height: 22px; }
 .bottom-nav-item span { letter-spacing: 0.02em; white-space: nowrap; }
-.bottom-nav-item[aria-current="page"] { color: #3ec582; }
-.bottom-nav-item.add { color: #fff; }
-.bottom-nav-item.add[aria-current="page"] { color: #3ec582; }
-.bottom-nav-item.add svg { width: 30px; height: 30px; padding: 4px; border-radius: 8px; background: var(--exit); }
+.bottom-nav-item[aria-current="page"] { color: var(--nav-active); }
+.bottom-nav-item.add { color: var(--ink); }
+.bottom-nav-item.add[aria-current="page"] { color: var(--nav-active); }
+.bottom-nav-item.add svg { width: 30px; height: 30px; padding: 4px; border-radius: 8px; background: var(--accent); color: #fff; }
 .bottom-nav-item:active { transform: scale(0.96); }
 
 .nav-badge {
@@ -389,7 +396,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   position: fixed;
   inset: 0;
   z-index: 30;
-  background: rgba(16, 24, 20, 0.45);
+  background: rgba(35, 26, 32, 0.45);
 }
 
 .drawer {
@@ -439,7 +446,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   gap: 8px;
   padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
-  background: #f7f8f5;
+  background: #faf6f8;
 }
 
 .drawer-foot .spacer { flex: 1; }
@@ -467,7 +474,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   margin-left: 4px;
 }
 
-.timeline li.note { border-left-color: var(--exit); }
+.timeline li.note { border-left-color: var(--accent); }
 .timeline .t-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 .timeline li:not(.note) .t-text { color: var(--muted); }
 .timeline time { display: block; color: var(--muted); font-size: 13px; }
@@ -482,7 +489,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   max-width: calc(100% - 32px);
   padding: 10px 16px;
   border-radius: var(--radius);
-  background: var(--bar);
+  background: var(--ink);
   color: #fff;
   font-weight: 500;
   transform: translate(-50%, 24px);
@@ -506,10 +513,11 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  border-top: 6px solid var(--exit);
+  border-top: 6px solid var(--accent);
 }
 
 .login-card .brand { color: var(--ink); }
+.login-card .brand-mark { background: var(--accent); box-shadow: inset 0 -8px 0 rgba(255, 255, 255, 0.28); }
 .login-card h1 { font: 700 26px/1.1 var(--font-display); }
 
 /* ---------- Small screens ---------- */
