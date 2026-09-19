@@ -4,9 +4,10 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from urllib.request import Request, urlopen
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from werkzeug.exceptions import HTTPException, abort
 
+from .auth import visible_leads
 from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
 from .extensions import db
 from .models import Activity, Lead, Pincode, settings_for_client, utcnow
@@ -102,6 +103,13 @@ def _validate(payload: dict) -> tuple[dict, dict]:
     return data, errors
 
 
+def _own_lead_or_404(lead_id: int) -> Lead:
+    lead = db.get_or_404(Lead, lead_id)
+    if not g.user.is_admin and lead.owner_code != g.user.code:
+        abort(404)
+    return lead
+
+
 def _fmt_date(d):
     return d.strftime("%d %b %Y") if d else None
 
@@ -162,9 +170,10 @@ def compute_summary(leads, today: date) -> dict:
 
 @bp.get("/state")
 def state():
-    leads = Lead.query.order_by(Lead.created_at.desc(), Lead.id.desc()).all()
+    leads = visible_leads().order_by(Lead.created_at.desc(), Lead.id.desc()).all()
     today = today_local()
     return jsonify(
+        me={"userid": g.user.userid, "name": g.user.name, "is_admin": g.user.is_admin},
         today=today.isoformat(),
         stages=STAGES,
         open_stages=OPEN_STAGES,
@@ -213,6 +222,7 @@ def create_lead():
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
     lead = Lead(**{k: v for k, v in data.items() if k != "stage"})
+    lead.owner_code = g.user.code
     stage = data.get("stage", STAGES[0])
     lead.stage = stage
     if stage in CLOSED_STAGES:
@@ -225,13 +235,13 @@ def create_lead():
 
 @bp.get("/leads/<int:lead_id>")
 def get_lead(lead_id):
-    lead = db.get_or_404(Lead, lead_id)
+    lead = _own_lead_or_404(lead_id)
     return jsonify(lead.to_dict(with_activities=True))
 
 
 @bp.patch("/leads/<int:lead_id>")
 def update_lead(lead_id):
-    lead = db.get_or_404(Lead, lead_id)
+    lead = _own_lead_or_404(lead_id)
     data, errors = _validate(_payload())
 
     merged = {"company": lead.company, "contact_name": lead.contact_name, **data}
@@ -246,7 +256,7 @@ def update_lead(lead_id):
 
 @bp.delete("/leads/<int:lead_id>")
 def delete_lead(lead_id):
-    lead = db.get_or_404(Lead, lead_id)
+    lead = _own_lead_or_404(lead_id)
     db.session.delete(lead)
     db.session.commit()
     return "", 204
@@ -254,7 +264,7 @@ def delete_lead(lead_id):
 
 @bp.post("/leads/<int:lead_id>/notes")
 def add_note(lead_id):
-    lead = db.get_or_404(Lead, lead_id)
+    lead = _own_lead_or_404(lead_id)
     payload = _payload()
     text = payload.get("text")
     if not isinstance(text, str) or not text.strip():

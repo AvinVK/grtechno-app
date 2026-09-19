@@ -3,6 +3,7 @@ import io
 
 from flask import Blueprint, Response, render_template
 
+from .auth import visible_leads
 from .models import Lead
 from .timeutil import today_local
 
@@ -25,6 +26,7 @@ CSV_COLUMNS = [
     ("stage", "Stage"),
     ("follow_up_date", "Follow-up date"),
     ("notes", "Notes"),
+    ("owner_name", "Owner"),
     ("created_at", "Created (UTC)"),
     ("closed_at", "Closed (UTC)"),
 ]
@@ -47,7 +49,7 @@ def export_csv():
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow([label for _, label in CSV_COLUMNS])
-    for lead in Lead.query.order_by(Lead.id).all():
+    for lead in visible_leads().order_by(Lead.id).all():
         row = lead.to_dict()
         writer.writerow([_safe_cell("" if row[key] is None else row[key]) for key, _ in CSV_COLUMNS])
 

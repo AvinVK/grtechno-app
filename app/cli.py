@@ -3,7 +3,8 @@ from datetime import timedelta
 import click
 
 from .extensions import db
-from .models import Activity, Lead, utcnow
+from .auth import create_user, find_user, issue_setup_code, SETUP_CODE_DAYS
+from .models import Activity, Lead, User, utcnow
 from .timeutil import today_local
 
 # (company, contact, phone, service, source, value, stage, follow-up offset in days or None, notes)
@@ -23,7 +24,47 @@ DEMO = [
 ]
 
 
+def _print_credentials(user, setup_code):
+    click.echo("")
+    click.echo(f"  Userid:      {user.userid}")
+    click.echo(f"  Setup code:  {setup_code}   (one time, valid for {SETUP_CODE_DAYS} days)")
+    click.echo("")
+    click.echo("Open /set-password in the app, enter the userid and setup code, then choose a password.")
+    click.echo("The setup code is not stored anywhere readable, so copy it now.")
+
+
 def register_cli(app):
+    @app.cli.command("create-admin")
+    @click.option("--name", default="grtechno", show_default=True, help="Name for the admin account.")
+    @click.option("--code", default=None, help="Choose the 4-digit code (userid is name-code). Random if left out.")
+    def create_admin(name, code):
+        """Create the one admin account and print its userid and setup code."""
+        existing = User.query.filter_by(is_admin=True).first()
+        if existing:
+            raise click.ClickException(
+                f"An admin already exists ({existing.userid}). To give it a new setup code run: "
+                f"flask --app wsgi reset-password {existing.userid}"
+            )
+        try:
+            user, setup_code = create_user(name, is_admin=True, code=code)
+        except ValueError as err:
+            raise click.ClickException(str(err))
+        db.session.commit()
+        click.echo("Admin created.")
+        _print_credentials(user, setup_code)
+
+    @app.cli.command("reset-password")
+    @click.argument("userid")
+    def reset_password(userid):
+        """Switch off a user's password and print a new setup code (use this if the admin forgets theirs)."""
+        user = find_user(userid)
+        if user is None:
+            raise click.ClickException(f"No user with the userid {userid!r}.")
+        setup_code = issue_setup_code(user)
+        db.session.commit()
+        click.echo(f"New setup code issued for {user.name}.")
+        _print_credentials(user, setup_code)
+
     @app.cli.command("seed-demo")
     @click.option("--force", is_flag=True, help="Delete every existing lead first.")
     def seed_demo(force):
@@ -36,6 +77,7 @@ def register_cli(app):
             Lead.query.delete()
             db.session.commit()
 
+        owner = User.query.filter_by(is_admin=True).first()
         today = today_local()
         for company, contact, phone, service, source, value, stage, offset, notes in DEMO:
             lead = Lead(
@@ -55,6 +97,7 @@ def register_cli(app):
                 follow_up_date=today + timedelta(days=offset) if offset is not None else None,
                 notes=notes,
                 closed_at=utcnow() if stage in ("Won", "Lost") else None,
+                owner_code=owner.code if owner else None,
             )
             lead.activities.append(Activity(kind="created", text="Lead created"))
             db.session.add(lead)

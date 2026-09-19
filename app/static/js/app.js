@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const VIEWS = ['active', 'add', 'closed', 'status'];
+  const VIEWS = ['active', 'add', 'closed', 'status', 'users'];
   const CLOSED_STAGES = ['Won', 'Lost'];
   const SNOOZE = [['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]];
 
@@ -61,6 +61,7 @@
 
   async function load() {
     S = await api('/api/state');
+    resolveView();
     renderAll();
   }
 
@@ -159,6 +160,7 @@
     const worth = s.won_month_value ? `Worth ${fmtCompact(s.won_month_value)}` : 'No wins yet this month';
 
     return h('div', { class: 'status-cards' },
+      stat('Signed in as', S.me.name, [S.me.userid, S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads']),
       stat('Open pipeline', fmtMoney(s.open_value), [plural(s.open_count, 'open lead', 'open leads')]),
       stat('Follow-ups due', String(s.due_count),
         [s.overdue_count ? `${s.overdue_count} overdue` : 'Nothing overdue'],
@@ -185,8 +187,124 @@
   }
 
   function renderMain() {
-    const screens = { status: statusView, add: addView };
+    const screens = { status: statusView, add: addView, users: usersView };
     clear($('#view')).append(screens[view] ? screens[view]() : listView(view));
+  }
+
+
+  /* ---------- users (admin only) ---------- */
+
+  const STATUS_CHIPS = {
+    active: ['active', 'Active'],
+    pending: ['today', 'Waiting for password'],
+    expired: ['overdue', 'Setup code expired'],
+    off: ['off', 'Turned off'],
+  };
+
+  function usersView() {
+    const wrap = h('div', { class: 'users' });
+    const listBox = h('div', { class: 'user-list' }, h('p', { class: 'loading' }, 'Loading users…'));
+    const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
+
+    function showCode(data, heading) {
+      const u = data.user;
+      const message = `Lead desk\nUserid: ${u.userid}\nSetup code: ${data.setup_code} (works once, valid ${data.code_days} days)\nSet your password at: ${window.location.origin}/set-password`;
+      clear(resultBox).append(h('section', { class: 'code-card' },
+        h('h3', {}, `${heading} for ${u.name}`),
+        h('dl', {},
+          h('dt', {}, 'Userid'), h('dd', { class: 'code-value' }, u.userid),
+          h('dt', {}, 'Setup code'), h('dd', { class: 'code-value' }, data.setup_code)),
+        h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days. ${u.name} opens the app, taps "Set a new password" on the sign-in page and enters both.`),
+        h('div', { class: 'code-actions' },
+          h('a', { class: 'btn primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Send on WhatsApp'),
+          h('button', {
+            class: 'btn', type: 'button',
+            onclick: async () => {
+              try { await navigator.clipboard.writeText(message); toast('Message copied'); }
+              catch (err) { toast('Could not copy. Select the text and copy it.', true); }
+            },
+          }, 'Copy message'),
+          h('button', { class: 'btn', type: 'button', onclick: () => { resultBox.hidden = true; clear(resultBox); } }, 'Done'))));
+      resultBox.hidden = false;
+      resultBox.scrollIntoView({ block: 'nearest' });
+    }
+
+    async function refresh() {
+      try {
+        const data = await api('/api/users');
+        clear(listBox).append(...data.users.map(userRow));
+      } catch (err) {
+        clear(listBox).append(h('p', { class: 'empty-state' }, err.message));
+      }
+    }
+
+    async function act(path, body, confirmText, onOk) {
+      if (confirmText && !window.confirm(confirmText)) return;
+      try {
+        const data = await api(path, { method: 'POST', body });
+        onOk(data);
+      } catch (err) {
+        toast(err.message, true);
+      }
+      await refresh();
+    }
+
+    function userRow(u) {
+      const key = u.status === 'pending' && u.code_expired ? 'expired' : u.status;
+      const [tone, label] = STATUS_CHIPS[key];
+      const actions = u.is_admin ? null : h('div', { class: 'user-actions' },
+        h('button', {
+          class: 'btn small', type: 'button',
+          onclick: () => act(`/api/users/${u.code}/reset`, {},
+            `Give ${u.name} a new setup code? Their current password stops working until they set a new one.`,
+            (data) => showCode(data, 'New setup code')),
+        }, u.status === 'pending' ? 'New setup code' : 'Reset password'),
+        u.status === 'off'
+          ? h('button', { class: 'btn small', type: 'button', onclick: () => act(`/api/users/${u.code}/active`, { active: true }, null, () => toast(`${u.name} is on again`)) }, 'Turn on')
+          : h('button', {
+            class: 'btn small danger', type: 'button',
+            onclick: () => act(`/api/users/${u.code}/active`, { active: false },
+              `Turn off ${u.name}? They are signed out and cannot sign in until you turn them on again. Their leads stay.`,
+              () => toast(`${u.name} is turned off`)),
+          }, 'Turn off'));
+      return h('article', { class: 'user-row' },
+        h('div', { class: 'user-main' },
+          h('span', { class: 'user-name' }, u.name, u.is_admin ? h('span', { class: 'user-tag' }, 'Admin') : null),
+          h('span', { class: 'user-id' }, u.userid),
+          h('span', { class: 'user-meta' }, plural(u.leads, 'lead', 'leads'))),
+        chip(tone, label),
+        actions);
+    }
+
+    const nameInput = h('input', { id: 'u-name', type: 'text', maxlength: 60, autocomplete: 'off', placeholder: 'For example: Ravi Kumar' });
+    const nameErr = h('p', { class: 'err', role: 'alert' });
+    const addBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add user');
+    const form = h('form', {
+      class: 'add-user', novalidate: true,
+      onsubmit: async (e) => {
+        e.preventDefault();
+        nameErr.textContent = '';
+        addBtn.disabled = true;
+        try {
+          const data = await api('/api/users', { method: 'POST', body: { name: nameInput.value } });
+          nameInput.value = '';
+          showCode(data, 'Setup code');
+        } catch (err) {
+          nameErr.textContent = err.message;
+        } finally {
+          addBtn.disabled = false;
+        }
+        await refresh();
+      },
+    },
+      h('label', { for: 'u-name' }, 'Name'),
+      h('div', { class: 'add-user-row' }, nameInput, addBtn),
+      nameErr,
+      h('p', { class: 'hint' }, 'The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
+
+    wrap.append(h('h2', {}, 'Users'), form, resultBox, listBox);
+    refresh();
+    return wrap;
   }
 
   /* ---------- lead lists (active and won / lost) ---------- */
@@ -252,7 +370,7 @@
   }
 
   function leadRow(l) {
-    const sub = subtitle(l);
+    const sub = [subtitle(l), S.me.is_admin && l.owner_name ? `Owner: ${l.owner_name}` : ''].filter(Boolean).join(' · ');
     return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
       h('span', { class: 'row-main' },
         h('span', { class: 'row-title' }, title(l)),
@@ -549,9 +667,14 @@
 
   /* ---------- global events ---------- */
 
-  function syncView() {
+  function resolveView() {
     const next = window.location.hash.slice(1);
-    view = VIEWS.includes(next) ? next : 'active';
+    const allowed = VIEWS.includes(next) && (next !== 'users' || (S && S.me.is_admin));
+    view = allowed ? next : 'active';
+  }
+
+  function syncView() {
+    resolveView();
     if (S) { renderNav(); renderMain(); }
   }
 

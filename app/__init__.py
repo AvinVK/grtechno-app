@@ -1,20 +1,26 @@
-from flask import Flask
+import secrets
 
-from .config import DEFAULT_SECRET, Config
+from flask import Flask, g
+
+from .config import BASE_DIR, DEFAULT_SECRET, Config
 from .extensions import db, migrate
+
+
+def _persistent_secret_key() -> str:
+    """Sessions are signed with this. If .env has no real SECRET_KEY, make one once and keep it."""
+    path = BASE_DIR / "instance" / "secret_key"
+    if not path.exists():
+        path.write_text(secrets.token_hex(32))
+    return path.read_text().strip()
 
 
 def create_app(config_object=Config):
     app = Flask(__name__)
     app.config.from_object(config_object)
 
-    if app.config["APP_PASSWORD"] and app.config["SECRET_KEY"] == DEFAULT_SECRET:
-        raise RuntimeError(
-            "APP_PASSWORD is set but SECRET_KEY is still the default. "
-            "Set a long random SECRET_KEY in your .env file."
-        )
-    if not app.config["APP_PASSWORD"]:
-        app.logger.warning("APP_PASSWORD is empty: the app has no login. Fine locally, not when hosted.")
+    # A placeholder (change-me) or short key is guessable, so ignore it and use a generated one.
+    if app.config["SECRET_KEY"] == DEFAULT_SECRET or len(app.config["SECRET_KEY"]) < 16:
+        app.config["SECRET_KEY"] = _persistent_secret_key()
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -24,17 +30,19 @@ def create_app(config_object=Config):
     from .auth import bp as auth_bp
     from .auth import csrf_token
     from .cli import register_cli
+    from .users import bp as users_bp
     from .views import bp as views_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(users_bp)
     app.register_blueprint(views_bp)
     register_cli(app)
 
     app.jinja_env.globals["csrf_token"] = csrf_token
 
     @app.context_processor
-    def inject_flags():
-        return {"auth_enabled": bool(app.config["APP_PASSWORD"])}
+    def inject_user():
+        return {"current_user": g.get("user")}
 
     return app

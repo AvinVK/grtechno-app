@@ -14,7 +14,6 @@ DEFAULT_SECRET = "dev-only-change-me"
 
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY") or DEFAULT_SECRET
-    APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
     TIMEZONE = os.environ.get("TIMEZONE", "Asia/Kolkata")
 
     SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL") or (

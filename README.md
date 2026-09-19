@@ -3,6 +3,8 @@
 Lead management for a fire protection installation business. Track enquiries from first call to
 won or lost, see who to call today, and keep notes on every lead. Flask + SQLite, no build step.
 
+- **Sign-in with your own userid.** The admin adds people; each person sets their own password.
+  Everyone sees only their own leads; the admin sees all of them and manages users.
 - **Bottom tabs** (phone-first): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
   (open pipeline value, follow-ups due, won this month).
 - **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
@@ -32,6 +34,7 @@ python -m venv .venv
 pip install -r requirements.txt
 copy .env.example .env
 flask --app wsgi db upgrade
+flask --app wsgi create-admin
 flask --app wsgi run --debug
 ```
 
@@ -43,10 +46,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 flask --app wsgi db upgrade
+flask --app wsgi create-admin
 flask --app wsgi run --debug
 ```
 
-Open http://127.0.0.1:5000.
+Open http://127.0.0.1:5000. `create-admin` prints the admin's userid and a one-time setup code; open
+`/set-password`, enter both, choose a password, then sign in.
 
 `flask db upgrade` creates `instance/leads.db`. Want sample data to click around in?
 
@@ -55,7 +60,6 @@ flask --app wsgi seed-demo            # adds 12 fictional leads
 flask --app wsgi seed-demo --force    # wipes ALL leads first, then adds them
 ```
 
-Locally the app has no login. Setting `APP_PASSWORD` in `.env` turns the login screen on.
 
 ### Tests
 
@@ -68,15 +72,12 @@ python -m pytest
 
 | Variable | Purpose |
 |---|---|
-| `SECRET_KEY` | Signs the login session. Use a long random value when hosting. |
-| `APP_PASSWORD` | One shared password for the whole team. Empty means no login. **Always set it when hosted.** |
+| `SECRET_KEY` | Signs the login session. Optional: if unset the app creates a random key once in `instance/secret_key`. |
 | `TIMEZONE` | Decides what "today" means for follow-ups. Default `Asia/Kolkata`. |
 | `SESSION_COOKIE_SECURE` | Set to `1` once the site is on HTTPS. |
 | `DATABASE_URL` | Optional. Overrides the SQLite file location. |
 
 Generate a secret key with: `python -c "import secrets; print(secrets.token_hex(32))"`
-
-The app refuses to start if `APP_PASSWORD` is set but `SECRET_KEY` is still the default.
 
 ## Deploy to PythonAnywhere
 
@@ -90,8 +91,9 @@ The app refuses to start if `APP_PASSWORD` is set but `SECRET_KEY` is still the 
    mkvirtualenv leads --python=python3.12     # use a Python version PythonAnywhere offers
    pip install -r requirements.txt
    cp .env.example .env
-   nano .env                                  # set SECRET_KEY, APP_PASSWORD, SESSION_COOKIE_SECURE=1
+   nano .env                                  # set SESSION_COOKIE_SECURE=1 (and SECRET_KEY if you want your own)
    flask --app wsgi db upgrade
+   flask --app wsgi create-admin              # prints the admin userid and one-time setup code
    ```
 
 3. **Web tab** → *Add a new web app* → *Manual configuration* → pick the same Python version.
@@ -109,7 +111,7 @@ The app refuses to start if `APP_PASSWORD` is set but `SECRET_KEY` is still the 
    from app import create_app
    application = create_app()
    ```
-5. Click **Reload**. Visit `https://YOURNAME.pythonanywhere.com` and sign in with `APP_PASSWORD`.
+5. Click **Reload**. Visit `https://YOURNAME.pythonanywhere.com/set-password`, use the admin userid and setup code, then sign in.
 
 **Updating later:**
 
@@ -123,6 +125,22 @@ then Reload on the Web tab.
 
 **Back up your data.** Download `instance/leads.db` from the PythonAnywhere Files tab now and then,
 and use Export CSV as a second copy.
+
+## Users and sign-in
+
+- A **userid** is the person's name plus a random, unique 4-digit code, for example `ravikumar-4821`.
+  The 4-digit code is the user's primary key.
+- Only the **admin** (created once with `create-admin`, named `grtechno` by default) can add users. Open **Users**
+  in the top bar, type a name, and the app shows the userid and a one-time **setup code**. Send them to the person
+  (there is a WhatsApp button). The code works once and is valid for 7 days.
+- The person opens `/set-password` (also linked on the sign-in page), enters the userid and setup code, and chooses
+  their own password (at least 8 characters).
+- **Forgot your password?** Ask the admin for **Reset password** (or **New setup code**). The old password stops
+  working straight away and the person sets a new one the same way.
+- **Turn off** signs someone out and blocks sign-in; their leads stay. There is one admin; if the admin forgets their
+  password run `flask --app wsgi reset-password <userid>`.
+- After 5 wrong tries an account is locked for 5 minutes.
+- Everyone sees only the leads they added. The admin sees all leads, with each owner's name.
 
 ## Dropdown lists and settings (kept in the database)
 
@@ -163,11 +181,12 @@ Commit the new file in `migrations/versions/`. Run the same `db upgrade` on Pyth
 app/
   __init__.py        app factory
   config.py          settings read from .env
-  models.py          Lead, Activity, Service, LeadSource, Setting
+  models.py          Lead, Activity, User, Service, LeadSource, Setting, Pincode
   api.py             JSON endpoints under /api, validation, summary maths
   views.py           home page and CSV export
-  auth.py            shared-password login and CSRF for forms
-  cli.py             `flask seed-demo`
+  auth.py            sign-in, setup codes, lockout, CSRF, who may see which leads
+  users.py           admin-only user management API
+  cli.py             `flask create-admin`, `reset-password`, `seed-demo`
   constants.py       stage names
   templates/         base, index, login
   static/            css/app.css, js/app.js
@@ -178,8 +197,7 @@ wsgi.py              entry point for the flask command
 
 ## Things to know
 
-- **One shared password**, not per-person accounts. Everyone who signs in sees and can change everything.
-  There is no lockout after wrong guesses, so pick a long password.
+- Leads that existed before sign-in was added have no owner, so only the admin can see them.
 - The whole lead list loads in one request. That is fast for thousands of leads; if you grow far past
   that, the API will need paging.
 - Win rate is Won divided by Won plus Lost across all time. "Won this month" uses the date the lead

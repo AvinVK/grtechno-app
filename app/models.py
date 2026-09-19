@@ -13,6 +13,31 @@ def _iso(dt):
     return dt.isoformat() + "Z" if dt else None
 
 
+class User(db.Model):
+    """A person who can sign in. The 4-digit code is the primary key and the tail of the userid
+    (name-1234). Passwords and setup codes are stored only as hashes."""
+
+    __tablename__ = "users"
+
+    code = db.Column(db.String(4), primary_key=True)
+    userid = db.Column(db.String(40), nullable=False, unique=True)
+    name = db.Column(db.String(60), nullable=False)
+    is_admin = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    is_active = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
+    password_hash = db.Column(db.String(255), nullable=True)
+    setup_code_hash = db.Column(db.String(255), nullable=True)
+    setup_code_expires = db.Column(db.DateTime, nullable=True)
+    failed_attempts = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    locked_until = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    @property
+    def status(self) -> str:
+        if not self.is_active:
+            return "off"
+        return "active" if self.password_hash else "pending"
+
+
 class Lead(db.Model):
     __tablename__ = "leads"
 
@@ -35,7 +60,9 @@ class Lead(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     closed_at = db.Column(db.DateTime, nullable=True)
+    owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
 
+    owner = db.relationship("User")
     activities = db.relationship(
         "Activity",
         back_populates="lead",
@@ -64,6 +91,7 @@ class Lead(db.Model):
             "created_at": _iso(self.created_at),
             "updated_at": _iso(self.updated_at),
             "closed_at": _iso(self.closed_at),
+            "owner_name": self.owner.name if self.owner else None,
         }
         if with_activities:
             data["activities"] = [a.to_dict() for a in self.activities]

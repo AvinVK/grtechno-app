@@ -3,6 +3,7 @@
 {% block body_class %}page-app{% endblock %}
 
 {% block actions %}
+  {% if current_user and current_user.is_admin %}<a class="link-btn" href="#users">Users</a>{% endif %}
   <a class="link-btn hide-narrow" href="{{ url_for('views.export_csv') }}">Export CSV</a>
 {% endblock %}
 
