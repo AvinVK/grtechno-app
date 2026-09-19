@@ -29,7 +29,7 @@ def _print_credentials(user, setup_code):
     click.echo(f"  Userid:      {user.userid}")
     click.echo(f"  Setup code:  {setup_code}   (one time, valid for {SETUP_CODE_DAYS} days)")
     click.echo("")
-    click.echo("Open /set-password in the app, enter the userid and setup code, then choose a password.")
+    click.echo("Open /set-pin in the app, enter the userid and setup code, then choose a 6-digit PIN.")
     click.echo("The setup code is not stored anywhere readable, so copy it now.")
 
 
@@ -43,7 +43,7 @@ def register_cli(app):
         if existing:
             raise click.ClickException(
                 f"An admin already exists ({existing.userid}). To give it a new setup code run: "
-                f"flask --app wsgi reset-password {existing.userid}"
+                f"flask --app wsgi reset-pin {existing.userid}"
             )
         try:
             user, setup_code = create_user(name, is_admin=True, code=code)
@@ -53,10 +53,10 @@ def register_cli(app):
         click.echo("Admin created.")
         _print_credentials(user, setup_code)
 
-    @app.cli.command("reset-password")
+    @app.cli.command("reset-pin")
     @click.argument("userid")
-    def reset_password(userid):
-        """Switch off a user's password and print a new setup code (use this if the admin forgets theirs)."""
+    def reset_pin(userid):
+        """Switch off a user's PIN and print a new setup code (use this if the admin forgets theirs)."""
         user = find_user(userid)
         if user is None:
             raise click.ClickException(f"No user with the userid {userid!r}.")

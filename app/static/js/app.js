@@ -196,7 +196,7 @@
 
   const STATUS_CHIPS = {
     active: ['active', 'Active'],
-    pending: ['today', 'Waiting for password'],
+    pending: ['today', 'Waiting for PIN'],
     expired: ['overdue', 'Setup code expired'],
     off: ['off', 'Turned off'],
   };
@@ -208,13 +208,13 @@
 
     function showCode(data, heading) {
       const u = data.user;
-      const message = `Lead desk\nUserid: ${u.userid}\nSetup code: ${data.setup_code} (works once, valid ${data.code_days} days)\nSet your password at: ${window.location.origin}/set-password`;
+      const message = `Lead desk\nUserid: ${u.userid}\nSetup code: ${data.setup_code} (works once, valid ${data.code_days} days)\nSet your PIN at: ${window.location.origin}/set-pin`;
       clear(resultBox).append(h('section', { class: 'code-card' },
         h('h3', {}, `${heading} for ${u.name}`),
         h('dl', {},
           h('dt', {}, 'Userid'), h('dd', { class: 'code-value' }, u.userid),
           h('dt', {}, 'Setup code'), h('dd', { class: 'code-value' }, data.setup_code)),
-        h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days. ${u.name} opens the app, taps "Set a new password" on the sign-in page and enters both.`),
+        h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days. ${u.name} opens the app, taps "Set a new PIN" on the sign-in page and enters both.`),
         h('div', { class: 'code-actions' },
           h('a', { class: 'btn primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Send on WhatsApp'),
           h('button', {
@@ -256,9 +256,9 @@
         h('button', {
           class: 'btn small', type: 'button',
           onclick: () => act(`/api/users/${u.code}/reset`, {},
-            `Give ${u.name} a new setup code? Their current password stops working until they set a new one.`,
+            `Give ${u.name} a new setup code? Their current PIN stops working until they set a new one.`,
             (data) => showCode(data, 'New setup code')),
-        }, u.status === 'pending' ? 'New setup code' : 'Reset password'),
+        }, u.status === 'pending' ? 'New setup code' : 'Reset PIN'),
         u.status === 'off'
           ? h('button', { class: 'btn small', type: 'button', onclick: () => act(`/api/users/${u.code}/active`, { active: true }, null, () => toast(`${u.name} is on again`)) }, 'Turn on')
           : h('button', {

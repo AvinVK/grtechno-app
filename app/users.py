@@ -63,7 +63,7 @@ def add_user():
 def reset_user(code):
     user = db.get_or_404(User, code)
     if user.is_admin:
-        abort(400, "The admin's password is reset from the command line: flask --app wsgi reset-password " + user.userid)
+        abort(400, "The admin's PIN is reset from the command line: flask --app wsgi reset-pin " + user.userid)
     setup_code = issue_setup_code(user)
     db.session.commit()
     return jsonify(user=_dict(user), setup_code=setup_code, code_days=SETUP_CODE_DAYS)

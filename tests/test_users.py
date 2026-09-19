@@ -90,9 +90,9 @@ def test_create_admin_command(app):
     second = runner.invoke(args=["create-admin"])                              # only one admin
     assert second.exit_code != 0 and "already exists" in second.output
 
-    reset = runner.invoke(args=["reset-password", admin.userid])
+    reset = runner.invoke(args=["reset-pin", admin.userid])
     assert reset.exit_code == 0 and "New setup code" in reset.output
-    assert runner.invoke(args=["reset-password", "ghost-0000"]).exit_code != 0
+    assert runner.invoke(args=["reset-pin", "ghost-0000"]).exit_code != 0
 
 
 def test_admin_can_be_created_with_a_chosen_code(app):

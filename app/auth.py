@@ -25,9 +25,9 @@ bp = Blueprint("auth", __name__)
 SETUP_CODE_DAYS = 7
 MAX_FAILURES = 5
 LOCKOUT = timedelta(minutes=5)
-MIN_PASSWORD = 8
+PIN_LENGTH = 6
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I so a code read aloud is not misheard
-PUBLIC_ENDPOINTS = {"auth.login", "auth.set_password", "static"}
+PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "static"}
 LOCKED_MESSAGE = "Too many wrong tries. Wait 5 minutes and try again."
 _DUMMY_HASH = generate_password_hash("not-a-real-password")
 
@@ -52,8 +52,21 @@ def _normalize_code(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", text or "").upper()
 
 
+def pin_problem(pin: str, confirm: str):
+    """Why this PIN cannot be used, or None if it is fine. A 6-digit PIN has few possibilities, so the
+    obvious ones are refused; the account lockout below is what stops guessing."""
+    if not re.fullmatch(r"[0-9]{%d}" % PIN_LENGTH, pin):
+        return f"Use exactly {PIN_LENGTH} digits."
+    if pin != confirm:
+        return "The two PINs are different."
+    steps = {int(b) - int(a) for a, b in zip(pin, pin[1:])}
+    if len(set(pin)) == 1 or steps in ({1}, {-1}):
+        return "Choose a PIN that is not one repeated digit or a simple run like 123456."
+    return None
+
+
 def issue_setup_code(user: User) -> str:
-    """Give the user a fresh one-time setup code and switch off their current password."""
+    """Give the user a fresh one-time setup code and switch off their current PIN."""
     raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     user.setup_code_hash = generate_password_hash(raw)
     user.setup_code_expires = utcnow() + timedelta(days=SETUP_CODE_DAYS)
@@ -137,7 +150,7 @@ def load_user():
     uid = session.get("uid")
     if uid:
         user = db.session.get(User, uid)
-        # A reset clears the password, which also ends any session that was still open.
+        # A reset clears the PIN, which also ends any session that was still open.
         if user and user.is_active and user.password_hash:
             g.user = user
         else:
@@ -159,16 +172,16 @@ def login():
     if request.method == "POST":
         check_csrf()
         user = find_user(request.form.get("userid", ""))
-        password = request.form.get("password", "")
+        pin = request.form.get("pin", "")
         if _is_locked(user):
             error = LOCKED_MESSAGE
         else:
-            has_password = bool(user and user.password_hash)
-            # Always run one hash check so a wrong userid takes as long as a wrong password.
-            matches = check_password_hash(user.password_hash if has_password else _DUMMY_HASH, password)
-            if matches and has_password and not user.is_active:
+            has_pin = bool(user and user.password_hash)
+            # Always run one hash check so a wrong userid takes as long as a wrong PIN.
+            matches = check_password_hash(user.password_hash if has_pin else _DUMMY_HASH, pin)
+            if matches and has_pin and not user.is_active:
                 error = "This account is switched off. Ask your admin."
-            elif matches and has_password:
+            elif matches and has_pin:
                 user.failed_attempts = 0
                 db.session.commit()
                 session.clear()
@@ -177,12 +190,12 @@ def login():
                 return redirect(url_for("views.index"))
             else:
                 _register_failure(user)
-                error = "Wrong userid or password."
+                error = "Wrong userid or PIN."
     return render_template("login.html", error=error, userid=request.form.get("userid", ""))
 
 
-@bp.route("/set-password", methods=["GET", "POST"])
-def set_password():
+@bp.route("/set-pin", methods=["GET", "POST"])
+def set_pin():
     if g.user:
         return redirect(url_for("views.index"))
     error = None
@@ -191,28 +204,24 @@ def set_password():
         check_csrf()
         user = find_user(userid)
         code = _normalize_code(request.form.get("code", ""))
-        password = request.form.get("password", "")
+        pin = request.form.get("pin", "")
         if _is_locked(user):
             error = LOCKED_MESSAGE
         elif not _setup_code_ok(user, code):
             _register_failure(user)
             error = "That userid and setup code do not match, or the code has expired. Ask your admin for a new code."
-        elif len(password) < MIN_PASSWORD:
-            error = f"Use at least {MIN_PASSWORD} characters."
-        elif password != request.form.get("confirm", ""):
-            error = "The two passwords are different."
-        elif password.lower() in (user.userid, user.name.lower()):
-            error = "Choose a password that is not your name or userid."
         else:
-            user.password_hash = generate_password_hash(password)
-            user.setup_code_hash = None
-            user.setup_code_expires = None
-            user.failed_attempts = 0
-            user.locked_until = None
-            db.session.commit()
-            flash("Password saved. Sign in with your userid and new password.", "ok")
-            return redirect(url_for("auth.login"))
-    return render_template("set_password.html", error=error, userid=userid, min_length=MIN_PASSWORD)
+            error = pin_problem(pin, request.form.get("confirm", ""))
+            if error is None:
+                user.password_hash = generate_password_hash(pin)      # stored as a hash, never the PIN itself
+                user.setup_code_hash = None
+                user.setup_code_expires = None
+                user.failed_attempts = 0
+                user.locked_until = None
+                db.session.commit()
+                flash("PIN saved. Sign in with your userid and new PIN.", "ok")
+                return redirect(url_for("auth.login"))
+    return render_template("set_pin.html", error=error, userid=userid, pin_length=PIN_LENGTH)
 
 
 @bp.post("/logout")

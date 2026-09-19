@@ -3,7 +3,7 @@
 Lead management for a fire protection installation business. Track enquiries from first call to
 won or lost, see who to call today, and keep notes on every lead. Flask + SQLite, no build step.
 
-- **Sign-in with your own userid.** The admin adds people; each person sets their own password.
+- **Sign-in with your own userid.** The admin adds people; each person sets their own 6-digit PIN.
   Everyone sees only their own leads; the admin sees all of them and manages users.
 - **Bottom tabs** (phone-first): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
   (open pipeline value, follow-ups due, won this month).
@@ -51,7 +51,7 @@ flask --app wsgi run --debug
 ```
 
 Open http://127.0.0.1:5000. `create-admin` prints the admin's userid and a one-time setup code; open
-`/set-password`, enter both, choose a password, then sign in.
+`/set-pin`, enter both, choose a 6-digit PIN, then sign in.
 
 `flask db upgrade` creates `instance/leads.db`. Want sample data to click around in?
 
@@ -111,7 +111,7 @@ Generate a secret key with: `python -c "import secrets; print(secrets.token_hex(
    from app import create_app
    application = create_app()
    ```
-5. Click **Reload**. Visit `https://YOURNAME.pythonanywhere.com/set-password`, use the admin userid and setup code, then sign in.
+5. Click **Reload**. Visit `https://YOURNAME.pythonanywhere.com/set-pin`, use the admin userid and setup code, then sign in.
 
 **Updating later:**
 
@@ -133,13 +133,14 @@ and use Export CSV as a second copy.
 - Only the **admin** (created once with `create-admin`, named `grtechno` by default) can add users. Open **Users**
   in the top bar, type a name, and the app shows the userid and a one-time **setup code**. Send them to the person
   (there is a WhatsApp button). The code works once and is valid for 7 days.
-- The person opens `/set-password` (also linked on the sign-in page), enters the userid and setup code, and chooses
-  their own password (at least 8 characters).
-- **Forgot your password?** Ask the admin for **Reset password** (or **New setup code**). The old password stops
+- The person opens `/set-pin` (also linked on the sign-in page), enters the userid and setup code, and chooses
+  their own 6-digit PIN. Obvious PINs (all the same digit, or a run like 123456) are refused.
+- **Forgot your PIN?** Ask the admin for **Reset PIN** (or **New setup code**). The old PIN stops
   working straight away and the person sets a new one the same way.
 - **Turn off** signs someone out and blocks sign-in; their leads stay. There is one admin; if the admin forgets their
-  password run `flask --app wsgi reset-password <userid>`.
-- After 5 wrong tries an account is locked for 5 minutes.
+  PIN run `flask --app wsgi reset-pin <userid>`.
+- After 5 wrong tries an account is locked for 5 minutes. That lockout is what protects a 6-digit PIN from guessing,
+  so keep it in place.
 - Everyone sees only the leads they added. The admin sees all leads, with each owner's name.
 
 ## Dropdown lists and settings (kept in the database)
@@ -186,7 +187,7 @@ app/
   views.py           home page and CSV export
   auth.py            sign-in, setup codes, lockout, CSRF, who may see which leads
   users.py           admin-only user management API
-  cli.py             `flask create-admin`, `reset-password`, `seed-demo`
+  cli.py             `flask create-admin`, `reset-pin`, `seed-demo`
   constants.py       stage names
   templates/         base, index, login
   static/            css/app.css, js/app.js

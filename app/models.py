@@ -15,7 +15,7 @@ def _iso(dt):
 
 class User(db.Model):
     """A person who can sign in. The 4-digit code is the primary key and the tail of the userid
-    (name-1234). Passwords and setup codes are stored only as hashes."""
+    (name-1234). PINs and setup codes are stored only as hashes."""
 
     __tablename__ = "users"
 

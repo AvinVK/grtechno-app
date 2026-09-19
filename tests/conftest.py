@@ -6,7 +6,7 @@ from app.auth import create_user
 from app.config import Config
 from app.extensions import db
 
-PASSWORD = "correct-horse-battery"
+PIN = "482915"
 
 
 class TestConfig(Config):
@@ -25,10 +25,10 @@ def app():
         db.drop_all()
 
 
-def make_user(name, is_admin=False, password=PASSWORD):
-    """A user who has already set their password."""
+def make_user(name, is_admin=False, pin=PIN):
+    """A user who has already set their PIN."""
     user, _ = create_user(name, is_admin=is_admin)
-    user.password_hash = generate_password_hash(password)
+    user.password_hash = generate_password_hash(pin)
     user.setup_code_hash = None
     user.setup_code_expires = None
     db.session.commit()

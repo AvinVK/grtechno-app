@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Set password - Lead desk{% endblock %}
+{% block title %}Set PIN - Lead desk{% endblock %}
 {% block body_class %}page-login{% endblock %}
 {% block header %}{% endblock %}
 {% block content %}
 <main class="login">
-  <form class="login-card" method="post" action="{{ url_for('auth.set_password') }}">
+  <form class="login-card" method="post" action="{{ url_for('auth.set_pin') }}">
     <p class="brand"><span class="brand-mark" aria-hidden="true"></span>Lead desk</p>
-    <h1>Set your password</h1>
-    <p class="hint">Enter the userid and setup code your admin gave you, then choose a password.</p>
+    <h1>Set your PIN</h1>
+    <p class="hint">Enter the userid and setup code your admin gave you, then choose a {{ pin_length }}-digit PIN.</p>
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
     <div class="field">
       <label for="userid">Userid</label>
@@ -17,20 +17,22 @@
     <div class="field">
       <label for="code">Setup code</label>
       <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false"
-             placeholder="ABCD-EFGH" {% if userid %}autofocus{% endif %} required
-             {% if error %}aria-invalid="true" aria-describedby="setup-error"{% endif %}>
+             placeholder="ABCD-EFGH" {% if userid %}autofocus{% endif %} required>
     </div>
     <div class="field">
-      <label for="password">New password</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" minlength="{{ min_length }}" required>
-      <p class="hint">At least {{ min_length }} characters.</p>
+      <label for="pin">New PIN</label>
+      <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="{{ pin_length }}"
+             minlength="{{ pin_length }}" autocomplete="new-password" required>
+      <p class="hint">Exactly {{ pin_length }} digits.</p>
     </div>
     <div class="field">
       <label for="confirm">Type it again</label>
-      <input id="confirm" name="confirm" type="password" autocomplete="new-password" required>
+      <input id="confirm" name="confirm" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="{{ pin_length }}"
+             minlength="{{ pin_length }}" autocomplete="new-password" required
+             {% if error %}aria-invalid="true" aria-describedby="setup-error"{% endif %}>
       {% if error %}<p class="err" id="setup-error" role="alert">{{ error }}</p>{% endif %}
     </div>
-    <button class="btn primary" type="submit">Save password</button>
+    <button class="btn primary" type="submit">Save PIN</button>
     <p class="hint"><a href="{{ url_for('auth.login') }}">Back to sign in</a></p>
   </form>
 </main>

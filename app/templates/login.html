@@ -17,13 +17,14 @@
              spellcheck="false" placeholder="name-1234" {% if not userid %}autofocus{% endif %} required>
     </div>
     <div class="field">
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" {% if userid %}autofocus{% endif %} required
+      <label for="pin">PIN</label>
+      <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+             autocomplete="current-password" {% if userid %}autofocus{% endif %} required
              {% if error %}aria-invalid="true" aria-describedby="login-error"{% endif %}>
       {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
     </div>
     <button class="btn primary" type="submit">Sign in</button>
-    <p class="hint">First time, or forgot your password? <a href="{{ url_for('auth.set_password') }}">Set a new password</a> with the setup code from your admin.</p>
+    <p class="hint">First time, or forgot your PIN? <a href="{{ url_for('auth.set_pin') }}">Set a new PIN</a> with the setup code from your admin.</p>
   </form>
 </main>
 {% endblock %}
