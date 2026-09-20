@@ -215,7 +215,7 @@ still work (type state, district and city by hand), and every pincode that has b
 - A **userid** is the person's name plus a random, unique 4-digit code, for example `ravikumar-4821`.
   The 4-digit code is the user's primary key.
 - Only the **admin** (created once with `create-admin`, named `grtechno` by default) can add users. Open **Users**
-  in the top bar, type a name, and the app shows the userid and a one-time **setup code**. Send them to the person
+  in the left menu (Admin section), type a name, and the app shows the userid and a one-time **setup code**. Send them to the person
   (there is a WhatsApp button). The code works once and is valid for 7 days.
 - The person opens `/set-pin` (also linked on the sign-in page), enters the userid and setup code, and chooses
   their own 6-digit PIN. Obvious PINs (all the same digit, or a run like 123456) are refused.
