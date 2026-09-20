@@ -11,6 +11,7 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
   gets a **Create project** button.
 - **Clients and Projects.** Won leads become a client and a project. The project holds the work order number and
   date, start date, completion period, estimated amount, discount, payment terms, special terms and a payment schedule.
+  Work that is already running is added with **Add project** on the Projects screen (pick a client or type a new one).
 - **Left menu.** The three-dash button at the top left opens a panel with the services you can use, who is
   signed in, and Sign out. Lead desk is the first service; more (attendance, manpower, material allotment, ...) plug in
   the same way. The admin also sees Users there.
@@ -206,6 +207,11 @@ project manager, and the manager must have the Project manager role.
 **Won lead to project.** Open a won lead and tap **Create project**. It creates the project and a client (an existing
 client with the same name is reused). The sales person who owns the lead does this even if their role cannot open
 Projects; the project manager or admin then completes the work order details and payment schedule.
+
+**Add project (work that did not come from a lead).** Admin, Accounts and project managers can add a project
+directly: choose an existing client or enter a new client name (a client with the same name is reused), then add the
+title, work category and status (default Running). A project manager who adds one becomes its manager; for the
+admin or Accounts the manager is assigned afterwards.
 
 **Site category and work categories** are rows in `site_categories` and `services` (same columns as the other
 dropdown lists). The first version's four differently named services (Sprinklers, Hydrant and pump room, Extinguishers,

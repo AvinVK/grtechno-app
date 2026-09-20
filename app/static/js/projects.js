@@ -66,7 +66,7 @@
       if (!items.length) {
         list.append(h('li', { class: 'empty-state' }, data.projects.length
           ? 'No projects match this search.'
-          : 'No projects yet. A project starts when a lead is won: open the lead and tap Create project.'));
+          : 'No projects yet. Tap Add project, or win a lead and tap Create project on it.'));
         return;
       }
       items.forEach((p) => list.append(h('li', {}, h('a', { class: 'p-row', href: `#p${p.id}` },
@@ -79,10 +79,70 @@
           p.manager_name ? h('span', { class: 'p-manager' }, `PM: ${p.manager_name}`) : h('span', { class: 'p-manager none' }, 'No manager yet'))))));
     }
 
-    wrap.append(h('div', { class: 'filters' }, search, chips), count, list);
+    wrap.append(
+      h('div', { class: 'list-head' }, h('h2', {}, 'Projects'), h('a', { class: 'btn primary', href: '#new' }, 'Add project')),
+      h('div', { class: 'filters' }, search, chips), count, list);
     clear(view).append(wrap);
     renderChips();
     refresh();
+  }
+
+  /* ---------- add a project that did not come from a lead ---------- */
+
+  async function showNew() {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
+    let data;
+    try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    const clientSel = h('select', {},
+      h('option', { value: '' }, 'A new client\u2026'),
+      data.clients.map((c) => h('option', { value: c.id }, c.name)));
+    const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
+    const newNameField = field('new_client_name', 'New client name', newName);
+    const titleInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Optional (defaults to client and work)' });
+    const category = h('select', {}, h('option', { value: '' }, 'Not set'), data.services.map((s) => h('option', { value: s }, s)));
+    const statusSel = h('select', {}, data.statuses.map((s) => h('option', { value: s, selected: s === 'running' }, STATUS[s][0])));
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add project');
+
+    const syncClient = () => { newNameField.hidden = clientSel.value !== ''; };
+    clientSel.addEventListener('change', syncClient);
+    syncClient();
+
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          const saved = await api('/api/projects', { method: 'POST', body: {
+            client_id: clientSel.value || null, new_client_name: newName.value, title: titleInput.value,
+            work_category: category.value, status: statusSel.value,
+          } });
+          toast('Project added');
+          window.location.hash = `#p${saved.project.id}`;
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      h('div', { class: 'form-grid' },
+        field('client_id', 'Client', clientSel, { wide: true }),
+        newNameField,
+        field('title', 'Project title', titleInput, { wide: true }),
+        field('work_category', 'Work category', category),
+        field('status', 'Status', statusSel)),
+      h('p', { class: 'hint' }, 'You can add the work order, amounts, terms and payment schedule on the next screen.'),
+      h('div', { class: 'form-actions' }, saveBtn));
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('a', { class: 'back-link', href: '#' }, '\u2190 All projects'),
+      h('div', { class: 'p-head' }, h('h2', {}, 'Add project')),
+      form));
   }
 
   /* ---------- one project ---------- */
@@ -251,7 +311,8 @@
 
   function route() {
     const m = /^#p(\d+)$/.exec(window.location.hash);
-    return m ? showDetail(Number(m[1])) : showList();
+    if (m) return showDetail(Number(m[1]));
+    return window.location.hash === '#new' ? showNew() : showList();
   }
 
   window.addEventListener('hashchange', route);

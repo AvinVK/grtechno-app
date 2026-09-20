@@ -1,6 +1,6 @@
 """Projects (the Project Management service): work orders, amounts, terms and the payment schedule.
 A project normally starts from a won lead (create_project_from_lead) and is then completed by the project
-manager or the admin."""
+manager or the admin. Work that is already running can be added directly (create_project)."""
 
 import re
 from decimal import Decimal
@@ -9,7 +9,7 @@ from flask import Blueprint, g, jsonify, render_template, request
 from sqlalchemy import func
 from werkzeug.exceptions import abort
 
-from .auth import visible_projects
+from .auth import visible_clients, visible_projects
 from .extensions import db
 from .models import Activity, Client, Project, ProjectPayment, User, settings_for_client
 from .modules import check_module
@@ -98,11 +98,60 @@ def page():
 @bp.get("/api/projects")
 def list_projects():
     projects = visible_projects().order_by(Project.id.desc()).all()
+    settings = settings_for_client()
     return jsonify(
         projects=[p.to_dict() for p in projects],
         statuses=PROJECT_STATUSES,
-        currency=settings_for_client()["currency"],
+        currency=settings["currency"],
+        services=settings["services"],                      # for the Add project form
+        clients=[{"id": c.id, "name": c.name} for c in visible_clients().order_by(Client.name)],
     )
+
+
+@bp.post("/api/projects")
+def create_project():
+    """Add a project that did not come from a lead (for example one that is already running).
+    Pick an existing client or give the name of a new one; the rest is filled in on the project screen."""
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+
+    f = Fields(payload)
+    f.text("title", 160)
+    f.text("work_category", 120)
+    f.text("new_client_name", 160)
+    f.choice("status", PROJECT_STATUSES)
+    errors = dict(f.errors)
+
+    client = None
+    raw_id = payload.get("client_id")
+    if raw_id not in (None, ""):
+        try:
+            client = visible_clients().filter(Client.id == int(raw_id)).first()
+        except (TypeError, ValueError):
+            client = None
+        if client is None:
+            errors["client_id"] = "Choose a client from the list"
+    else:
+        name = f.data.get("new_client_name", "")
+        if not name:
+            errors["client_id"] = "Choose a client, or enter the name of a new one"
+        else:
+            client = Client.query.filter(func.lower(Client.name) == name.lower()).first() or Client(name=name, owner_code=g.user.code)
+
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+
+    category = f.data.get("work_category", "")
+    title = f.data.get("title") or (f"{client.name} - {category}" if category else client.name)
+    project = Project(
+        client=client, title=title[:160], work_category=category, status=f.data.get("status", "running"),
+        owner_code=g.user.code,
+        manager_code=g.user.code if g.user.role_key == "project_manager" else None,   # a manager who adds it runs it
+    )
+    db.session.add(project)
+    db.session.commit()
+    return jsonify(_detail(project)), 201
 
 
 def _detail(project):

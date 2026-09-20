@@ -1,5 +1,5 @@
 from app.extensions import db
-from app.models import Client, Lead, Project
+from app.models import Client, Lead, Project, Service
 from conftest import make_user, signed_in
 
 
@@ -214,3 +214,67 @@ def test_client_validation(admin_client):
     cid = admin_client.post("/api/clients", json={"name": "Valid Co"}).get_json()["client"]["id"]
     assert admin_client.patch(f"/api/clients/{cid}", json={"name": ""}).status_code == 422
     assert admin_client.get("/api/clients/9999").status_code == 404
+
+
+# ---------- adding a project directly (work that is already running) ----------
+
+def test_admin_adds_a_project_with_a_new_client(admin_client, admin):
+    res = admin_client.post("/api/projects", json={"new_client_name": "Sunrise Hospital", "work_category": "AMC"})
+    assert res.status_code == 201
+    project = res.get_json()["project"]
+    assert project["code"] == "PRJ-0001" and project["client_name"] == "Sunrise Hospital"
+    assert project["status"] == "running" and project["title"] == "Sunrise Hospital - AMC"      # sensible defaults
+    assert project["manager_code"] is None and project["lead_id"] is None
+    client = Client.query.one()
+    assert client.name == "Sunrise Hospital" and client.owner_code == admin.code
+
+
+def test_add_project_for_an_existing_client_and_custom_details(admin_client):
+    cid = admin_client.post("/api/clients", json={"name": "Orchid Heights CHS"}).get_json()["client"]["id"]
+    res = admin_client.post("/api/projects", json={"client_id": cid, "title": "Fire alarm upgrade", "status": "on_hold"})
+    assert res.status_code == 201
+    assert res.get_json()["project"]["title"] == "Fire alarm upgrade" and res.get_json()["project"]["status"] == "on_hold"
+    assert Client.query.count() == 1                                                          # the client was reused, not duplicated
+    db.session.add(Service(name="AMC", sort_order=1))
+    db.session.commit()
+    listing = admin_client.get("/api/projects").get_json()
+    assert [c["name"] for c in listing["clients"]] == ["Orchid Heights CHS"] and "AMC" in listing["services"]
+
+
+def test_a_new_client_name_that_already_exists_is_reused(admin_client):
+    admin_client.post("/api/projects", json={"new_client_name": "Greenfield Warehousing"})
+    admin_client.post("/api/projects", json={"new_client_name": "greenfield warehousing"})
+    assert Client.query.count() == 1 and Project.query.count() == 2
+
+
+def test_add_project_validation(admin_client):
+    def bad(payload):
+        res = admin_client.post("/api/projects", json=payload)
+        assert res.status_code == 422, payload
+        return res.get_json()["fields"]
+
+    assert "client_id" in bad({})                                                             # no client at all
+    assert "client_id" in bad({"new_client_name": "   "})
+    assert "client_id" in bad({"client_id": 9999})
+    assert "client_id" in bad({"client_id": "abc"})
+    assert "status" in bad({"new_client_name": "X", "status": "finished"})
+    assert "title" in bad({"new_client_name": "X", "title": "t" * 161})
+    assert Project.query.count() == 0
+
+
+def test_project_manager_adds_and_runs_their_own_project(manager_client, manager, admin_client):
+    res = manager_client.post("/api/projects", json={"new_client_name": "Pinnacle IT Park", "work_category": "Fire alarms"})
+    assert res.status_code == 201
+    assert res.get_json()["project"]["manager_name"] == "Priya Manager" and res.get_json()["project"]["manager_code"] == manager.code
+    assert len(manager_client.get("/api/projects").get_json()["projects"]) == 1                # it is theirs, so they see it
+
+    # a client that belongs to someone else's project is not on their list
+    other = admin_client.post("/api/clients", json={"name": "Someone Else Ltd"}).get_json()["client"]["id"]
+    assert manager_client.post("/api/projects", json={"client_id": other}).status_code == 422
+    assert [c["name"] for c in manager_client.get("/api/projects").get_json()["clients"]] == ["Pinnacle IT Park"]
+
+
+def test_accounts_can_add_a_project_and_sales_cannot(accounts_client, client):
+    res = accounts_client.post("/api/projects", json={"new_client_name": "Walk-in Traders"})
+    assert res.status_code == 201 and res.get_json()["project"]["manager_code"] is None        # assigned later by admin/accounts
+    assert client.post("/api/projects", json={"new_client_name": "Nope"}).status_code == 403
