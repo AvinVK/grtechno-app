@@ -5,6 +5,7 @@ from app import create_app
 from app.auth import create_user
 from app.config import Config
 from app.extensions import db
+from app.models import Module
 
 PIN = "482915"
 
@@ -20,6 +21,8 @@ def app():
     app = create_app(TestConfig)
     with app.app_context():
         db.create_all()
+        db.session.add(Module(key="leads", name="Lead desk", icon="leads", path="/", sort_order=1))
+        db.session.commit()
         yield app
         db.session.remove()
         db.drop_all()

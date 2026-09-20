@@ -30,19 +30,30 @@ def create_app(config_object=Config):
     from .auth import bp as auth_bp
     from .auth import csrf_token
     from .cli import register_cli
+    from .modules import bp as modules_bp, modules_for
     from .users import bp as users_bp
     from .views import bp as views_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(users_bp)
+    app.register_blueprint(modules_bp)
     app.register_blueprint(views_bp)
     register_cli(app)
 
     app.jinja_env.globals["csrf_token"] = csrf_token
 
     @app.context_processor
-    def inject_user():
-        return {"current_user": g.get("user")}
+    def inject_shell():
+        user = g.get("user")
+        if user is None:
+            return {"current_user": None, "nav_modules": [], "current_module": None}
+        modules = modules_for(user)
+        key = g.get("module_key")
+        return {
+            "current_user": user,
+            "nav_modules": modules,
+            "current_module": next((m for m in modules if m.key == key), None),
+        }
 
     return app

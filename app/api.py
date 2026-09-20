@@ -8,6 +8,7 @@ from flask import Blueprint, g, jsonify, request
 from werkzeug.exceptions import HTTPException, abort
 
 from .auth import visible_leads
+from .modules import check_module
 from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
 from .extensions import db
 from .models import Activity, Lead, Pincode, settings_for_client, utcnow
@@ -37,6 +38,11 @@ PINCODE_SERVICE = "https://api.postalpincode.in/pincode/"
 @bp.errorhandler(HTTPException)
 def json_error(err):
     return jsonify(error=err.description or err.name), err.code
+
+
+@bp.before_request
+def _leads_service():
+    check_module("leads")
 
 
 def _payload() -> dict:

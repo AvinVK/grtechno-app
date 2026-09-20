@@ -1,0 +1,33 @@
+{% from "_icons.html" import icon %}
+<div class="menu-overlay" id="menu-overlay"></div>
+<aside class="sidebar" id="sidebar" aria-label="Menu">
+  <div class="sb-head">
+    <span class="sb-avatar" aria-hidden="true">{{ current_user.name[:1]|upper }}</span>
+    <div class="sb-who">
+      <strong>{{ current_user.name }}</strong>
+      <span>{{ current_user.userid }}{% if current_user.is_admin %} · Admin{% endif %}</span>
+    </div>
+    <button class="icon-btn" id="menu-close" type="button" aria-label="Close menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+
+  <nav class="sb-nav" aria-label="Services">
+    <p class="sb-label">Services</p>
+    {% for m in nav_modules %}
+    <a class="sb-link" href="{{ m.path }}"{% if current_module and current_module.key == m.key %} aria-current="page"{% endif %}>{{ icon(m.icon) }}<span>{{ m.name }}</span></a>
+    {% else %}
+    <p class="sb-empty">No services are turned on yet.</p>
+    {% endfor %}
+
+    {% if current_user.is_admin %}
+    <p class="sb-label">Admin</p>
+    <a class="sb-link" href="{{ url_for('views.index') }}#users">{{ icon('user') }}<span>Users</span></a>
+    {% endif %}
+  </nav>
+
+  <form class="sb-foot" method="post" action="{{ url_for('auth.logout') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <button class="btn" type="submit">Sign out</button>
+  </form>
+</aside>

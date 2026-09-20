@@ -4,10 +4,16 @@ import io
 from flask import Blueprint, Response, render_template
 
 from .auth import visible_leads
+from .modules import check_module
 from .models import Lead
 from .timeutil import today_local
 
 bp = Blueprint("views", __name__)
+
+
+@bp.before_request
+def _leads_service():
+    check_module("leads")
 
 CSV_COLUMNS = [
     ("id", "ID"),

@@ -5,7 +5,10 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
 
 - **Sign-in with your own userid.** The admin adds people; each person sets their own 6-digit PIN.
   Everyone sees only their own leads; the admin sees all of them and manages users.
-- **Bottom tabs** (phone-first): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
+- **Left menu.** The three-dash button at the top left opens a panel with the services you can use, who is
+  signed in, and Sign out. Lead desk is the first service; more (attendance, manpower, material allotment, ...) plug in
+  the same way. The admin also sees Users there.
+- **Bottom tabs** (phone-first, inside Lead desk): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
   (open pipeline value, follow-ups due, won this month).
 - **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
   earliest follow-up first, with search and stage filter chips. Tap a lead to update its stage,
@@ -143,6 +146,33 @@ and use Export CSV as a second copy.
   so keep it in place.
 - Everyone sees only the leads they added. The admin sees all leads, with each owner's name.
 
+## Services and the left menu
+
+Each service (Lead desk today) is a row in the `modules` table. The menu is built from it, so adding, hiding or
+reordering a service is a database change:
+
+| Column | Meaning |
+|---|---|
+| `key` | Short unique id used in code, for example `attendance` |
+| `name` | Shown in the menu and as the page title |
+| `icon` | `leads`, `attendance`, `manpower`, `material`, or anything else for a plain grid icon |
+| `path` | Where the menu link goes, for example `/attendance` |
+| `sort_order` | Menu order, lowest first |
+| `is_active` | 0 hides the service **and blocks its pages and API** |
+| `admin_only` | 1 makes it visible and usable by the admin only |
+
+```sql
+INSERT INTO modules (key, name, icon, path, sort_order) VALUES ('attendance', 'Attendance', 'attendance', '/attendance', 2);
+UPDATE modules SET admin_only = 1 WHERE key = 'attendance';
+UPDATE modules SET is_active = 0 WHERE key = 'attendance';
+```
+
+**Building a new service.** Give it its own blueprint (pages under `/attendance`, API under `/api/attendance`) and
+call `check_module("attendance")` from it (or put `@module_required("attendance")` on a route, or call it in the
+blueprint's `before_request`, the way Lead desk does). That makes the row above binding on the server, not just in the
+menu. Its page extends `base.html`, so it gets the top bar, the menu button and the panel for free. `GET /api/modules`
+returns the same list as JSON.
+
 ## Dropdown lists and settings (kept in the database)
 
 The app has no settings screen. It only reads these tables, so change them straight in `instance/leads.db`
@@ -182,15 +212,16 @@ Commit the new file in `migrations/versions/`. Run the same `db upgrade` on Pyth
 app/
   __init__.py        app factory
   config.py          settings read from .env
-  models.py          Lead, Activity, User, Service, LeadSource, Setting, Pincode
+  models.py          Lead, Activity, User, Module, Service, LeadSource, Setting, Pincode
   api.py             JSON endpoints under /api, validation, summary maths
   views.py           home page and CSV export
   auth.py            sign-in, setup codes, lockout, CSRF, who may see which leads
   users.py           admin-only user management API
+  modules.py         the services list, who may use which, and the check_module guard
   cli.py             `flask create-admin`, `reset-pin`, `seed-demo`
   constants.py       stage names
-  templates/         base, index, login
-  static/            css/app.css, js/app.js
+  templates/         base (top bar + menu), _sidebar, _icons, index, login, set_pin
+  static/            css/app.css, js/app.js (Lead desk), js/shell.js (the left menu)
 migrations/          database migrations (Flask-Migrate)
 tests/               pytest suite
 wsgi.py              entry point for the flask command

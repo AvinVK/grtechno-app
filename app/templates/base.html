@@ -13,19 +13,22 @@
 <body class="{% block body_class %}{% endblock %}">
 {% block header %}
   <header class="topbar">
-    <a class="brand" href="{{ url_for('views.index') }}"><span class="brand-mark" aria-hidden="true"></span>Lead desk</a>
+    {% if current_user %}
+    <button class="icon-btn" id="menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    {% endif %}
+    <a class="brand" href="{{ current_module.path if current_module else url_for('views.index') }}"><span class="brand-mark" aria-hidden="true"></span>{{ current_module.name if current_module else 'Lead desk' }}</a>
     {% block tabs %}{% endblock %}
     <div class="top-actions">
       {% block actions %}{% endblock %}
-      {% if current_user %}
-      <form method="post" action="{{ url_for('auth.logout') }}">
-        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-        <button class="link-btn" type="submit">Sign out</button>
-      </form>
-      {% endif %}
     </div>
   </header>
 {% endblock %}
 {% block content %}{% endblock %}
+{% if current_user %}
+  {% include "_sidebar.html" %}
+  <script src="{{ url_for('static', filename='js/shell.js') }}" defer></script>
+{% endif %}
 </body>
 </html>

@@ -154,6 +154,20 @@ class LeadSource(_NamedOption):
     __tablename__ = "lead_sources"
 
 
+class Module(db.Model):
+    """A service listed in the sidebar (Lead desk, later attendance, manpower, ...). Edited in the database."""
+
+    __tablename__ = "modules"
+
+    key = db.Column(db.String(30), primary_key=True)
+    name = db.Column(db.String(60), nullable=False)
+    icon = db.Column(db.String(30), nullable=False, default="grid", server_default="grid")
+    path = db.Column(db.String(120), nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    is_active = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
+    admin_only = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+
+
 class Setting(db.Model):
     """Single-value app settings (currency, country_code), one row each. Edited in the database."""
 
