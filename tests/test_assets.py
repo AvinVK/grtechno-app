@@ -30,3 +30,10 @@ def test_the_address_changes_when_the_file_changes_and_not_otherwise(app, tmp_pa
 def test_pages_are_never_reused_from_the_browser_cache(client, anon):
     assert client.get("/").headers["Cache-Control"] == "no-cache"
     assert anon.get("/login").headers["Cache-Control"] == "no-cache"
+
+
+def test_screens_ask_in_the_app_never_with_the_browsers_own_popup():
+    from pathlib import Path
+    for script in Path(__file__).resolve().parent.parent.joinpath("app", "static", "js").glob("*.js"):
+        text = script.read_text(encoding="utf-8")
+        assert "window.confirm(" not in text and "window.alert(" not in text, script.name

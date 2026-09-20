@@ -344,8 +344,10 @@
 
     // Won / Lost is only set by pressing Mark won / Mark lost, which saves the form with that outcome.
     let outcome = null;
-    const markOutcome = (result) => {
-      if (!window.confirm(`Mark ${title(lead)} as ${result.toLowerCase()}?`)) return;
+    const markOutcome = async (result) => {
+      const sure = await LD.confirm(`Mark ${title(lead)} as ${result.toLowerCase()}?`,
+        { title: `Mark ${result.toLowerCase()}`, ok: `Yes, mark ${result.toLowerCase()}`, danger: result === 'Lost' });
+      if (!sure) return;
       outcome = result;
       inputs.stage.append(h('option', { value: result }, result));
       inputs.stage.value = result;
@@ -407,7 +409,8 @@
     const remove = lead ? h('button', {
       class: 'btn danger', type: 'button',
       onclick: async () => {
-        if (!window.confirm(`Delete ${title(lead)}? This also removes its activity log.`)) return;
+        if (!(await LD.confirm(`Delete ${title(lead)}? This also removes its activity log.`,
+          { title: 'Delete lead', ok: 'Yes, delete', danger: true }))) return;
         try {
           await api(`/api/leads/${lead.id}`, { method: 'DELETE' });
           closeDrawer();
@@ -508,7 +511,8 @@
       action = h('button', {
         class: 'btn primary', type: 'button',
         onclick: async (e) => {
-          if (!window.confirm(`Create a client and a project from ${title(lead)}?`)) return;
+          if (!(await LD.confirm(`Create a client and a project from ${title(lead)}?`,
+            { title: 'Create project', ok: 'Yes, create' }))) return;
           e.target.disabled = true;
           try {
             const res = await api(`/api/leads/${lead.id}/project`, { method: 'POST' });

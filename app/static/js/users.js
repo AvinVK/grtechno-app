@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm } = window.LD;
 
   const chip = (tone, text) => h('span', { class: `chip chip-${tone}` }, text);
 
@@ -59,8 +59,8 @@
       }
     }
 
-    async function act(path, body, confirmText, onOk) {
-      if (confirmText && !window.confirm(confirmText)) return;
+    async function act(path, body, ask, onOk) {
+      if (ask && !(await confirm(ask.message, ask))) return;
       try {
         const data = await api(path, { method: 'POST', body });
         onOk(data);
@@ -73,11 +73,13 @@
     function roleControl(u) {
       return h('select', {
         class: 'role-select', 'aria-label': `Role for ${u.name}`,
-        onchange: (e) => {
-          const next = roles.find((r) => r.key === e.target.value);
-          const sure = window.confirm(
-            `Change ${u.name}'s role from ${u.role_name} to ${next.name}? What they can open and see changes straight away.`);
-          if (!sure) { e.target.value = u.role; return; }                 // cancelled: put the old role back
+        onchange: async (e) => {
+          const select = e.target;
+          const next = roles.find((r) => r.key === select.value);
+          const sure = await confirm(
+            `Change ${u.name}'s role from ${u.role_name} to ${next.name}? What they can open and see changes straight away.`,
+            { title: 'Change role', ok: 'Yes, change' });
+          if (!sure) { select.value = u.role; return; }                   // cancelled: put the old role back
           act(`/api/users/${u.code}/role`, { role: next.key }, null,
             (data) => toast(`${u.name} is now ${data.user.role_name}`));
         },
@@ -92,7 +94,8 @@
         h('button', {
           class: 'btn small', type: 'button',
           onclick: () => act(`/api/users/${u.code}/reset`, {},
-            `Give ${u.name} a new setup code? Their current PIN stops working until they set a new one.`,
+            { title: u.status === 'pending' ? 'New setup code' : 'Reset PIN', ok: 'Yes, give new code',
+              message: `Give ${u.name} a new setup code? Their current PIN stops working until they set a new one.` },
             (data) => showCode(data, 'New setup code')),
         }, u.status === 'pending' ? 'New setup code' : 'Reset PIN'),
         u.status === 'off'
@@ -100,7 +103,8 @@
           : h('button', {
             class: 'btn small danger', type: 'button',
             onclick: () => act(`/api/users/${u.code}/active`, { active: false },
-              `Turn off ${u.name}? They are signed out and cannot sign in until you turn them on again. Their leads stay.`,
+              { title: 'Turn off user', ok: 'Yes, turn off', danger: true,
+                message: `Turn off ${u.name}? They are signed out and cannot sign in until you turn them on again. Their leads stay.` },
               () => toast(`${u.name} is turned off`)),
           }, 'Turn off'));
       return h('article', { class: 'user-row' },

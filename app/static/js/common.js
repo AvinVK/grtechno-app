@@ -54,6 +54,43 @@ window.LD = (() => {
     toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 4500 : 2600);
   }
 
+  /* An in-app "are you sure?" box, used instead of the browser's own popup. Resolves true or false.
+     Cancel has the focus to begin with, so pressing Enter by mistake never confirms a delete. */
+  function confirmBox(message, { ok = 'Yes', title = 'Confirm', danger = false } = {}) {
+    return new Promise((resolve) => {
+      const previous = document.activeElement;
+      const lockedBefore = document.body.classList.contains('locked');
+      const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+      const okBtn = h('button', { class: `btn ${danger ? 'danger-solid' : 'primary'}`, type: 'button' }, ok);
+      const titleEl = h('h2', { id: 'confirm-title' }, title);
+      const card = h('div', { class: 'confirm-card', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'confirm-title', 'aria-describedby': 'confirm-message' },
+        titleEl, h('p', { id: 'confirm-message' }, message), h('div', { class: 'confirm-actions' }, cancelBtn, okBtn));
+      const overlay = h('div', { class: 'confirm-overlay' }, card);
+
+      function finish(result) {
+        window.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        if (!lockedBefore) document.body.classList.remove('locked');
+        if (previous && previous.isConnected) previous.focus();
+        resolve(result);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); return; }
+        if (e.key === 'Tab') {                                            // keep focus inside the box
+          e.preventDefault();
+          (document.activeElement === cancelBtn ? okBtn : cancelBtn).focus();
+        }
+      }
+      cancelBtn.addEventListener('click', () => finish(false));
+      okBtn.addEventListener('click', () => finish(true));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+      window.addEventListener('keydown', onKey, true);
+      document.body.classList.add('locked');
+      document.body.append(overlay);
+      cancelBtn.focus();
+    });
+  }
+
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
   const money = (v, currency) => (v === null || v === undefined ? '' :
@@ -108,5 +145,5 @@ window.LD = (() => {
     });
   }
 
-  return { $, h, clear, api, toast, plural, money, field, showFieldErrors, pincodeLookup };
+  return { $, h, clear, api, toast, confirm: confirmBox, plural, money, field, showFieldErrors, pincodeLookup };
 })();
