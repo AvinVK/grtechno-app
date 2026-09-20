@@ -1,4 +1,4 @@
-from flask import Blueprint, g, jsonify
+from flask import Blueprint, g, jsonify, render_template
 from sqlalchemy import func
 from werkzeug.exceptions import HTTPException, abort
 
@@ -8,6 +8,7 @@ from .extensions import db
 from .models import Lead, Role, User, utcnow
 
 bp = Blueprint("users", __name__, url_prefix="/api/users")
+page_bp = Blueprint("users_page", __name__)              # the /users page; the JSON API above is under /api/users
 
 
 @bp.errorhandler(HTTPException)
@@ -19,6 +20,17 @@ def json_error(err):
 def admin_only():
     if not g.user or not g.user.is_admin:
         abort(403, "Only the admin can do this.")
+
+
+@page_bp.before_request
+def admin_only_page():
+    if not g.user or not g.user.is_admin:
+        abort(403, "Only the admin can open this page.")
+
+
+@page_bp.get("/users")
+def page():
+    return render_template("users.html", heading="Users", heading_href="/users")
 
 
 def _dict(user: User, lead_count: int = 0) -> dict:

@@ -14,7 +14,7 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
   Work that is already running is added with **Add project** on the Projects screen (pick a client or type a new one).
 - **Left menu.** The three-dash button at the top left opens a panel with the services you can use, who is
   signed in, and Sign out. Lead desk is the first service; more (attendance, manpower, material allotment, ...) plug in
-  the same way. The admin also sees Users there.
+  the same way. The admin also sees **Users** there, which is its own app-wide page at `/users` (not part of Lead desk).
 - **Bottom tabs** (phone-first, inside Lead desk): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
   (open pipeline value, follow-ups due, won this month).
 - **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
@@ -345,9 +345,9 @@ app/
   modules.py         the services list, who may use which, and the check_module guard
   cli.py             `flask create-admin`, `reset-pin`, `seed-demo`
   constants.py       stage names
-  templates/         base (top bar + menu), _sidebar, _icons, index, clients, projects, login, set_pin
+  templates/         base (top bar + menu), _sidebar, _icons, index, clients, projects, users, login, set_pin
   static/            css/app.css, js/common.js (shared helpers), js/app.js (Lead desk),
-                     js/clients.js, js/projects.js, js/shell.js (the left menu)
+                     js/clients.js, js/projects.js, js/users.js (the Users page), js/shell.js (the left menu)
 migrations/          database migrations (Flask-Migrate)
 tests/               pytest suite
 wsgi.py              entry point for the flask command and for PythonAnywhere

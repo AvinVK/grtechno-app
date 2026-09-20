@@ -34,12 +34,13 @@ def create_app(config_object=Config):
     from .clients import bp as clients_bp
     from .projects import bp as projects_bp
     from .modules import bp as modules_bp, modules_for
-    from .users import bp as users_bp
+    from .users import bp as users_bp, page_bp as users_page_bp
     from .views import bp as views_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(users_bp)
+    app.register_blueprint(users_page_bp)
     app.register_blueprint(modules_bp)
     app.register_blueprint(clients_bp)
     app.register_blueprint(projects_bp)

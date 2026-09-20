@@ -1,5 +1,5 @@
 from app.extensions import db
-from app.models import Lead, User
+from app.models import Lead, Module, User
 from conftest import make_user, signed_in
 
 
@@ -115,3 +115,23 @@ def test_chosen_code_must_be_free(app):
         assert "already used" in str(err)
     else:
         raise AssertionError("expected ValueError")
+
+
+# ---------- the Users page is its own page, not part of Lead desk ----------
+
+def test_users_page_is_admin_only_and_titled_users(admin_client, client, anon):
+    page = admin_client.get("/users")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200 and "users.js" in html
+    assert '<span class="brand-mark" aria-hidden="true"></span>Users</a>' in html      # top bar says Users, not Lead desk
+    assert 'href="/users" aria-current="page"' in html                                  # marked in the menu
+    assert "app.js" not in html and "bottom-nav" not in html                            # none of Lead desk's screen
+    assert client.get("/users").status_code == 403
+    assert anon.get("/users").status_code == 302
+
+
+def test_users_page_does_not_need_the_lead_desk_service(admin_client):
+    Module.query.filter_by(key="leads").update({"is_active": False})                   # even with Lead desk switched off
+    db.session.commit()
+    assert admin_client.get("/users").status_code == 200
+    assert admin_client.get("/api/users").status_code == 200

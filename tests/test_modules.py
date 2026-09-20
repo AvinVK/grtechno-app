@@ -53,7 +53,7 @@ def test_page_has_the_menu_button_and_panel(client, user):
 
 def test_users_link_is_only_in_the_admin_menu(client, admin_client):
     assert "#users" not in client.get("/").get_data(as_text=True)
-    assert "/#users" in admin_client.get("/").get_data(as_text=True)
+    assert 'href="/users"' in admin_client.get("/").get_data(as_text=True)
 
 
 def test_login_page_has_no_menu(anon):

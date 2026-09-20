@@ -22,7 +22,7 @@
 
     {% if current_user.is_admin %}
     <p class="sb-label">Admin</p>
-    <a class="sb-link" href="{{ url_for('views.index') }}#users">{{ icon('user') }}<span>Users</span></a>
+    <a class="sb-link" href="{{ url_for('users_page.page') }}"{% if request.endpoint == 'users_page.page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Users</span></a>
     {% endif %}
   </nav>
 
