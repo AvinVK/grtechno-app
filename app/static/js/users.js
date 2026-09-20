@@ -73,8 +73,14 @@
     function roleControl(u) {
       return h('select', {
         class: 'role-select', 'aria-label': `Role for ${u.name}`,
-        onchange: (e) => act(`/api/users/${u.code}/role`, { role: e.target.value }, null,
-          (data) => toast(`${u.name} is now ${data.user.role_name}`)),
+        onchange: (e) => {
+          const next = roles.find((r) => r.key === e.target.value);
+          const sure = window.confirm(
+            `Change ${u.name}'s role from ${u.role_name} to ${next.name}? What they can open and see changes straight away.`);
+          if (!sure) { e.target.value = u.role; return; }                 // cancelled: put the old role back
+          act(`/api/users/${u.code}/role`, { role: next.key }, null,
+            (data) => toast(`${u.name} is now ${data.user.role_name}`));
+        },
       }, roles.map((r) => h('option', { value: r.key, selected: r.key === u.role }, r.name)));
     }
 
