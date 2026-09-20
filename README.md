@@ -1,4 +1,4 @@
-# Lead desk
+# Leads
 
 Lead management for a fire protection installation business. Track enquiries from first call to
 won or lost, see who to call today, and keep notes on every lead. Flask + SQLite, no build step.
@@ -7,15 +7,15 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
   Everyone sees only their own leads; the admin sees all of them and manages users.
 - **Roles.** Each person has a role (Admin, Sales (field), Sales (office), Project manager, Site supervisor,
   Accounts). The role decides which services they can open and whether they see every client and project.
-- **Lead desk extras.** A Site category list, the updated work categories, and a checklist on every lead. A won lead
+- **Leads extras.** A Site category list, the updated work categories, and a checklist on every lead. A won lead
   gets a **Create project** button.
 - **Clients and Projects.** Won leads become a client and a project. The project holds the work order number and
   date, start date, completion period, estimated amount, discount, payment terms, special terms and a payment schedule.
   Work that is already running is added with **Add project** on the Projects screen (pick a client or type a new one).
 - **Left menu.** The three-dash button at the top left opens a panel with the services you can use, who is
-  signed in, and Sign out. Lead desk is the first service; more (attendance, manpower, material allotment, ...) plug in
-  the same way. The admin also sees **Users & roles** there under **Manage**, which is its own app-wide page at `/users` (not part of Lead desk).
-- **Bottom tabs** (phone-first, inside Lead desk): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
+  signed in, and Sign out. Leads is the first service; more (attendance, manpower, material allotment, ...) plug in
+  the same way. The admin also sees **Users & roles** there under **Manage**, which is its own app-wide page at `/users` (not part of Leads).
+- **Bottom tabs** (phone-first, inside Leads): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
   (open pipeline value, follow-ups due, won this month).
 - **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
   earliest follow-up first, with search and stage filter chips. Tap a lead to update its stage,
@@ -233,7 +233,7 @@ still work (type state, district and city by hand), and every pincode that has b
 
 ## Services and the left menu
 
-Each service (Lead desk today) is a row in the `modules` table. The menu is built from it, so adding, hiding or
+Each service (Leads today) is a row in the `modules` table. The menu is built from it, so adding, hiding or
 reordering a service is a database change:
 
 | Column | Meaning |
@@ -254,7 +254,7 @@ UPDATE modules SET is_active = 0 WHERE key = 'attendance';
 
 **Building a new service.** Give it its own blueprint (pages under `/attendance`, API under `/api/attendance`) and
 call `check_module("attendance")` from it (or put `@module_required("attendance")` on a route, or call it in the
-blueprint's `before_request`, the way Lead desk does). That makes the row above binding on the server, not just in the
+blueprint's `before_request`, the way Leads does). That makes the row above binding on the server, not just in the
 menu. Its page extends `base.html`, so it gets the top bar, the menu button and the panel for free. `GET /api/modules`
 returns the same list as JSON.
 
@@ -265,7 +265,7 @@ returns the same list as JSON.
 | `roles` | `key`, `name`, `sees_all`. `sees_all = 1` (Admin, Accounts) means every client and project is visible |
 | `role_modules` | Which services (`modules.key`) a role can open. The admin can open all of them |
 
-Default roles and what they open: **Sales (field) / Sales (office)**: Lead desk. **Project manager** and
+Default roles and what they open: **Sales (field) / Sales (office)**: Leads. **Project manager** and
 **Accounts**: Clients and Projects. **Site supervisor**: nothing yet (the attendance and material services will come).
 Change it in the database, for example:
 
@@ -351,7 +351,7 @@ app/
   cli.py             `flask create-admin`, `reset-pin`, `seed-demo`
   constants.py       stage names
   templates/         base (top bar + menu), _sidebar, _icons, index, clients, projects, users, login, set_pin
-  static/            css/app.css, js/common.js (shared helpers), js/app.js (Lead desk),
+  static/            css/app.css, js/common.js (shared helpers), js/app.js (Leads),
                      js/clients.js, js/projects.js, js/users.js (the Users page), js/shell.js (the left menu)
 migrations/          database migrations (Flask-Migrate)
 tests/               pytest suite

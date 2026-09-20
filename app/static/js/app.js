@@ -1,4 +1,4 @@
-/* Lead desk front end. Plain JavaScript, no build step.
+/* Leads front end. Plain JavaScript, no build step.
    All server data goes through /api/state and the lead endpoints.
    DOM is built with h() and text nodes only, never innerHTML, so lead text cannot inject markup. */
 (() => {

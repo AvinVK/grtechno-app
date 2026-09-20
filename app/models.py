@@ -344,7 +344,7 @@ class SiteCategory(_NamedOption):
 
 
 class Module(db.Model):
-    """A service listed in the sidebar (Lead desk, later attendance, manpower, ...). Edited in the database."""
+    """A service listed in the sidebar (Leads, later attendance, manpower, ...). Edited in the database."""
 
     __tablename__ = "modules"
 

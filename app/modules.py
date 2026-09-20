@@ -1,4 +1,4 @@
-"""The services (Lead desk, and later attendance, manpower, ...) that appear in the sidebar.
+"""The services (Leads, and later attendance, manpower, ...) that appear in the sidebar.
 
 They are rows in the `modules` table. A service is a set of pages and API routes; to make it respect
 that row (turned off, or admin only) call check_module("key") from its routes, or put

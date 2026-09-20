@@ -26,7 +26,7 @@ def make_project(client, admin_client, **fields):
     return res.get_json()["project_id"]
 
 
-# ---------- Lead desk additions ----------
+# ---------- Leads additions ----------
 
 def test_site_category_list_and_field(client):
     assert client.get("/api/state").get_json()["settings"]["site_categories"][0] == "Hospital"

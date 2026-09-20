@@ -1,5 +1,5 @@
 /* Users (admin only): add people, choose their role, hand out setup codes, reset a PIN, turn someone off.
-   This is an app-wide screen, so it lives on its own page and not inside Lead desk. */
+   This is an app-wide screen, so it lives on its own page and not inside Leads. */
 (() => {
   'use strict';
 
@@ -25,7 +25,7 @@
 
     function showCode(data, heading) {
       const u = data.user;
-      const message = `Lead desk\nUserid: ${u.userid}\nSetup code: ${data.setup_code} (works once, valid ${data.code_days} days)\nSet your PIN at: ${window.location.origin}/set-pin`;
+      const message = `Leads\nUserid: ${u.userid}\nSetup code: ${data.setup_code} (works once, valid ${data.code_days} days)\nSet your PIN at: ${window.location.origin}/set-pin`;
       clear(resultBox).append(h('section', { class: 'code-card' },
         h('h3', {}, `${heading} for ${u.name}`),
         h('dl', {},
