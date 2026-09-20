@@ -135,7 +135,7 @@
       addBtn,
       h('p', { class: 'hint' }, 'The role decides which services they can open. The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
 
-    wrap.append(h('h2', {}, 'Users'), form, resultBox, listBox);
+    wrap.append(h('h2', {}, 'Users & roles'), form, resultBox, listBox);
     refresh();
     return wrap;
   }

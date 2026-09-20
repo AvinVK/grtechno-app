@@ -14,7 +14,7 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
   Work that is already running is added with **Add project** on the Projects screen (pick a client or type a new one).
 - **Left menu.** The three-dash button at the top left opens a panel with the services you can use, who is
   signed in, and Sign out. Lead desk is the first service; more (attendance, manpower, material allotment, ...) plug in
-  the same way. The admin also sees **Users** there, which is its own app-wide page at `/users` (not part of Lead desk).
+  the same way. The admin also sees **Users & roles** there under **Manage**, which is its own app-wide page at `/users` (not part of Lead desk).
 - **Bottom tabs** (phone-first, inside Lead desk): **Active leads**, **Add lead**, **Won / Lost** and **Your status**
   (open pipeline value, follow-ups due, won this month).
 - **Active leads**: every lead still in progress (New enquiry, Site survey, Quote sent, Negotiation),
@@ -214,8 +214,8 @@ still work (type state, district and city by hand), and every pincode that has b
 
 - A **userid** is the person's name plus a random, unique 4-digit code, for example `ravikumar-4821`.
   The 4-digit code is the user's primary key.
-- Only the **admin** (created once with `create-admin`, named `grtechno` by default) can add users. Open **Users**
-  in the left menu (Admin section), type a name, and the app shows the userid and a one-time **setup code**. Send them to the person
+- Only the **admin** (created once with `create-admin`, named `grtechno` by default) can add users. Open **Users & roles**
+  in the left menu (Manage section), type a name, and the app shows the userid and a one-time **setup code**. Send them to the person
   (there is a WhatsApp button). The code works once and is valid for 7 days.
 - The person opens `/set-pin` (also linked on the sign-in page), enters the userid and setup code, and chooses
   their own 6-digit PIN. Obvious PINs (all the same digit, or a run like 123456) are refused.
