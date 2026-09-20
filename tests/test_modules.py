@@ -51,9 +51,14 @@ def test_page_has_the_menu_button_and_panel(client, user):
     assert 'href="/" aria-current="page"' in html
 
 
-def test_users_link_is_only_in_the_admin_menu(client, admin_client):
-    assert "#users" not in client.get("/").get_data(as_text=True)
-    assert 'href="/users"' in admin_client.get("/").get_data(as_text=True)
+def test_users_and_roles_is_only_in_the_admin_menu(client, admin_client, manager_client, accounts_client):
+    for who in (client, manager_client, accounts_client):                        # every non-admin role
+        html = who.get("/").get_data(as_text=True)
+        assert 'href="/users"' not in html and "Users &amp; roles" not in html and ">Manage<" not in html
+        assert who.get("/users").status_code == 403
+        assert who.get("/api/users").status_code == 403
+    html = admin_client.get("/").get_data(as_text=True)
+    assert 'href="/users"' in html and "Users &amp; roles" in html
 
 
 def test_login_page_has_no_menu(anon):
