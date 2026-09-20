@@ -28,7 +28,7 @@ MAX_FAILURES = 5
 LOCKOUT = timedelta(minutes=5)
 PIN_LENGTH = 6
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I so a code read aloud is not misheard
-PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "static"}
+PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "deploy.deploy", "static"}
 LOCKED_MESSAGE = "Too many wrong tries. Wait 5 minutes and try again."
 _DUMMY_HASH = generate_password_hash("not-a-real-password")
 

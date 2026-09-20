@@ -1,0 +1,27 @@
+name: Deploy to PythonAnywhere
+
+# Runs on every push to main (and by hand from the Actions tab). It calls the app's own /deploy webhook,
+# which pulls the code, backs up and migrates the database, and reloads the site. See README, "Deploy".
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Deploy to PythonAnywhere
+        env:
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_SECRET }}
+        run: python scripts/deploy.py

@@ -91,50 +91,124 @@ Generate a secret key with: `python -c "import secrets; print(secrets.token_hex(
 
 ## Deploy to PythonAnywhere
 
-1. **Push this code to GitHub** (`AvinVK/fire-client-lead-management`). `.env` and `instance/` are
-   git-ignored, so your data and secrets are never uploaded.
-2. On PythonAnywhere open a **Bash console** and run (replace `YOURNAME`):
+This follows the same procedure as Clockit. `main` is production. After every push to `main`, a GitHub Action calls a
+secret-protected `/deploy` route inside the running app (`app/deploy.py`, `scripts/deploy.py`). The route does:
 
-   ```bash
-   git clone https://github.com/AvinVK/fire-client-lead-management.git
-   cd fire-client-lead-management
-   mkvirtualenv leads --python=python3.12     # use a Python version PythonAnywhere offers
-   pip install -r requirements.txt
-   cp .env.example .env
-   nano .env                                  # set SESSION_COOKIE_SECURE=1 (and SECRET_KEY if you want your own)
-   flask --app wsgi db upgrade
-   flask --app wsgi create-admin              # prints the admin userid and one-time setup code
-   ```
+1. `git pull` on the server,
+2. a backup of the database to `instance/backups/` (the newest 10 are kept),
+3. the database migrations (`flask db upgrade`), and
+4. a reload of the site (it touches the WSGI file).
 
-3. **Web tab** → *Add a new web app* → *Manual configuration* → pick the same Python version.
-   - Source code and Working directory: `/home/YOURNAME/fire-client-lead-management`
-   - Virtualenv: `/home/YOURNAME/.virtualenvs/leads`
-   - Static files: URL `/static/` → Directory `/home/YOURNAME/fire-client-lead-management/app/static`
-4. Open the **WSGI configuration file** from the Web tab, replace its contents with:
+If the pull or the migration fails, the site is not reloaded and keeps running the old code; the Action turns red and
+shows the reason. If `requirements.txt` changed, the Action prints a warning: run `pip install -r requirements.txt`
+in a Bash console on PythonAnywhere and press Reload.
 
-   ```python
-   import sys
-   path = "/home/YOURNAME/fire-client-lead-management"
-   if path not in sys.path:
-       sys.path.insert(0, path)
+### One-time setup
 
-   from app import create_app
-   application = create_app()
-   ```
-5. Click **Reload**. Visit `https://YOURNAME.pythonanywhere.com/set-pin`, use the admin userid and setup code, then sign in.
+**Before you start.** A free PythonAnywhere account runs **one** web app, and `avin0406` already runs Clockit. Use a
+second account (for example `grtechno`, giving `https://grtechno.pythonanywhere.com`) or a paid plan that allows two
+web apps. Below, `YOURNAME` is the PythonAnywhere username the app will live under. Merge `dev` into `main` first so
+the code you clone already contains the `/deploy` route.
 
-**Updating later:**
+**1. Clone the code (Bash console on PythonAnywhere).**
 
 ```bash
-cd ~/fire-client-lead-management && git pull
-pip install -r requirements.txt
-flask --app wsgi db upgrade
+cd ~
+git clone https://github.com/AvinVK/grtechno-app.git
 ```
 
-then Reload on the Web tab.
+If the repository is private, clone with a read-only token instead (GitHub > Settings > Developer settings >
+Fine-grained tokens, repository `grtechno-app`, permission *Contents: Read-only*):
+`git clone https://AvinVK:TOKEN@github.com/AvinVK/grtechno-app.git`. The token is kept in `.git/config` on the
+server, which is what lets the webhook run `git pull` later.
 
-**Back up your data.** Download `instance/leads.db` from the PythonAnywhere Files tab now and then,
-and use Export CSV as a second copy.
+**2. Virtualenv and packages.**
+
+```bash
+cd ~/grtechno-app
+mkvirtualenv grtechno --python=python3.12      # any Python version PythonAnywhere offers (3.10 or newer)
+pip install -r requirements.txt
+```
+
+**3. The `.env` file** (`cp .env.example .env`, then `nano .env`). It is git-ignored, so it stays on the server.
+
+```
+SESSION_COOKIE_SECURE=1
+TIMEZONE=Asia/Kolkata
+DEPLOY_SECRET=<a long random value, see below>
+WSGI_RELOAD_FILE=/var/www/YOURNAME_pythonanywhere_com_wsgi.py
+```
+
+Make the secret with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. `SECRET_KEY` is optional: if you
+leave it out, the app creates a strong key once in `instance/secret_key`.
+
+**4. Create the database and the admin** (still in the Bash console, virtualenv active).
+
+```bash
+cd ~/grtechno-app
+flask --app wsgi db upgrade                    # creates instance/leads.db with all tables and the starting lists
+flask --app wsgi create-admin --code 3766      # prints the admin userid (grtechno-3766) and a one-time setup code
+```
+
+The database is one SQLite file, `instance/leads.db`. It is not in git, so a fresh server starts empty (no test
+users or leads).
+
+**5. The web app (Web tab).** *Add a new web app*, *Manual configuration*, the same Python version, then set:
+
+- Source code and Working directory: `/home/YOURNAME/grtechno-app`
+- Virtualenv: `/home/YOURNAME/.virtualenvs/grtechno`
+- Static files: URL `/static/` to directory `/home/YOURNAME/grtechno-app/app/static`
+- WSGI configuration file (open it and replace everything with):
+
+```python
+import sys
+path = "/home/YOURNAME/grtechno-app"
+if path not in sys.path:
+    sys.path.insert(0, path)
+
+from wsgi import application
+```
+
+Press **Reload**, then open `https://YOURNAME.pythonanywhere.com/set-pin`, enter the admin userid and setup code, and
+choose your PIN. Sign in and add users from **Users** in the left menu.
+
+**6. Connect GitHub.** In the repository, Settings > Secrets and variables > Actions > *New repository secret*:
+
+| Secret | Value |
+|---|---|
+| `DEPLOY_URL` | `https://YOURNAME.pythonanywhere.com/deploy` |
+| `DEPLOY_SECRET` | exactly the same value as `DEPLOY_SECRET` in the server's `.env` |
+
+Test it: Actions tab > *Deploy to PythonAnywhere* > *Run workflow*. A green run means the pull, backup, migration and
+reload all worked.
+
+### Every release after that
+
+Work on `dev`. When you have checked it there, merge `dev` into `main` and push. The Action deploys it. Look at the
+Actions tab (or the email GitHub sends) to see that it went green.
+
+If you ever need to do it by hand, in a Bash console: `cd ~/grtechno-app && git pull origin main`, then
+`workon grtechno`, `pip install -r requirements.txt`, `flask --app wsgi db upgrade`, then press Reload on the Web tab.
+
+### The database on the server
+
+- **Where:** `~/grtechno-app/instance/leads.db`. It survives deploys, because git never touches it.
+- **Backups:** every deploy copies it to `instance/backups/leads-YYYYMMDD-HHMMSS.db` first (newest 10 kept). To
+  restore one, copy it over `instance/leads.db` and press Reload. Also download `leads.db` from the Files tab now and
+  then, and use **Export CSV** as a second copy.
+- **Looking inside or editing lists** (services, site categories, roles, ...): in a Bash console, run
+  `sqlite3 ~/grtechno-app/instance/leads.db`, or download the file, edit it with DB Browser for SQLite and upload it back
+  (do that while nobody is using the app).
+- **Schema changes** always ship as migration files in `migrations/versions/`, so they are applied by the deploy.
+- **Forgot the admin PIN:** `flask --app wsgi reset-pin grtechno-3766` in the Bash console prints a new setup code.
+
+### Things to know on the free plan
+
+These are from memory, so check PythonAnywhere's pricing and help pages: a free web app has to be extended from the Web
+tab every three months or it is switched off; there is no custom domain; and the server can only call a short list of
+allowed websites. The pincode lookup calls India Post from the server, so on the free plan it may be blocked. The forms
+still work (type state, district and city by hand), and every pincode that has been looked up once is kept in the
+`pincodes` table. A paid plan removes these limits, and later features such as scheduled alerts need one.
 
 ## Users and sign-in
 
@@ -263,6 +337,7 @@ app/
   views.py           home page and CSV export
   auth.py            sign-in, setup codes, lockout, CSRF, who may see which leads
   users.py           admin-only user management API (add users, roles, reset PIN, turn off)
+  deploy.py          the /deploy webhook: git pull, database backup, migrations, reload
   clients.py         Clients service: pages and API
   projects.py        Projects service: pages and API, and the won-lead-to-project step
   validation.py      field checks shared by the clients and projects APIs
@@ -275,7 +350,9 @@ app/
                      js/clients.js, js/projects.js, js/shell.js (the left menu)
 migrations/          database migrations (Flask-Migrate)
 tests/               pytest suite
-wsgi.py              entry point for the flask command
+wsgi.py              entry point for the flask command and for PythonAnywhere
+scripts/deploy.py    called by the GitHub Action to trigger a deploy
+.github/workflows/   the deploy workflow
 ```
 
 ## Things to know

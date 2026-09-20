@@ -30,6 +30,7 @@ def create_app(config_object=Config):
     from .auth import bp as auth_bp
     from .auth import csrf_token
     from .cli import register_cli
+    from .deploy import bp as deploy_bp
     from .clients import bp as clients_bp
     from .projects import bp as projects_bp
     from .modules import bp as modules_bp, modules_for
@@ -43,6 +44,7 @@ def create_app(config_object=Config):
     app.register_blueprint(clients_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(views_bp)
+    app.register_blueprint(deploy_bp)
     register_cli(app)
 
     app.jinja_env.globals["csrf_token"] = csrf_token
