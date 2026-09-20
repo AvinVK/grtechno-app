@@ -4,5 +4,5 @@
 
 {% block content %}
 <main id="view" class="view" tabindex="-1" data-clients="{{ 1 if nav_modules|selectattr('key', 'equalto', 'clients')|list else 0 }}"><p class="loading">Loading projects…</p></main>
-<script src="{{ url_for('static', filename='js/projects.js') }}" defer></script>
+<script src="{{ asset('js/projects.js') }}" defer></script>
 {% endblock %}

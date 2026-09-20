@@ -27,6 +27,7 @@ def create_app(config_object=Config):
 
     from . import models  # noqa: F401  (registers tables for migrations)
     from .api import bp as api_bp
+    from .assets import register_assets
     from .auth import bp as auth_bp
     from .auth import csrf_token
     from .cli import register_cli
@@ -49,6 +50,7 @@ def create_app(config_object=Config):
     register_cli(app)
 
     app.jinja_env.globals["csrf_token"] = csrf_token
+    register_assets(app)
 
     @app.context_processor
     def inject_shell():

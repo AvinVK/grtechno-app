@@ -187,6 +187,10 @@ reload all worked.
 Work on `dev`. When you have checked it there, merge `dev` into `main` and push. The Action deploys it. Look at the
 Actions tab (or the email GitHub sends) to see that it went green.
 
+Nobody has to hard-refresh after a release: the CSS and JavaScript addresses carry a fingerprint of the file
+(`app.js?v=3f9a1c2b7d`, see `app/assets.py`), so a changed file gets a new address and browsers fetch it by themselves. The
+pages themselves are never cached, so a normal reload shows the new version.
+
 If you ever need to do it by hand, in a Bash console: `cd ~/grtechno-app && git pull origin main`, then
 `workon grtechno`, `pip install -r requirements.txt`, `flask --app wsgi db upgrade`, then press Reload on the Web tab.
 
@@ -337,6 +341,7 @@ app/
   views.py           home page and CSV export
   auth.py            sign-in, setup codes, lockout, CSRF, who may see which leads
   users.py           admin-only user management API (add users, roles, reset PIN, turn off)
+  assets.py          fingerprints CSS/JS addresses so browsers pick up new versions after a deploy
   deploy.py          the /deploy webhook: git pull, database backup, migrations, reload
   clients.py         Clients service: pages and API
   projects.py        Projects service: pages and API, and the won-lead-to-project step

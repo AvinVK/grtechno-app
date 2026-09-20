@@ -4,5 +4,5 @@
 
 {% block content %}
 <main id="view" class="view" tabindex="-1"><p class="loading">Loading users…</p></main>
-<script src="{{ url_for('static', filename='js/users.js') }}" defer></script>
+<script src="{{ asset('js/users.js') }}" defer></script>
 {% endblock %}
