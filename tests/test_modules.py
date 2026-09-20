@@ -25,7 +25,7 @@ def test_menu_lists_active_services_in_order(client):
     add_module("manpower", "Manpower", "/manpower", icon="manpower", order=5)
     add_module("old", "Retired", "/old", order=7, active=False)
     grant("sales_field", "attendance", "manpower", "old")
-    assert menu_names(client) == ["Lead desk", "Manpower", "Attendance"]      # by sort_order, retired one hidden
+    assert menu_names(client) == ["Leads", "Manpower", "Attendance"]      # by sort_order, retired one hidden
 
 
 def test_admin_only_services_are_hidden_from_regular_users(client, admin_client):
@@ -76,7 +76,7 @@ def test_turning_lead_desk_off_blocks_its_pages_and_api(client):
     assert client.get("/export.csv").status_code == 404
     assert client.get("/api/state").status_code == 404
     assert client.post("/api/leads", json={"company": "X"}).status_code == 404
-    assert "Lead desk" not in menu_names(client)
+    assert "Leads" not in menu_names(client)
 
 
 def test_admin_only_service_is_enforced(client, admin_client):

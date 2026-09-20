@@ -32,7 +32,7 @@ def test_role_rules_on_adding_a_user(admin_client):
 
 
 def test_admin_can_change_a_users_role(admin_client, user, client):
-    assert names(client) == ["Lead desk"]
+    assert names(client) == ["Leads"]
     res = admin_client.post(f"/api/users/{user.code}/role", json={"role": "project_manager"})
     assert res.status_code == 200 and res.get_json()["user"]["role"] == "project_manager"
     assert names(client) == ["Clients", "Projects"]                                   # menu follows the role at once
@@ -48,7 +48,7 @@ def test_admins_role_is_fixed_and_only_the_admin_sets_roles(admin_client, admin,
 # ---------- what each role can open ----------
 
 def test_sales_cannot_open_clients_or_projects(client):
-    assert names(client) == ["Lead desk"]
+    assert names(client) == ["Leads"]
     for path in ("/clients", "/projects", "/api/clients", "/api/projects"):
         assert client.get(path).status_code == 403, path
 
@@ -63,7 +63,7 @@ def test_project_manager_cannot_open_lead_desk(manager_client):
 def test_home_page_sends_people_to_a_service_they_can_use(manager_client, client, admin_client):
     home = manager_client.get("/")
     assert home.status_code == 302 and home.headers["Location"].endswith("/clients")   # first of their services
-    assert client.get("/").status_code == 200                                          # sales: Lead desk itself
+    assert client.get("/").status_code == 200                                          # sales: Leads itself
     assert admin_client.get("/").status_code == 200
 
 
@@ -76,7 +76,7 @@ def test_supervisor_has_no_services_yet(app):
 
 
 def test_admin_opens_everything(admin_client):
-    assert names(admin_client) == ["Lead desk", "Clients", "Projects"]
+    assert names(admin_client) == ["Leads", "Clients", "Projects"]
 
 
 def test_roles_are_editable_in_the_database(app):
