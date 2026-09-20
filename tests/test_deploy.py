@@ -33,7 +33,15 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setenv("DEPLOY_SECRET", SECRET)
     monkeypatch.setenv("WSGI_RELOAD_FILE", str(wsgi_file))
     calls = []
-    monkeypatch.setattr(deploy.subprocess, "run", lambda cmd, **kw: (calls.append(cmd), Done())[1])
+    real_run = subprocess.run
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "git":                                     # git is stubbed; the migration really runs
+            calls.append(cmd)
+            return Done()
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(deploy.subprocess, "run", fake_run)
     app = create_app(DeployConfig)
     app.git_calls, app.wsgi_file, app.db_file = calls, wsgi_file, db_file
     return app
@@ -116,15 +124,45 @@ def test_a_failed_pull_stops_everything(server, monkeypatch):
 
 
 def test_a_failed_migration_does_not_reload_the_site(server, monkeypatch):
-    def boom(**kwargs):
-        raise RuntimeError("migration exploded")
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "git":
+            return Done()
+        return Done(1, "", "Traceback (most recent call last):\nRuntimeError: migration exploded")
 
-    monkeypatch.setattr(deploy, "upgrade", boom)
+    monkeypatch.setattr(deploy.subprocess, "run", fake_run)
     before = server.wsgi_file.stat().st_mtime_ns
     res = server.test_client().post("/deploy", headers=HEADERS)
-    assert res.status_code == 500 and res.get_json()["step"] == "database"
-    assert "migration exploded" in res.get_json()["error"]
+    body = res.get_json()
+    assert res.status_code == 500 and body["step"] == "database" and "not reloaded" in body["error"]
+    assert "migration exploded" in body["output"]                                    # the real reason is shown
     assert server.wsgi_file.stat().st_mtime_ns == before                             # old code keeps running
+
+
+def test_the_migration_runs_in_its_own_process_not_inside_the_web_server(server, monkeypatch):
+    commands = []
+    real_run = subprocess.run
+
+    def spy(cmd, **kwargs):
+        commands.append((cmd, kwargs))
+        return Done() if cmd[0] == "git" else real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(deploy.subprocess, "run", spy)
+    assert server.test_client().post("/deploy", headers=HEADERS).status_code == 200
+    migration = [c for c in commands if c[0][0] != "git"][0]
+    assert migration[0][1:] == ["-m", "flask", "--app", "wsgi", "db", "upgrade"]
+    assert migration[1]["env"]["DATABASE_URL"] == server.config["SQLALCHEMY_DATABASE_URI"]   # the same database
+
+
+def test_python_is_found_when_the_web_server_is_not_python(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYTHON_BIN", raising=False)
+    monkeypatch.setattr(deploy.sys, "executable", "/usr/local/bin/uwsgi")           # what PythonAnywhere reports
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python").write_text("")
+    monkeypatch.setattr(deploy.sys, "prefix", str(tmp_path / "venv"))
+    assert deploy._python() == str(bin_dir / "python")
+    monkeypatch.setenv("PYTHON_BIN", "/opt/custom/python")
+    assert deploy._python() == "/opt/custom/python"                                  # an explicit setting wins
 
 
 def test_reload_setup_problems_are_reported(server, monkeypatch):

@@ -3,19 +3,23 @@ after every push to main a GitHub Action POSTs here (scripts/deploy.py) and this
 
     git pull  ->  back up the database  ->  run the migrations  ->  touch the WSGI file (reload)
 
+The migrations run in a fresh Python process (the same command you would type by hand), not inside the web server,
+because Alembic reconfigures logging and that clashed with PythonAnywhere's web server ("maximum recursion depth").
+
 It is switched off unless DEPLOY_SECRET (at least 20 characters) is set in the server's .env file, and it only
 answers requests that send that secret in the X-Deploy-Secret header."""
 
 import hashlib
 import os
 import secrets
+import shutil
 import sqlite3
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_migrate import upgrade
 
 from .config import BASE_DIR
 
@@ -23,6 +27,7 @@ bp = Blueprint("deploy", __name__)
 
 MIN_SECRET_LENGTH = 20
 KEEP_BACKUPS = 10
+MIGRATION_TIMEOUT = 180
 
 
 def backup_database(app):
@@ -46,6 +51,30 @@ def backup_database(app):
     for old in sorted(folder.glob(f"{source.stem}-*{source.suffix}"))[:-KEEP_BACKUPS]:
         old.unlink()
     return target
+
+
+def _python() -> str:
+    """The Python of the site's virtualenv. Inside the web server sys.executable is the server program (uwsgi), not
+    Python, so look in the virtualenv instead. PYTHON_BIN in .env overrides all of this."""
+    override = (os.environ.get("PYTHON_BIN") or "").strip()
+    if override:
+        return override
+    if Path(sys.executable).name.lower().startswith("python"):
+        return sys.executable
+    for candidate in (Path(sys.prefix) / "bin" / "python", Path(sys.prefix) / "Scripts" / "python.exe"):
+        if candidate.exists():
+            return str(candidate)
+    return shutil.which("python3") or "python3"
+
+
+def run_migrations(app):
+    """Run `flask db upgrade` against the same database the site uses. Returns (succeeded, output)."""
+    env = dict(os.environ, DATABASE_URL=app.config["SQLALCHEMY_DATABASE_URI"])
+    result = subprocess.run(
+        [_python(), "-m", "flask", "--app", "wsgi", "db", "upgrade"],
+        cwd=BASE_DIR, env=env, capture_output=True, text=True, timeout=MIGRATION_TIMEOUT,
+    )
+    return result.returncode == 0, result.stdout + result.stderr
 
 
 def _requirements_hash() -> str:
@@ -73,12 +102,18 @@ def deploy():
     if pull.returncode != 0:
         return _fail("git pull", output)
 
-    backup = None
     try:
         backup = backup_database(current_app)
-        upgrade(directory=str(BASE_DIR / "migrations"))
-    except Exception as err:                                   # the site keeps running the old code until reload
-        return _fail("database", output, error=str(err), backup=backup.name if backup else None)
+    except Exception as err:
+        return _fail("database backup", output, error=repr(err))
+    try:
+        migrated, migration_output = run_migrations(current_app)
+    except Exception as err:                                   # for example the migration ran out of time
+        migrated, migration_output = False, repr(err)
+    if not migrated:                                           # the site keeps running the old code until reload
+        return _fail("database", f"{output}\n{migration_output}",
+                     error="the database migration failed, so the site was not reloaded",
+                     backup=backup.name if backup else None)
 
     reload_file = (os.environ.get("WSGI_RELOAD_FILE") or "").strip()
     if not reload_file:
