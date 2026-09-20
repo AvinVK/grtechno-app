@@ -41,7 +41,7 @@ def test_wrong_and_right_pin(app, user, anon):
     ok = login(anon, user.userid.upper(), PIN)              # userid is not case sensitive
     assert ok.status_code == 302
     me = anon.get("/api/state").get_json()["me"]
-    assert me == {"userid": user.userid, "name": "Tester", "is_admin": False}
+    assert me == {"userid": user.userid, "name": "Tester", "is_admin": False, "modules": ["leads"]}
 
 
 def test_login_needs_csrf(anon, user):

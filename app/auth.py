@@ -15,10 +15,11 @@ from flask import (
     session,
     url_for,
 )
+from sqlalchemy import or_
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db
-from .models import Lead, User, utcnow
+from .models import Client, Lead, Project, Role, User, utcnow
 
 bp = Blueprint("auth", __name__)
 
@@ -76,9 +77,12 @@ def issue_setup_code(user: User) -> str:
     return f"{raw[:4]}-{raw[4:]}"
 
 
-def create_user(name: str, is_admin: bool = False, code: str = None):
-    """Add a user (not yet committed). Returns (user, setup_code). Raises ValueError on a bad name or code.
-    The 4-digit code is chosen at random unless one is given."""
+def create_user(name: str, is_admin: bool = False, code: str = None, role: str = None):
+    """Add a user (not yet committed). Returns (user, setup_code). Raises ValueError on a bad name, code or role.
+    The 4-digit code is chosen at random unless one is given. The role defaults to admin / field sales."""
+    role = role or ("admin" if is_admin else "sales_field")
+    if db.session.get(Role, role) is None:
+        raise ValueError("Choose a role from the list.")
     name = " ".join((name or "").split())[:60]
     slug = re.sub(r"[^a-z0-9]", "", name.lower())[:20]
     if not slug:
@@ -95,7 +99,7 @@ def create_user(name: str, is_admin: bool = False, code: str = None):
                 break
         else:
             raise ValueError("No free user codes are left.")
-    user = User(code=code, userid=f"{slug}-{code}", name=name, is_admin=is_admin)
+    user = User(code=code, userid=f"{slug}-{code}", name=name, is_admin=is_admin, role_key=role)
     setup_code = issue_setup_code(user)
     db.session.add(user)
     return user, setup_code
@@ -114,6 +118,25 @@ def visible_leads():
     query = Lead.query
     if not g.user.is_admin:
         query = query.filter(Lead.owner_code == g.user.code)
+    return query
+
+
+def visible_projects():
+    """Projects this person may see: everything for the admin and for roles marked sees_all (Accounts),
+    otherwise only the projects they created or manage."""
+    query = Project.query
+    if not g.user.sees_all:
+        query = query.filter(or_(Project.owner_code == g.user.code, Project.manager_code == g.user.code))
+    return query
+
+
+def visible_clients():
+    """Clients this person may see: everything for sees_all, otherwise the ones they created plus the clients
+    of projects they manage."""
+    query = Client.query
+    if not g.user.sees_all:
+        managed = db.session.query(Project.client_id).filter(Project.manager_code == g.user.code)
+        query = query.filter(or_(Client.owner_code == g.user.code, Client.id.in_(managed)))
     return query
 
 

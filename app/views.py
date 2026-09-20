@@ -1,10 +1,10 @@
 import csv
 import io
 
-from flask import Blueprint, Response, render_template
+from flask import Blueprint, Response, g, redirect, render_template, request
 
 from .auth import visible_leads
-from .modules import check_module
+from .modules import check_module, modules_for
 from .models import Lead
 from .timeutil import today_local
 
@@ -13,7 +13,8 @@ bp = Blueprint("views", __name__)
 
 @bp.before_request
 def _leads_service():
-    check_module("leads")
+    if request.endpoint != "views.index":          # the home page sends people to a service they may use
+        check_module("leads")
 
 CSV_COLUMNS = [
     ("id", "ID"),
@@ -47,6 +48,12 @@ def _safe_cell(value):
 
 @bp.get("/")
 def index():
+    modules = modules_for(g.user)
+    if not any(m.key == "leads" for m in modules):
+        if modules:
+            return redirect(modules[0].path)
+        return render_template("no_services.html")
+    check_module("leads")
     return render_template("index.html")
 
 

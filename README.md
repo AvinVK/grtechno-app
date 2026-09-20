@@ -5,6 +5,12 @@ won or lost, see who to call today, and keep notes on every lead. Flask + SQLite
 
 - **Sign-in with your own userid.** The admin adds people; each person sets their own 6-digit PIN.
   Everyone sees only their own leads; the admin sees all of them and manages users.
+- **Roles.** Each person has a role (Admin, Sales (field), Sales (office), Project manager, Site supervisor,
+  Accounts). The role decides which services they can open and whether they see every client and project.
+- **Lead desk extras.** A Site category list, the updated work categories, and a checklist on every lead. A won lead
+  gets a **Create project** button.
+- **Clients and Projects.** Won leads become a client and a project. The project holds the work order number and
+  date, start date, completion period, estimated amount, discount, payment terms, special terms and a payment schedule.
 - **Left menu.** The three-dash button at the top left opens a panel with the services you can use, who is
   signed in, and Sign out. Lead desk is the first service; more (attendance, manpower, material allotment, ...) plug in
   the same way. The admin also sees Users there.
@@ -173,6 +179,38 @@ blueprint's `before_request`, the way Lead desk does). That makes the row above 
 menu. Its page extends `base.html`, so it gets the top bar, the menu button and the panel for free. `GET /api/modules`
 returns the same list as JSON.
 
+## Roles and who sees what
+
+| Table | What it holds |
+|---|---|
+| `roles` | `key`, `name`, `sees_all`. `sees_all = 1` (Admin, Accounts) means every client and project is visible |
+| `role_modules` | Which services (`modules.key`) a role can open. The admin can open all of them |
+
+Default roles and what they open: **Sales (field) / Sales (office)**: Lead desk. **Project manager** and
+**Accounts**: Clients and Projects. **Site supervisor**: nothing yet (the attendance and material services will come).
+Change it in the database, for example:
+
+```sql
+INSERT INTO role_modules (role_key, module_key) VALUES ('supervisor', 'projects');
+DELETE FROM role_modules WHERE role_key = 'accounts' AND module_key = 'clients';
+UPDATE roles SET sees_all = 1 WHERE key = 'project_manager';
+```
+
+The admin picks a role when adding a user and can change it later from the Users screen.
+
+**Who sees which records.** Leads: only the person who owns them, and the admin. Projects: the admin and `sees_all`
+roles see all; everyone else sees projects they created or manage. Clients: `sees_all` roles see all; everyone else
+sees clients they created and the clients of projects they manage. Only the admin (or a `sees_all` role) can assign a
+project manager, and the manager must have the Project manager role.
+
+**Won lead to project.** Open a won lead and tap **Create project**. It creates the project and a client (an existing
+client with the same name is reused). The sales person who owns the lead does this even if their role cannot open
+Projects; the project manager or admin then completes the work order details and payment schedule.
+
+**Site category and work categories** are rows in `site_categories` and `services` (same columns as the other
+dropdown lists). The first version's four differently named services (Sprinklers, Hydrant and pump room, Extinguishers,
+NOC and audits) were switched off, not deleted, when the blueprint's list was added, so old leads keep their value.
+
 ## Dropdown lists and settings (kept in the database)
 
 The app has no settings screen. It only reads these tables, so change them straight in `instance/leads.db`
@@ -180,7 +218,8 @@ The app has no settings screen. It only reads these tables, so change them strai
 
 | Table | One row per | Columns |
 |---|---|---|
-| `services` | Service choice | `name`, `sort_order`, `is_active` |
+| `services` | Work category | `name`, `sort_order`, `is_active` |
+| `site_categories` | Site category (hospital, school, ...) | `name`, `sort_order`, `is_active` |
 | `lead_sources` | Lead source choice | `name`, `sort_order`, `is_active` |
 | `settings` | Single value | `key` = `currency` or `country_code`, `value` |
 | `pincodes` | Pincode | `pincode`, `state`, `district`, `city` (filled from India Post on first use; correct a row here if it is wrong) |
@@ -212,16 +251,22 @@ Commit the new file in `migrations/versions/`. Run the same `db upgrade` on Pyth
 app/
   __init__.py        app factory
   config.py          settings read from .env
-  models.py          Lead, Activity, User, Module, Service, LeadSource, Setting, Pincode
+  models.py          Lead, Activity, ChecklistItem, User, Role, RoleModule, Module, Client, Project,
+                     ProjectPayment, Service, LeadSource, SiteCategory, Setting, Pincode
   api.py             JSON endpoints under /api, validation, summary maths
   views.py           home page and CSV export
   auth.py            sign-in, setup codes, lockout, CSRF, who may see which leads
-  users.py           admin-only user management API
+  users.py           admin-only user management API (add users, roles, reset PIN, turn off)
+  clients.py         Clients service: pages and API
+  projects.py        Projects service: pages and API, and the won-lead-to-project step
+  validation.py      field checks shared by the clients and projects APIs
+  reference_data.py  starting roles, services, site categories (mirrored by the migration, and tested)
   modules.py         the services list, who may use which, and the check_module guard
   cli.py             `flask create-admin`, `reset-pin`, `seed-demo`
   constants.py       stage names
-  templates/         base (top bar + menu), _sidebar, _icons, index, login, set_pin
-  static/            css/app.css, js/app.js (Lead desk), js/shell.js (the left menu)
+  templates/         base (top bar + menu), _sidebar, _icons, index, clients, projects, login, set_pin
+  static/            css/app.css, js/common.js (shared helpers), js/app.js (Lead desk),
+                     js/clients.js, js/projects.js, js/shell.js (the left menu)
 migrations/          database migrations (Flask-Migrate)
 tests/               pytest suite
 wsgi.py              entry point for the flask command

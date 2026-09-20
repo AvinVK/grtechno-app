@@ -5,7 +5,7 @@ from werkzeug.exceptions import HTTPException, abort
 from .api import _payload
 from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code
 from .extensions import db
-from .models import Lead, User, utcnow
+from .models import Lead, Role, User, utcnow
 
 bp = Blueprint("users", __name__, url_prefix="/api/users")
 
@@ -28,6 +28,8 @@ def _dict(user: User, lead_count: int = 0) -> dict:
         "userid": user.userid,
         "name": user.name,
         "is_admin": user.is_admin,
+        "role": user.role_key,
+        "role_name": user.role.name if user.role else "",
         "status": user.status,
         "code_expired": bool(pending and user.setup_code_expires and user.setup_code_expires < utcnow()),
         "leads": lead_count,
@@ -43,16 +45,25 @@ def _lead_counts() -> dict:
 def list_users():
     counts = _lead_counts()
     users = User.query.order_by(User.is_admin.desc(), User.created_at, User.code).all()
-    return jsonify(users=[_dict(u, counts.get(u.code, 0)) for u in users], code_days=SETUP_CODE_DAYS)
+    roles = Role.query.filter(Role.key != "admin").order_by(Role.name).all()
+    return jsonify(
+        users=[_dict(u, counts.get(u.code, 0)) for u in users],
+        roles=[{"key": r.key, "name": r.name} for r in roles],
+        code_days=SETUP_CODE_DAYS,
+    )
 
 
 @bp.post("")
 def add_user():
-    name = _payload().get("name")
+    payload = _payload()
+    name = payload.get("name")
     if not isinstance(name, str):
         abort(422, "Enter a name.")
+    role = payload.get("role") or "sales_field"
+    if role == "admin":
+        abort(422, "There is only one admin.")
     try:
-        user, setup_code = create_user(name)
+        user, setup_code = create_user(name, role=role)
     except ValueError as err:
         return jsonify(error=str(err), fields={"name": str(err)}), 422
     db.session.commit()
@@ -67,6 +78,19 @@ def reset_user(code):
     setup_code = issue_setup_code(user)
     db.session.commit()
     return jsonify(user=_dict(user), setup_code=setup_code, code_days=SETUP_CODE_DAYS)
+
+
+@bp.post("/<code>/role")
+def set_role(code):
+    user = db.get_or_404(User, code)
+    if user.is_admin:
+        abort(400, "The admin's role cannot be changed.")
+    role = _payload().get("role")
+    if role == "admin" or not isinstance(role, str) or db.session.get(Role, role) is None:
+        abort(422, "Choose a role from the list.")
+    user.role_key = role
+    db.session.commit()
+    return jsonify(user=_dict(user))
 
 
 @bp.post("/<code>/active")

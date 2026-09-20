@@ -14,50 +14,7 @@
   let lastFocus = null;
   const filters = { active: { q: '', stage: '' }, closed: { q: '', stage: '' } };
 
-  const $ = (sel, root = document) => root.querySelector(sel);
-
-  /* ---------- tiny DOM helper ---------- */
-
-  function h(tag, props, ...kids) {
-    const el = document.createElement(tag);
-    for (const [k, v] of Object.entries(props || {})) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === 'class') el.className = v;
-      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-      else if (k === 'value' || k === 'selected' || k === 'checked') el[k] = v;
-      else if (v === true) el.setAttribute(k, '');
-      else el.setAttribute(k, v);
-    }
-    for (const kid of kids.flat(Infinity)) {
-      if (kid === null || kid === undefined || kid === false) continue;
-      el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
-    }
-    return el;
-  }
-
-  const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
-
-  /* ---------- API ---------- */
-
-  async function api(path, opts = {}) {
-    const res = await fetch(path, {
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    if (res.status === 401) {
-      window.location.href = '/login';
-      throw new Error('Not signed in');
-    }
-    const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = new Error(data.error || 'Something went wrong. Try again.');
-      err.fields = data.fields || {};
-      throw err;
-    }
-    return data;
-  }
+  const { $, h, clear, api, toast, plural } = window.LD;
 
   async function load() {
     S = await api('/api/state');
@@ -95,8 +52,6 @@
     return c + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
   }
 
-  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-
   /* ---------- lead helpers ---------- */
 
   const title = (l) => l.company || l.contact_name;
@@ -132,16 +87,6 @@
   }
 
   /* ---------- feedback ---------- */
-
-  let toastTimer;
-  function toast(message, isError = false) {
-    const el = $('#toast');
-    el.textContent = message;
-    el.classList.toggle('error', isError);
-    el.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 4500 : 2600);
-  }
 
   /* ---------- summary and navigation ---------- */
 
@@ -205,6 +150,8 @@
     const wrap = h('div', { class: 'users' });
     const listBox = h('div', { class: 'user-list' }, h('p', { class: 'loading' }, 'Loading users…'));
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
+    let roles = [];
+    const roleSelect = h('select', { id: 'u-role', 'aria-label': 'Role' });
 
     function showCode(data, heading) {
       const u = data.user;
@@ -232,6 +179,10 @@
     async function refresh() {
       try {
         const data = await api('/api/users');
+        roles = data.roles;
+        const chosen = roleSelect.value || 'sales_field';
+        clear(roleSelect).append(...roles.map((r) => h('option', { value: r.key }, r.name)));
+        roleSelect.value = chosen;
         clear(listBox).append(...data.users.map(userRow));
       } catch (err) {
         clear(listBox).append(h('p', { class: 'empty-state' }, err.message));
@@ -249,10 +200,19 @@
       await refresh();
     }
 
+    function roleControl(u) {
+      return h('select', {
+        class: 'role-select', 'aria-label': `Role for ${u.name}`,
+        onchange: (e) => act(`/api/users/${u.code}/role`, { role: e.target.value }, null,
+          (data) => toast(`${u.name} is now ${data.user.role_name}`)),
+      }, roles.map((r) => h('option', { value: r.key, selected: r.key === u.role }, r.name)));
+    }
+
     function userRow(u) {
       const key = u.status === 'pending' && u.code_expired ? 'expired' : u.status;
       const [tone, label] = STATUS_CHIPS[key];
       const actions = u.is_admin ? null : h('div', { class: 'user-actions' },
+        roleControl(u),
         h('button', {
           class: 'btn small', type: 'button',
           onclick: () => act(`/api/users/${u.code}/reset`, {},
@@ -271,7 +231,7 @@
         h('div', { class: 'user-main' },
           h('span', { class: 'user-name' }, u.name, u.is_admin ? h('span', { class: 'user-tag' }, 'Admin') : null),
           h('span', { class: 'user-id' }, u.userid),
-          h('span', { class: 'user-meta' }, plural(u.leads, 'lead', 'leads'))),
+          h('span', { class: 'user-meta' }, `${u.role_name} \u00b7 ${plural(u.leads, 'lead', 'leads')}`)),
         chip(tone, label),
         actions);
     }
@@ -286,7 +246,7 @@
         nameErr.textContent = '';
         addBtn.disabled = true;
         try {
-          const data = await api('/api/users', { method: 'POST', body: { name: nameInput.value } });
+          const data = await api('/api/users', { method: 'POST', body: { name: nameInput.value, role: roleSelect.value } });
           nameInput.value = '';
           showCode(data, 'Setup code');
         } catch (err) {
@@ -298,9 +258,12 @@
       },
     },
       h('label', { for: 'u-name' }, 'Name'),
-      h('div', { class: 'add-user-row' }, nameInput, addBtn),
+      nameInput,
       nameErr,
-      h('p', { class: 'hint' }, 'The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
+      h('label', { for: 'u-role' }, 'Role'),
+      roleSelect,
+      addBtn,
+      h('p', { class: 'hint' }, 'The role decides which services they can open. The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
 
     wrap.append(h('h2', {}, 'Users'), form, resultBox, listBox);
     refresh();
@@ -343,7 +306,7 @@
         if (f.stage && l.stage !== f.stage) return false;
         if (!q) return true;
         return [l.company, l.contact_name, l.phone, l.email, l.site_pincode, l.site_city, l.site_district, l.site_state,
-          l.site_address, l.service, l.notes]
+          l.site_address, l.site_category, l.service, l.notes]
           .some((v) => v.toLowerCase().includes(q));
       });
       items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
@@ -427,7 +390,7 @@
   function buildLeadForm(lead, onSaved) {
     const L = lead || {
       company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', source: '',
-      site_pincode: '', site_state: '', site_district: '', site_city: '',
+      site_category: '', site_pincode: '', site_state: '', site_district: '', site_city: '',
       est_value: null, stage: S.stages[0], follow_up_date: null, notes: '',
     };
     const inputs = {};
@@ -494,6 +457,7 @@
         wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' })),
         wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' })),
         wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
+        wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set')),
         pinField,
         wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' })),
         wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' })),
@@ -595,7 +559,9 @@
       h('div', { class: 'drawer-scroll' },
         contactLinks(lead),
         outcomeButtons,
+        projectBox(lead),
         form,
+        checklistSection(lead.id),
         activitySection(lead.id)),
       h('div', { class: 'drawer-foot' },
         saveBtn,
@@ -614,6 +580,88 @@
       h('h2', {}, 'Add lead'),
       h('p', { class: 'hint' }, 'A new lead starts at New enquiry.'),
       form);
+  }
+
+
+  /* ---------- work checklist ---------- */
+
+  let checklistApi = null;
+
+  function checklistSection(id) {
+    const input = h('input', { type: 'text', id: 'check-input', maxlength: '200', placeholder: 'Add a step, for example: Site survey done', 'aria-label': 'New checklist item' });
+    const error = h('p', { class: 'err', role: 'alert' });
+    const base = `/api/leads/${id}/checklist`;
+    const call = async (path, opts) => {
+      try { renderChecklist((await api(path, opts)).checklist); error.textContent = ''; }
+      catch (err) { error.textContent = err.message; }
+    };
+    checklistApi = {
+      toggle: (itemId, done) => call(`${base}/${itemId}`, { method: 'PATCH', body: { done } }),
+      remove: (itemId) => call(`${base}/${itemId}`, { method: 'DELETE' }),
+    };
+    const submit = async (e) => {
+      e.preventDefault();
+      if (!input.value.trim()) { error.textContent = 'Write the step first'; input.focus(); return; }
+      await call(base, { method: 'POST', body: { text: input.value } });
+      input.value = '';
+      input.focus();
+    };
+    return h('section', { class: 'activity', 'aria-labelledby': 'checklist-title' },
+      h('div', { class: 'checklist-head' },
+        h('h3', { id: 'checklist-title' }, 'Checklist'),
+        h('span', { class: 'checklist-count', id: 'checklist-count' })),
+      h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add')),
+      error,
+      h('ul', { class: 'checklist', id: 'checklist' }));
+  }
+
+  function renderChecklist(items) {
+    const list = $('#checklist');
+    if (!list) return;
+    clear(list);
+    $('#checklist-count').textContent = items.length ? `${items.filter((i) => i.done).length} of ${items.length} done` : '';
+    items.forEach((item) => list.append(h('li', { class: item.done ? 'done' : '' },
+      h('label', {},
+        h('input', { type: 'checkbox', checked: item.done, onchange: (e) => checklistApi.toggle(item.id, e.target.checked) }),
+        h('span', {}, item.text)),
+      h('button', { class: 'icon-x', type: 'button', 'aria-label': `Remove ${item.text}`, onclick: () => checklistApi.remove(item.id) }, '\u00d7'))));
+  }
+
+  /* ---------- won lead -> project ---------- */
+
+  function projectBox(lead) {
+    if (lead.stage !== 'Won') return null;
+    const canOpen = S.me.modules.includes('projects');
+    let action;
+    if (lead.project_id) {
+      action = canOpen
+        ? h('a', { class: 'btn', href: `/projects#p${lead.project_id}` }, 'Open project')
+        : null;
+    } else {
+      action = h('button', {
+        class: 'btn primary', type: 'button',
+        onclick: async (e) => {
+          if (!window.confirm(`Create a client and a project from ${title(lead)}?`)) return;
+          e.target.disabled = true;
+          try {
+            const res = await api(`/api/leads/${lead.id}/project`, { method: 'POST' });
+            closeDrawer();
+            toast(`Project ${res.code} created`);
+            await load();
+            if (canOpen) window.location.href = `/projects#p${res.project_id}`;
+          } catch (err) {
+            toast(err.message, true);
+            e.target.disabled = false;
+          }
+        },
+      }, 'Create project');
+    }
+    return h('section', { class: 'project-box' },
+      h('h3', {}, lead.project_id ? 'This lead is now a project' : 'Won: next step'),
+      lead.project_id
+        ? (canOpen ? null : h('p', { class: 'hint' }, 'The project manager will complete the work order details.'))
+        : h('p', { class: 'hint' }, 'Copy this lead into Clients and Projects so the work order details can be added.'),
+      action);
   }
 
   /* ---------- activity log ---------- */
@@ -659,7 +707,7 @@
   async function loadActivity(id) {
     try {
       const lead = await api(`/api/leads/${id}`);
-      if (openId === id) renderTimeline(lead.activities);
+      if (openId === id) { renderTimeline(lead.activities); renderChecklist(lead.checklist); }
     } catch (err) {
       toast(err.message, true);
     }

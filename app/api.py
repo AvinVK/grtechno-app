@@ -8,10 +8,11 @@ from flask import Blueprint, g, jsonify, request
 from werkzeug.exceptions import HTTPException, abort
 
 from .auth import visible_leads
-from .modules import check_module
+from .modules import check_module, modules_for
+from .projects import ProjectError, create_project_from_lead
 from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
 from .extensions import db
-from .models import Activity, Lead, Pincode, settings_for_client, utcnow
+from .models import Activity, ChecklistItem, Lead, Pincode, settings_for_client, utcnow
 from .timeutil import to_local, today_local
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -21,6 +22,7 @@ TEXT_LIMITS = {
     "company": 160,
     "phone": 40,
     "email": 160,
+    "site_category": 60,
     "site_pincode": 6,
     "site_state": 80,
     "site_district": 80,
@@ -42,7 +44,8 @@ def json_error(err):
 
 @bp.before_request
 def _leads_service():
-    check_module("leads")
+    if request.endpoint != "api.pincode_lookup":          # a general helper: any signed-in person may use it
+        check_module("leads")
 
 
 def _payload() -> dict:
@@ -179,7 +182,10 @@ def state():
     leads = visible_leads().order_by(Lead.created_at.desc(), Lead.id.desc()).all()
     today = today_local()
     return jsonify(
-        me={"userid": g.user.userid, "name": g.user.name, "is_admin": g.user.is_admin},
+        me={
+            "userid": g.user.userid, "name": g.user.name, "is_admin": g.user.is_admin,
+            "modules": [m.key for m in modules_for(g.user)],
+        },
         today=today.isoformat(),
         stages=STAGES,
         open_stages=OPEN_STAGES,
@@ -266,6 +272,67 @@ def delete_lead(lead_id):
     db.session.delete(lead)
     db.session.commit()
     return "", 204
+
+
+@bp.post("/leads/<int:lead_id>/project")
+def create_project(lead_id):
+    lead = _own_lead_or_404(lead_id)
+    try:
+        project, reused = create_project_from_lead(lead, g.user)
+    except ProjectError as err:
+        abort(err.status, err.message)
+    db.session.commit()
+    return jsonify(project_id=project.id, code=project.code, client_id=project.client_id, client_reused=reused), 201
+
+
+def _checklist_text(value):
+    if not isinstance(value, str) or not value.strip():
+        abort(422, "Write the checklist item first")
+    if len(value.strip()) > 200:
+        abort(422, "Keep a checklist item under 200 characters")
+    return value.strip()
+
+
+def _checklist_item_or_404(lead, item_id):
+    item = next((c for c in lead.checklist if c.id == item_id), None)
+    if item is None:
+        abort(404)
+    return item
+
+
+@bp.post("/leads/<int:lead_id>/checklist")
+def add_checklist_item(lead_id):
+    lead = _own_lead_or_404(lead_id)
+    text = _checklist_text(_payload().get("text"))
+    lead.checklist.append(ChecklistItem(text=text, position=max((c.position for c in lead.checklist), default=0) + 1))
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True)), 201
+
+
+@bp.patch("/leads/<int:lead_id>/checklist/<int:item_id>")
+def update_checklist_item(lead_id, item_id):
+    lead = _own_lead_or_404(lead_id)
+    item = _checklist_item_or_404(lead, item_id)
+    payload = _payload()
+    if "done" in payload:
+        if not isinstance(payload["done"], bool):
+            abort(422, "Say whether the item is done")
+        item.done = payload["done"]
+    if "text" in payload:
+        item.text = _checklist_text(payload["text"])
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True))
+
+
+@bp.delete("/leads/<int:lead_id>/checklist/<int:item_id>")
+def delete_checklist_item(lead_id, item_id):
+    lead = _own_lead_or_404(lead_id)
+    lead.checklist.remove(_checklist_item_or_404(lead, item_id))
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True))
 
 
 @bp.post("/leads/<int:lead_id>/notes")
