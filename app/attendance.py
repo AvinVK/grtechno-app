@@ -1,6 +1,7 @@
 """Attendance (the Attendance service): everyone checks themselves in and out, once per day, optionally
-against a running project. Admin and any sees_all role (Accounts) can see everyone's; everyone else sees
-only their own."""
+against a running project. A location is required to check in - enforced here, not only by the screen,
+so it cannot be skipped by calling the API directly. Admin and any sees_all role (Accounts) can see
+everyone's; everyone else sees only their own."""
 
 from datetime import date
 
@@ -31,8 +32,9 @@ def _today_row():
 
 
 def _coord(payload, name, low, high, errors):
-    """An optional latitude/longitude from the browser's geolocation. Missing is fine (the phone may have
-    no GPS, or the person said no to the location prompt) - a bad value is the only thing rejected."""
+    """A latitude/longitude from the browser's geolocation. Missing just means missing (check_in below
+    turns that into "location is required") - this only rejects a value that is there but not a real
+    coordinate."""
     if payload.get(name) in (None, ""):
         return None
     try:
@@ -87,8 +89,8 @@ def check_in():
 
     lat = _coord(payload, "lat", -90, 90, f.errors)
     lng = _coord(payload, "lng", -180, 180, f.errors)
-    if (lat is None) != (lng is None) and not f.errors:
-        f.errors["lat"] = "Send both lat and lng, or neither"
+    if (lat is None or lng is None) and "lat" not in f.errors and "lng" not in f.errors:
+        f.errors["lat"] = "Turn on location and try again. Location is required to check in."
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 

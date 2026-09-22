@@ -3,6 +3,12 @@ from datetime import date, timedelta
 from app.extensions import db
 from app.models import Attendance, Client, Project, utcnow
 
+LOC = {"lat": 21.1458, "lng": 79.0882}          # Nagpur, used wherever a test just needs some valid location
+
+
+def check_in(client, **extra):
+    return client.post("/api/attendance/check-in", json={**LOC, **extra})
+
 
 def make_project(title="Sprinkler install"):
     client = Client(name="Sunrise Hospital")
@@ -33,11 +39,11 @@ def test_check_in_with_no_project_then_check_out(client):
     state = client.get("/api/attendance/state").get_json()
     assert state["today"] is None and state["can_see_team"] is False
 
-    res = client.post("/api/attendance/check-in", json={})
+    res = check_in(client)
     assert res.status_code == 201
     today = res.get_json()["today"]
     assert today["project_id"] is None and today["check_out_at"] is None and today["hours"] is None
-    assert today["check_in_lat"] is None and today["check_in_map_url"] is None
+    assert today["check_in_lat"] == LOC["lat"] and today["check_in_map_url"]
 
     out = client.post("/api/attendance/check-out")
     assert out.status_code == 200
@@ -49,51 +55,54 @@ def test_check_in_against_a_project(client, app):
     with app.app_context():
         project = make_project()
         project_id = project.id
-    res = client.post("/api/attendance/check-in", json={"project_id": project_id})
+    res = check_in(client, project_id=project_id)
     body = res.get_json()["today"]
     assert body["project_id"] == project_id and body["project_title"] == "Sprinkler install"
 
 
 def test_check_in_with_a_bad_project_id_is_rejected(client):
-    res = client.post("/api/attendance/check-in", json={"project_id": 999999})
+    res = check_in(client, project_id=999999)
     assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
 
 
-# ---------- where the check-in happened ----------
+# ---------- a location is required ----------
 
 def test_check_in_can_carry_a_location(client):
-    res = client.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882})
+    res = check_in(client)
     assert res.status_code == 201
     today = res.get_json()["today"]
     assert today["check_in_lat"] == 21.1458 and today["check_in_lng"] == 79.0882
     assert today["check_in_map_url"] == "https://maps.google.com/?q=21.1458,79.0882"
 
 
-def test_check_in_without_a_location_still_works(client):
-    """The phone may have no GPS, or the person said no to the prompt - that must never block a check-in."""
-    res = client.post("/api/attendance/check-in", json={"project_id": None})
-    assert res.status_code == 201 and res.get_json()["today"]["check_in_map_url"] is None
-
-
-def test_a_bad_location_is_rejected(client):
-    res = client.post("/api/attendance/check-in", json={"lat": 200, "lng": 79.0882})
+def test_check_in_needs_a_location(client):
+    """Checking in with no location at all - the phone had no GPS, or the person never agreed to share it -
+    is refused, not silently allowed. This is enforced here, not only by the screen's own prompt, so it
+    cannot be skipped by calling the API directly."""
+    res = client.post("/api/attendance/check-in", json={})
     assert res.status_code == 422 and "lat" in res.get_json()["fields"]
+    assert client.get("/api/attendance/state").get_json()["today"] is None    # nothing was recorded
 
 
-def test_only_one_coordinate_is_rejected(client):
+def test_check_in_needs_both_coordinates(client):
     res = client.post("/api/attendance/check-in", json={"lat": 21.1458})
     assert res.status_code == 422 and "lat" in res.get_json()["fields"]
 
 
+def test_a_bad_location_is_rejected(client):
+    res = check_in(client, lat=200)
+    assert res.status_code == 422 and "lat" in res.get_json()["fields"]
+
+
 def test_team_register_also_carries_the_location(client, admin_client):
-    client.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882})
+    check_in(client)
     record = admin_client.get("/api/attendance/team").get_json()["records"][0]
     assert record["check_in_map_url"] == "https://maps.google.com/?q=21.1458,79.0882"
 
 
 def test_only_one_check_in_per_day(client):
-    assert client.post("/api/attendance/check-in", json={}).status_code == 201
-    again = client.post("/api/attendance/check-in", json={})
+    assert check_in(client).status_code == 201
+    again = check_in(client)
     assert again.status_code == 409
 
 
@@ -102,7 +111,7 @@ def test_cannot_check_out_without_checking_in(client):
 
 
 def test_cannot_check_out_twice(client):
-    client.post("/api/attendance/check-in", json={})
+    check_in(client)
     assert client.post("/api/attendance/check-out").status_code == 200
     assert client.post("/api/attendance/check-out").status_code == 409
 
@@ -121,22 +130,22 @@ def test_history_shows_past_days(client, app, user):
 # ---------- who sees whose attendance ----------
 
 def test_only_sees_all_roles_can_open_the_team_register(client, accounts_client, admin_client):
-    client.post("/api/attendance/check-in", json={})
+    check_in(client)
     assert client.get("/api/attendance/team").status_code == 403
     assert accounts_client.get("/api/attendance/team").status_code == 200
     assert admin_client.get("/api/attendance/team").status_code == 200
 
 
 def test_team_register_shows_everyones_checkins_for_the_day(client, manager_client, admin_client):
-    client.post("/api/attendance/check-in", json={})
-    manager_client.post("/api/attendance/check-in", json={})
+    check_in(client)
+    check_in(manager_client)
     body = admin_client.get("/api/attendance/team").get_json()
     names = {r["user_name"] for r in body["records"]}
     assert {"Tester", "Priya Manager"} <= names
 
 
 def test_team_register_can_be_filtered_by_date(client, admin_client):
-    client.post("/api/attendance/check-in", json={})
+    check_in(client)
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     empty = admin_client.get(f"/api/attendance/team?date={yesterday}").get_json()
     assert empty["records"] == []
@@ -145,8 +154,8 @@ def test_team_register_can_be_filtered_by_date(client, admin_client):
 
 
 def test_a_users_state_only_shows_their_own_history(client, manager_client):
-    client.post("/api/attendance/check-in", json={})
-    manager_client.post("/api/attendance/check-in", json={})
+    check_in(client)
+    check_in(manager_client)
     state = client.get("/api/attendance/state").get_json()
     assert state["today"]["user_code"] not in (None,)  # sanity: a record is theirs
     assert all(h["user_name"] == "Tester" for h in state["history"])
