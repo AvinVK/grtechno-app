@@ -21,11 +21,11 @@ def menu_names(client):
 # ---------- what the menu lists ----------
 
 def test_menu_lists_active_services_in_order(client):
-    add_module("attendance", "Attendance", "/attendance", icon="attendance", order=6)
-    add_module("manpower", "Manpower", "/manpower", icon="manpower", order=5)
-    add_module("old", "Retired", "/old", order=7, active=False)
-    grant("sales_field", "attendance", "manpower", "old")
-    assert menu_names(client) == ["Leads", "Manpower", "Attendance"]      # by sort_order, retired one hidden
+    add_module("manpower", "Manpower", "/manpower", icon="manpower", order=3)   # between Leads(1) and Attendance(4)
+    add_module("material", "Material", "/material", icon="material", order=5)
+    add_module("old", "Retired", "/old", order=6, active=False)
+    grant("sales_field", "manpower", "material", "old")
+    assert menu_names(client) == ["Leads", "Manpower", "Attendance", "Material"]      # by sort_order, retired one hidden
 
 
 def test_admin_only_services_are_hidden_from_regular_users(client, admin_client):
@@ -40,8 +40,6 @@ def test_menu_needs_sign_in(anon):
 
 
 def test_page_has_the_menu_button_and_panel(client, user):
-    add_module("attendance", "Attendance", "/attendance", icon="attendance")
-    grant("sales_field", "attendance")
     html = client.get("/").get_data(as_text=True)
     assert 'id="menu-btn"' in html and 'aria-expanded="false"' in html
     assert 'id="sidebar"' in html and "Attendance" in html and "Sign out" in html
@@ -70,6 +68,7 @@ def test_login_page_has_no_menu(anon):
 
 def test_turning_lead_desk_off_blocks_its_pages_and_api(client):
     Module.query.filter_by(key="leads").update({"is_active": False})
+    Module.query.filter_by(key="attendance").update({"is_active": False})   # nothing else for this role to open either
     db.session.commit()
     home = client.get("/")                                          # nothing else to open, so a message, not an error
     assert home.status_code == 200 and b"cannot open any services yet" in home.data
@@ -87,19 +86,19 @@ def test_admin_only_service_is_enforced(client, admin_client):
 
 
 def test_module_required_guards_a_new_service(app, client, admin_client):
-    add_module("attendance", "Attendance", "/attendance", icon="attendance")
-    grant("sales_field", "attendance")
+    add_module("sample", "Sample", "/sample-service")
+    grant("sales_field", "sample")
 
-    @app.get("/attendance")
-    @module_required("attendance")
-    def attendance_page():
-        return "attendance"
+    @app.get("/sample-service")
+    @module_required("sample")
+    def sample_page():
+        return "sample"
 
-    assert client.get("/attendance").get_data(as_text=True) == "attendance"
-    Module.query.filter_by(key="attendance").update({"admin_only": True})
+    assert client.get("/sample-service").get_data(as_text=True) == "sample"
+    Module.query.filter_by(key="sample").update({"admin_only": True})
     db.session.commit()
-    assert client.get("/attendance").status_code == 403
-    assert admin_client.get("/attendance").status_code == 200
-    Module.query.filter_by(key="attendance").update({"is_active": False})
+    assert client.get("/sample-service").status_code == 403
+    assert admin_client.get("/sample-service").status_code == 200
+    Module.query.filter_by(key="sample").update({"is_active": False})
     db.session.commit()
-    assert admin_client.get("/attendance").status_code == 404
+    assert admin_client.get("/sample-service").status_code == 404

@@ -859,3 +859,30 @@ a.p-client-name { color: var(--accent-dark); }
   .confirm-card { animation: confirm-in 0.14s ease-out; }
   @keyframes confirm-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
 }
+
+/* ---------- Attendance ---------- */
+
+.att-card {
+  max-width: 480px;
+  margin: 0 auto 20px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  display: grid;
+  gap: 10px;
+}
+.att-card h3 { font: 600 18px/1.2 var(--font-display); margin: 0; }
+.att-card label { font-size: 14px; font-weight: 600; }
+.att-card .btn { justify-self: start; min-width: 140px; }
+
+.att-sub-head { max-width: 1100px; margin: 24px auto 8px; font: 600 16px/1.1 var(--font-display); }
+
+.att-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.att-main { display: grid; min-width: 0; }

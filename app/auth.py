@@ -19,7 +19,7 @@ from sqlalchemy import or_
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db
-from .models import Client, Lead, Project, Role, User, utcnow
+from .models import Attendance, Client, Lead, Project, Role, User, utcnow
 
 bp = Blueprint("auth", __name__)
 
@@ -137,6 +137,14 @@ def visible_clients():
     if not g.user.sees_all:
         managed = db.session.query(Project.client_id).filter(Project.manager_code == g.user.code)
         query = query.filter(or_(Client.owner_code == g.user.code, Client.id.in_(managed)))
+    return query
+
+
+def visible_attendance():
+    """Attendance rows this person may see: everyone's for sees_all (Admin, Accounts), otherwise only their own."""
+    query = Attendance.query
+    if not g.user.sees_all:
+        query = query.filter(Attendance.user_code == g.user.code)
     return query
 
 

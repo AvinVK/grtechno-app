@@ -380,3 +380,40 @@ def settings_for_client() -> dict:
         "sources": LeadSource.active_names(),
         "site_categories": SiteCategory.active_names(),
     }
+
+
+class Attendance(db.Model):
+    """One person's check-in and check-out for one day. At most one row per person per work_date;
+    project_id is who they worked for that day and is optional, for office staff with no site to pick."""
+
+    __tablename__ = "attendance"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="CASCADE"), nullable=False, index=True)
+    work_date = db.Column(db.Date, nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    check_in_at = db.Column(db.DateTime, nullable=False)
+    check_out_at = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.String(400), nullable=False, default="", server_default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    user = db.relationship("User")
+    project = db.relationship("Project")
+
+    __table_args__ = (db.UniqueConstraint("user_code", "work_date", name="uq_attendance_user_date"),)
+
+    @property
+    def hours(self):
+        if not self.check_out_at:
+            return None
+        return round((self.check_out_at - self.check_in_at).total_seconds() / 3600, 1)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "user_code": self.user_code, "user_name": self.user.name if self.user else None,
+            "work_date": self.work_date.isoformat(), "project_id": self.project_id,
+            "project_title": self.project.title if self.project else None,
+            "project_code": self.project.code if self.project else None,
+            "check_in_at": _iso(self.check_in_at), "check_out_at": _iso(self.check_out_at),
+            "notes": self.notes, "hours": self.hours,
+        }
