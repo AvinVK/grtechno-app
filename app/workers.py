@@ -33,7 +33,7 @@ def admin_only_page():
 
 @page_bp.get("/workers")
 def page():
-    return render_template("workers.html", heading="Worker list", heading_href="/workers")
+    return render_template("workers.html", heading="Manpower", heading_href="/workers")
 
 
 def _summary(worker: Worker) -> dict:

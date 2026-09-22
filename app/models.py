@@ -458,23 +458,30 @@ class Worker(db.Model):
 class WorkerAttendance(db.Model):
     """One day's attendance for a worker, read from the WhatsApp group's messages for that day: when they
     first messaged (check-in), and their last message that said "Exit" or similar (check-out), each with a
-    location if one was shared right around that time. At most one row per worker per day."""
+    location if one was shared right around that time. Someone else's message can be the source instead of
+    the worker's own - a colleague saying "X is on leave" (status "absent") or naming X alongside their own
+    present/exit message (X gets the same times and location) - see note for who actually said it.
+    project_id is a best guess from the site name in that message, when one matched a project we know about.
+    At most one row per worker per day."""
 
     __tablename__ = "worker_attendance"
 
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
     work_date = db.Column(db.Date, nullable=False, index=True)
+    status = db.Column(db.String(10), nullable=False, default="present", server_default="present")   # present | absent
     check_in_at = db.Column(db.DateTime, nullable=True)
     check_in_lat = db.Column(db.Float, nullable=True)
     check_in_lng = db.Column(db.Float, nullable=True)
     check_out_at = db.Column(db.DateTime, nullable=True)
     check_out_lat = db.Column(db.Float, nullable=True)
     check_out_lng = db.Column(db.Float, nullable=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     note = db.Column(db.String(300), nullable=False, default="", server_default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     worker = db.relationship("Worker", back_populates="attendance")
+    project = db.relationship("Project")
 
     __table_args__ = (db.UniqueConstraint("worker_id", "work_date", name="uq_worker_attendance_worker_date"),)
 
@@ -491,8 +498,11 @@ class WorkerAttendance(db.Model):
     def to_dict(self) -> dict:
         return {
             "id": self.id, "worker_id": self.worker_id, "work_date": self.work_date.isoformat(),
+            "status": self.status,
             "check_in_at": _iso(self.check_in_at), "check_out_at": _iso(self.check_out_at),
             "check_in_map_url": self._map_url(self.check_in_lat, self.check_in_lng),
             "check_out_map_url": self._map_url(self.check_out_lat, self.check_out_lng),
+            "project_id": self.project_id, "project_title": self.project.title if self.project else None,
+            "project_code": self.project.code if self.project else None,
             "note": self.note, "hours": self.hours,
         }

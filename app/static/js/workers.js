@@ -1,4 +1,4 @@
-/* Worker list (admin only): field workers who don't sign in to the app, tracked instead from the WhatsApp
+/* Manpower (admin only): field workers who don't sign in to the app, tracked instead from the WhatsApp
    group where they mark their attendance. Read-only - the data comes from a one-off import. */
 (() => {
   'use strict';
@@ -40,22 +40,26 @@
     }
 
     clear(view).append(h('div', {},
-      h('div', { class: 'list-head' }, h('h2', {}, 'Worker list')),
+      h('div', { class: 'list-head' }, h('h2', {}, 'Manpower')),
       h('p', { class: 'hint workers-intro' },
         'From the WhatsApp attendance group. Anyone who messaged it in the last 6 months is listed here, ' +
-        'with their attendance for the last two weeks below their name.'),
+        'with their attendance for the last two weeks below their name - including days filled in from a ' +
+        "colleague's message naming them, when they didn't message themselves."),
       list));
   }
 
   /* ---------- one worker ---------- */
 
   function attendanceRow(a) {
-    const times = [a.check_in_at && `In ${fmtTime(a.check_in_at)}`, a.check_out_at && `Out ${fmtTime(a.check_out_at)}`]
-      .filter(Boolean).join(' · ') || 'No check-in or check-out time found';
+    const times = a.status === 'absent'
+      ? 'Absent'
+      : [a.check_in_at && `In ${fmtTime(a.check_in_at)}`, a.check_out_at && `Out ${fmtTime(a.check_out_at)}`]
+        .filter(Boolean).join(' · ') || 'No check-in or check-out time found';
     return h('li', { class: 'att-row' },
       h('span', { class: 'att-main' },
         h('span', { class: 'row-title' }, fmtDate(a.work_date)),
-        h('span', { class: 'row-sub' }, times),
+        h('span', { class: `row-sub${a.status === 'absent' ? ' absent' : ''}` }, times),
+        a.project_title ? h('span', { class: 'row-sub' }, `${a.project_code} · ${a.project_title}`) : null,
         mapLink(a.check_in_map_url, 'In location'), mapLink(a.check_out_map_url, 'Out location'),
         a.note ? h('span', { class: 'row-sub' }, a.note) : null),
       h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''));
@@ -65,7 +69,7 @@
     clear(view).append(h('p', { class: 'loading' }, 'Loading worker…'));
     let data;
     try { data = await api(`/api/workers/${id}`); } catch (err) {
-      clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to worker list')));
+      clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to Manpower')));
       return;
     }
 
@@ -73,7 +77,7 @@
       data.attendance.length ? data.attendance.map(attendanceRow) : h('li', { class: 'empty-state' }, 'No attendance found for this worker in the last two weeks.'));
 
     clear(view).append(h('div', {},
-      h('a', { class: 'back-link', href: '#' }, '← Worker list'),
+      h('a', { class: 'back-link', href: '#' }, '← Manpower'),
       h('div', { class: 'p-head' }, h('h2', {}, data.worker.name)),
       h('p', { class: 'hint' }, data.worker.last_seen ? `Last seen ${fmtDate(data.worker.last_seen)}` : 'Never seen'),
       h('h3', { class: 'att-sub-head' }, `Attendance, last ${data.window_days} days`),
