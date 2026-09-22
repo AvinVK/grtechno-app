@@ -18,8 +18,11 @@
 
   const today = () => new Date().toISOString().slice(0, 10);
 
-  /* Where the phone was when they tapped Check in. Best-effort: no GPS, no permission, or too slow all just
-     mean the check-in goes through without a location - it never blocks or fails the check-in itself. */
+  /* Where the phone was, fetched once (getCurrentPosition, never watchPosition) after the person has agreed
+     in our own prompt below - so the phone's own permission dialog is never a surprise. One fixed reading is
+     taken and nothing is kept open or asked for again; the phone's location access ends the moment this
+     resolves. Best-effort throughout: no GPS, no permission, or too slow all just mean the check-in goes
+     through without a location - it never blocks or fails the check-in itself. */
   function getLocation() {
     if (!navigator.geolocation) return Promise.resolve(null);
     return new Promise((resolve) => {
@@ -30,6 +33,34 @@
         () => done(null),
         { enableHighAccuracy: false, timeout: 7500, maximumAge: 60000 },
       );
+    });
+  }
+
+  /* Our own explanation before the phone's own location prompt appears, so nobody is asked for their
+     location out of nowhere. "Share location" is the only path that ever touches navigator.geolocation -
+     "Not now" checks in without going near it, so no OS prompt shows at all. Reuses the confirm box's
+     look (see common.js) but not confirmBox() itself: here both buttons check in, they just differ on
+     whether we ask for a location first, unlike a plain confirm where "no" means stop. */
+  function askToShareLocation() {
+    return new Promise((resolve) => {
+      const shareBtn = h('button', { class: 'btn primary', type: 'button' }, 'Share location');
+      const skipBtn = h('button', { class: 'btn', type: 'button' }, 'Not now');
+      const card = h('div', { class: 'confirm-card', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'loc-title', 'aria-describedby': 'loc-message' },
+        h('h2', { id: 'loc-title' }, 'Share your location?'),
+        h('p', { id: 'loc-message' }, "We'll fetch it once, for this check-in, and let it go right away - we don't track you through the day."),
+        h('div', { class: 'confirm-actions' }, skipBtn, shareBtn));
+      const overlay = h('div', { class: 'confirm-overlay' }, card);
+      const finish = (result) => { overlay.remove(); resolve(result); };
+      shareBtn.onclick = () => finish(true);
+      skipBtn.onclick = () => finish(false);
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false); });
+      window.addEventListener('keydown', function onKey(e) {
+        if (e.key !== 'Escape') return;
+        window.removeEventListener('keydown', onKey);
+        finish(false);
+      });
+      document.body.append(overlay);
+      shareBtn.focus();
     });
   }
 
@@ -85,16 +116,17 @@
         const errBox = h('p', { class: 'err', role: 'alert' });
         const checkInBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check in');
         checkInBtn.onclick = async () => {
-          checkInBtn.disabled = true;
-          checkInBtn.textContent = 'Checking in…';
           errBox.textContent = '';
-          const location = await getLocation();
+          const wantsLocation = await askToShareLocation();
+          checkInBtn.disabled = true;
+          checkInBtn.textContent = wantsLocation ? 'Getting your location…' : 'Checking in…';
+          const location = wantsLocation ? await getLocation() : null;
           try {
             await api('/api/attendance/check-in', {
               method: 'POST',
               body: { project_id: projectSelect.value || null, lat: location?.lat ?? null, lng: location?.lng ?? null },
             });
-            toast(location ? 'Checked in with your location' : 'Checked in (location not shared)');
+            toast(location ? 'Checked in with your location' : 'Checked in');
             await reload();
           } catch (err) {
             errBox.textContent = err.message;
@@ -105,8 +137,7 @@
         card = h('div', { class: 'att-card' },
           h('h3', {}, "You haven't checked in today"),
           h('label', { for: 'att-project' }, 'Working on'),
-          projectSelect, errBox, checkInBtn,
-          h('p', { class: 'hint' }, "We'll ask to share your location when you check in."));
+          projectSelect, errBox, checkInBtn);
       } else if (!data.today.check_out_at) {
         const checkOutBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check out');
         checkOutBtn.onclick = async () => {
