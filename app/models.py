@@ -427,3 +427,72 @@ class Attendance(db.Model):
             "check_in_map_url": self.check_in_map_url,
             "notes": self.notes, "hours": self.hours,
         }
+
+
+class Worker(db.Model):
+    """A field worker who does not sign in to the app - tracked instead from the WhatsApp group they mark
+    their attendance in. Separate from User: a worker becomes a User only if they are ever given a login."""
+
+    __tablename__ = "workers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    source = db.Column(db.String(30), nullable=False, default="whatsapp", server_default="whatsapp")
+    first_seen = db.Column(db.Date, nullable=True)
+    last_seen = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    attendance = db.relationship(
+        "WorkerAttendance", back_populates="worker", cascade="all, delete-orphan",
+        order_by="WorkerAttendance.work_date.desc()",
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name, "source": self.source,
+            "first_seen": self.first_seen.isoformat() if self.first_seen else None,
+            "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+        }
+
+
+class WorkerAttendance(db.Model):
+    """One day's attendance for a worker, read from the WhatsApp group's messages for that day: when they
+    first messaged (check-in), and their last message that said "Exit" or similar (check-out), each with a
+    location if one was shared right around that time. At most one row per worker per day."""
+
+    __tablename__ = "worker_attendance"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    work_date = db.Column(db.Date, nullable=False, index=True)
+    check_in_at = db.Column(db.DateTime, nullable=True)
+    check_in_lat = db.Column(db.Float, nullable=True)
+    check_in_lng = db.Column(db.Float, nullable=True)
+    check_out_at = db.Column(db.DateTime, nullable=True)
+    check_out_lat = db.Column(db.Float, nullable=True)
+    check_out_lng = db.Column(db.Float, nullable=True)
+    note = db.Column(db.String(300), nullable=False, default="", server_default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    worker = db.relationship("Worker", back_populates="attendance")
+
+    __table_args__ = (db.UniqueConstraint("worker_id", "work_date", name="uq_worker_attendance_worker_date"),)
+
+    @property
+    def hours(self):
+        if not self.check_in_at or not self.check_out_at:
+            return None
+        return round((self.check_out_at - self.check_in_at).total_seconds() / 3600, 1)
+
+    @staticmethod
+    def _map_url(lat, lng):
+        return f"https://maps.google.com/?q={lat},{lng}" if lat is not None and lng is not None else None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "worker_id": self.worker_id, "work_date": self.work_date.isoformat(),
+            "check_in_at": _iso(self.check_in_at), "check_out_at": _iso(self.check_out_at),
+            "check_in_map_url": self._map_url(self.check_in_lat, self.check_in_lng),
+            "check_out_map_url": self._map_url(self.check_out_lat, self.check_out_lng),
+            "note": self.note, "hours": self.hours,
+        }

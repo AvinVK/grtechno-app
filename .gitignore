@@ -7,3 +7,9 @@ instance/
 *.db
 .pytest_cache/
 .DS_Store
+
+# Source files for one-off data imports (client sheets, WhatsApp exports, ...): real business and personal
+# data that should stay on this machine, never in git. The import script that reads one lives in scripts/
+# or the scratchpad, not here; only its effect (the database, git-ignored above) is real state.
+*.zip
+/*.xlsx

@@ -23,6 +23,7 @@
     {% if current_user.is_admin %}
     <p class="sb-label">Manage</p>
     <a class="sb-link" href="{{ url_for('users_page.page') }}"{% if request.endpoint == 'users_page.page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Users &amp; roles</span></a>
+    <a class="sb-link" href="{{ url_for('workers_page.page') }}"{% if request.endpoint == 'workers_page.page' %} aria-current="page"{% endif %}>{{ icon('manpower') }}<span>Worker list</span></a>
     {% endif %}
   </nav>
 
