@@ -18,12 +18,32 @@
 
   const today = () => new Date().toISOString().slice(0, 10);
 
+  /* Where the phone was when they tapped Check in. Best-effort: no GPS, no permission, or too slow all just
+     mean the check-in goes through without a location - it never blocks or fails the check-in itself. */
+  function getLocation() {
+    if (!navigator.geolocation) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const done = (result) => { clearTimeout(timer); resolve(result); };
+      const timer = setTimeout(() => done(null), 8000);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => done({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => done(null),
+        { enableHighAccuracy: false, timeout: 7500, maximumAge: 60000 },
+      );
+    });
+  }
+
+  function mapLink(a) {
+    return a.check_in_map_url ? h('a', { class: 'att-map-link', href: a.check_in_map_url, target: '_blank', rel: 'noopener noreferrer' }, 'View location') : null;
+  }
+
   function historyRow(a) {
     const times = a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`;
     return h('li', { class: 'att-row' },
       h('span', { class: 'att-main' },
         h('span', { class: 'row-title' }, fmtDate(a.work_date)),
-        h('span', { class: 'row-sub' }, [a.project_title, times].filter(Boolean).join(' · '))),
+        h('span', { class: 'row-sub' }, [a.project_title, times].filter(Boolean).join(' · ')),
+        mapLink(a)),
       h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''));
   }
 
@@ -66,20 +86,27 @@
         const checkInBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check in');
         checkInBtn.onclick = async () => {
           checkInBtn.disabled = true;
+          checkInBtn.textContent = 'Checking in…';
           errBox.textContent = '';
+          const location = await getLocation();
           try {
-            await api('/api/attendance/check-in', { method: 'POST', body: { project_id: projectSelect.value || null } });
-            toast('Checked in');
+            await api('/api/attendance/check-in', {
+              method: 'POST',
+              body: { project_id: projectSelect.value || null, lat: location?.lat ?? null, lng: location?.lng ?? null },
+            });
+            toast(location ? 'Checked in with your location' : 'Checked in (location not shared)');
             await reload();
           } catch (err) {
             errBox.textContent = err.message;
             checkInBtn.disabled = false;
+            checkInBtn.textContent = 'Check in';
           }
         };
         card = h('div', { class: 'att-card' },
           h('h3', {}, "You haven't checked in today"),
           h('label', { for: 'att-project' }, 'Working on'),
-          projectSelect, errBox, checkInBtn);
+          projectSelect, errBox, checkInBtn,
+          h('p', { class: 'hint' }, "We'll ask to share your location when you check in."));
       } else if (!data.today.check_out_at) {
         const checkOutBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check out');
         checkOutBtn.onclick = async () => {
@@ -96,11 +123,13 @@
         card = h('div', { class: 'att-card' },
           h('h3', {}, 'Checked in'),
           h('p', { class: 'hint' }, [data.today.project_title, `since ${fmtTime(data.today.check_in_at)}`].filter(Boolean).join(' · ')),
+          mapLink(data.today),
           checkOutBtn);
       } else {
         card = h('div', { class: 'att-card' },
           h('h3', {}, 'Done for today'),
-          h('p', { class: 'hint' }, [data.today.project_title, `${fmtTime(data.today.check_in_at)} – ${fmtTime(data.today.check_out_at)}`, `${data.today.hours} h`].filter(Boolean).join(' · ')));
+          h('p', { class: 'hint' }, [data.today.project_title, `${fmtTime(data.today.check_in_at)} – ${fmtTime(data.today.check_out_at)}`, `${data.today.hours} h`].filter(Boolean).join(' · ')),
+          mapLink(data.today));
       }
       clear(cardBox).append(card);
     }
@@ -133,7 +162,8 @@
         data.records.forEach((a) => list.append(h('li', { class: 'att-row' },
           h('span', { class: 'att-main' },
             h('span', { class: 'row-title' }, a.user_name),
-            h('span', { class: 'row-sub' }, [a.project_title, a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`].filter(Boolean).join(' · '))),
+            h('span', { class: 'row-sub' }, [a.project_title, a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`].filter(Boolean).join(' · ')),
+            mapLink(a)),
           h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''))));
       } catch (err) {
         clear(list).append(h('li', { class: 'empty-state' }, err.message));

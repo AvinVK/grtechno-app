@@ -886,3 +886,6 @@ a.p-client-name { color: var(--accent-dark); }
   border-bottom: 1px solid var(--line);
 }
 .att-main { display: grid; min-width: 0; }
+
+.att-map-link { color: var(--accent-dark); font-weight: 600; font-size: 13px; text-decoration: none; }
+.att-map-link:hover { text-decoration: underline; }

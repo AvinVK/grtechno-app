@@ -37,6 +37,7 @@ def test_check_in_with_no_project_then_check_out(client):
     assert res.status_code == 201
     today = res.get_json()["today"]
     assert today["project_id"] is None and today["check_out_at"] is None and today["hours"] is None
+    assert today["check_in_lat"] is None and today["check_in_map_url"] is None
 
     out = client.post("/api/attendance/check-out")
     assert out.status_code == 200
@@ -56,6 +57,38 @@ def test_check_in_against_a_project(client, app):
 def test_check_in_with_a_bad_project_id_is_rejected(client):
     res = client.post("/api/attendance/check-in", json={"project_id": 999999})
     assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
+
+
+# ---------- where the check-in happened ----------
+
+def test_check_in_can_carry_a_location(client):
+    res = client.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882})
+    assert res.status_code == 201
+    today = res.get_json()["today"]
+    assert today["check_in_lat"] == 21.1458 and today["check_in_lng"] == 79.0882
+    assert today["check_in_map_url"] == "https://maps.google.com/?q=21.1458,79.0882"
+
+
+def test_check_in_without_a_location_still_works(client):
+    """The phone may have no GPS, or the person said no to the prompt - that must never block a check-in."""
+    res = client.post("/api/attendance/check-in", json={"project_id": None})
+    assert res.status_code == 201 and res.get_json()["today"]["check_in_map_url"] is None
+
+
+def test_a_bad_location_is_rejected(client):
+    res = client.post("/api/attendance/check-in", json={"lat": 200, "lng": 79.0882})
+    assert res.status_code == 422 and "lat" in res.get_json()["fields"]
+
+
+def test_only_one_coordinate_is_rejected(client):
+    res = client.post("/api/attendance/check-in", json={"lat": 21.1458})
+    assert res.status_code == 422 and "lat" in res.get_json()["fields"]
+
+
+def test_team_register_also_carries_the_location(client, admin_client):
+    client.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882})
+    record = admin_client.get("/api/attendance/team").get_json()["records"][0]
+    assert record["check_in_map_url"] == "https://maps.google.com/?q=21.1458,79.0882"
 
 
 def test_only_one_check_in_per_day(client):

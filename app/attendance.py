@@ -30,6 +30,22 @@ def _today_row():
     return Attendance.query.filter_by(user_code=g.user.code, work_date=date.today()).first()
 
 
+def _coord(payload, name, low, high, errors):
+    """An optional latitude/longitude from the browser's geolocation. Missing is fine (the phone may have
+    no GPS, or the person said no to the location prompt) - a bad value is the only thing rejected."""
+    if payload.get(name) in (None, ""):
+        return None
+    try:
+        value = float(payload[name])
+    except (TypeError, ValueError):
+        errors[name] = "That location looks wrong"
+        return None
+    if not (low <= value <= high):
+        errors[name] = "That location looks wrong"
+        return None
+    return value
+
+
 @bp.get("/attendance")
 def page():
     return render_template("attendance.html")
@@ -68,12 +84,17 @@ def check_in():
             project = None
         if project is None:
             return jsonify(error="Check the highlighted fields", fields={"project_id": "Choose a project from the list"}), 422
+
+    lat = _coord(payload, "lat", -90, 90, f.errors)
+    lng = _coord(payload, "lng", -180, 180, f.errors)
+    if (lat is None) != (lng is None) and not f.errors:
+        f.errors["lat"] = "Send both lat and lng, or neither"
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
     row = Attendance(
         user_code=g.user.code, work_date=date.today(), project_id=project.id if project else None,
-        check_in_at=utcnow(), notes=f.data.get("notes", ""),
+        check_in_at=utcnow(), check_in_lat=lat, check_in_lng=lng, notes=f.data.get("notes", ""),
     )
     db.session.add(row)
     db.session.commit()

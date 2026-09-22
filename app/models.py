@@ -393,6 +393,8 @@ class Attendance(db.Model):
     work_date = db.Column(db.Date, nullable=False, index=True)
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     check_in_at = db.Column(db.DateTime, nullable=False)
+    check_in_lat = db.Column(db.Float, nullable=True)
+    check_in_lng = db.Column(db.Float, nullable=True)
     check_out_at = db.Column(db.DateTime, nullable=True)
     notes = db.Column(db.String(400), nullable=False, default="", server_default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
@@ -408,6 +410,12 @@ class Attendance(db.Model):
             return None
         return round((self.check_out_at - self.check_in_at).total_seconds() / 3600, 1)
 
+    @property
+    def check_in_map_url(self):
+        if self.check_in_lat is None or self.check_in_lng is None:
+            return None
+        return f"https://maps.google.com/?q={self.check_in_lat},{self.check_in_lng}"
+
     def to_dict(self) -> dict:
         return {
             "id": self.id, "user_code": self.user_code, "user_name": self.user.name if self.user else None,
@@ -415,5 +423,7 @@ class Attendance(db.Model):
             "project_title": self.project.title if self.project else None,
             "project_code": self.project.code if self.project else None,
             "check_in_at": _iso(self.check_in_at), "check_out_at": _iso(self.check_out_at),
+            "check_in_lat": self.check_in_lat, "check_in_lng": self.check_in_lng,
+            "check_in_map_url": self.check_in_map_url,
             "notes": self.notes, "hours": self.hours,
         }
