@@ -430,13 +430,15 @@ class Attendance(db.Model):
 
 
 class Worker(db.Model):
-    """A field worker who does not sign in to the app - tracked instead from the WhatsApp group they mark
-    their attendance in. Separate from User: a worker becomes a User only if they are ever given a login."""
+    """A field worker or office staff member who does not sign in to the app - tracked instead from the
+    WhatsApp group they mark their attendance in. category tells the two apart (Manpower list vs Staff
+    list are the same table, filtered). Separate from User: becomes a User only if ever given a login."""
 
     __tablename__ = "workers"
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
+    category = db.Column(db.String(20), nullable=False, default="manpower", server_default="manpower")   # manpower | staff
     source = db.Column(db.String(30), nullable=False, default="whatsapp", server_default="whatsapp")
     first_seen = db.Column(db.Date, nullable=True)
     last_seen = db.Column(db.Date, nullable=True)
@@ -449,7 +451,7 @@ class Worker(db.Model):
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "name": self.name, "source": self.source,
+            "id": self.id, "name": self.name, "category": self.category, "source": self.source,
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
         }

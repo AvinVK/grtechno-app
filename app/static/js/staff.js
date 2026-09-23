@@ -1,0 +1,93 @@
+/* Staff (admin only): office staff who don't sign in to the app, tracked instead from the WhatsApp group
+   they mark their attendance in. Read-only - the data comes from a one-off import. Same shape as
+   workers.js (Manpower), against /api/staff instead of /api/workers. */
+(() => {
+  'use strict';
+
+  const { $, h, clear, api, plural } = window.LD;
+  const view = $('#view');
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-');
+    return new Date(Date.UTC(+y, m - 1, +d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return null;
+    return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function mapLink(url, label) {
+    return url ? h('a', { class: 'att-map-link', href: url, target: '_blank', rel: 'noopener noreferrer' }, label) : null;
+  }
+
+  /* ---------- list ---------- */
+
+  async function showList() {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading staff…'));
+    let data;
+    try { data = await api('/api/staff'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    const list = h('ul', { class: 'rows' });
+    if (!data.workers.length) {
+      list.append(h('li', { class: 'empty-state' }, 'No staff yet.'));
+    } else {
+      data.workers.forEach((w) => list.append(h('li', {}, h('a', { class: 'p-row', href: `#s${w.id}` },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, w.name),
+          h('span', { class: 'row-sub' }, w.last_seen ? `Last seen ${fmtDate(w.last_seen)}` : 'Never seen')),
+        h('span', { class: 'row-value' }, plural(w.days_present, 'day', 'days')),
+        h('span', { class: 'p-foot' }, h('span', { class: 'p-code' }, `of the last ${w.window_days} days`))))));
+    }
+
+    clear(view).append(h('div', {},
+      h('div', { class: 'list-head' }, h('h2', {}, 'Staff attendance')),
+      list));
+  }
+
+  /* ---------- one staff member ---------- */
+
+  function attendanceRow(a) {
+    const times = a.status === 'absent'
+      ? 'Absent'
+      : [a.check_in_at && `In ${fmtTime(a.check_in_at)}`, a.check_out_at && `Out ${fmtTime(a.check_out_at)}`]
+        .filter(Boolean).join(' · ') || 'No check-in or check-out time found';
+    return h('li', { class: 'att-row' },
+      h('span', { class: 'att-main' },
+        h('span', { class: 'row-title' }, fmtDate(a.work_date)),
+        h('span', { class: `row-sub${a.status === 'absent' ? ' absent' : ''}` }, times),
+        a.project_title ? h('span', { class: 'row-sub' }, `${a.project_code} · ${a.project_title}`) : null,
+        mapLink(a.check_in_map_url, 'In location'), mapLink(a.check_out_map_url, 'Out location'),
+        a.note ? h('span', { class: 'row-sub' }, a.note) : null),
+      h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''));
+  }
+
+  async function showDetail(id) {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading staff…'));
+    let data;
+    try { data = await api(`/api/staff/${id}`); } catch (err) {
+      clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to Staff')));
+      return;
+    }
+
+    const list = h('ul', { class: 'rows att-history' },
+      data.attendance.length ? data.attendance.map(attendanceRow) : h('li', { class: 'empty-state' }, 'No attendance found for this person in the last two weeks.'));
+
+    clear(view).append(h('div', {},
+      h('a', { class: 'back-link', href: '#' }, '← Staff'),
+      h('div', { class: 'p-head' }, h('h2', {}, data.worker.name)),
+      h('p', { class: 'hint' }, data.worker.last_seen ? `Last seen ${fmtDate(data.worker.last_seen)}` : 'Never seen'),
+      h('h3', { class: 'att-sub-head' }, `Attendance, last ${data.window_days} days`),
+      list));
+    window.scrollTo(0, 0);
+  }
+
+  function route() {
+    const m = /^#s(\d+)$/.exec(window.location.hash);
+    if (m) return showDetail(Number(m[1]));
+    return showList();
+  }
+
+  window.addEventListener('hashchange', route);
+  route();
+})();

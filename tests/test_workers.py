@@ -133,3 +133,28 @@ def test_default_status_is_present(admin_client, app):
         worker_id = worker.id
     row = admin_client.get(f"/api/workers/{worker_id}").get_json()["attendance"][0]
     assert row["status"] == "present"
+
+
+# ---------- Manpower and Staff share a table but never each other's list ----------
+
+def test_a_worker_defaults_to_the_manpower_category(admin_client, app):
+    with app.app_context():
+        worker = make_worker("Sunny Pipe Welder GR")
+        assert worker.category == "manpower"
+
+
+def test_manpower_and_staff_lists_never_cross(admin_client, app):
+    with app.app_context():
+        manpower = make_worker("Sunny Pipe Welder GR")
+        staff = Worker(name="Kuldip Gaurd HR", category="staff")
+        db.session.add(staff)
+        db.session.commit()
+        manpower_id, staff_id = manpower.id, staff.id
+
+    names = {w["name"] for w in admin_client.get("/api/workers").get_json()["workers"]}
+    assert "Sunny Pipe Welder GR" in names and "Kuldip Gaurd HR" not in names
+    staff_names = {w["name"] for w in admin_client.get("/api/staff").get_json()["workers"]}
+    assert "Kuldip Gaurd HR" in staff_names and "Sunny Pipe Welder GR" not in staff_names
+
+    assert admin_client.get(f"/api/staff/{manpower_id}").status_code == 404       # a manpower id via /api/staff
+    assert admin_client.get(f"/api/workers/{staff_id}").status_code == 404        # a staff id via /api/workers
