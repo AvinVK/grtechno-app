@@ -890,6 +890,4 @@ a.p-client-name { color: var(--accent-dark); }
 .att-map-link { color: var(--accent-dark); font-weight: 600; font-size: 13px; text-decoration: none; }
 .att-map-link:hover { text-decoration: underline; }
 
-.workers-intro { max-width: 1100px; margin: 0 auto 14px; padding: 0 10px; }
-
 .row-sub.absent { color: var(--signal); font-weight: 600; }

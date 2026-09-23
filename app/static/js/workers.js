@@ -40,11 +40,7 @@
     }
 
     clear(view).append(h('div', {},
-      h('div', { class: 'list-head' }, h('h2', {}, 'Manpower')),
-      h('p', { class: 'hint workers-intro' },
-        'From the WhatsApp attendance group. Anyone who messaged it in the last 6 months is listed here, ' +
-        'with their attendance for the last two weeks below their name - including days filled in from a ' +
-        "colleague's message naming them, when they didn't message themselves."),
+      h('div', { class: 'list-head' }, h('h2', {}, 'Manpower attendance')),
       list));
   }
 
