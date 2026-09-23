@@ -119,6 +119,12 @@ def test_someone_elses_lead_cannot_be_converted(app, client):
     assert signed_in(app, make_user("Other")).post(f"/api/leads/{lead['id']}/project").status_code == 404
 
 
+def test_the_project_list_carries_the_site_location(client, admin_client):
+    make_project(client, admin_client)
+    row = admin_client.get("/api/projects").get_json()["projects"][0]
+    assert row["site_district"] == "Pune" and row["site_city"] == "Pune City"
+
+
 # ---------- who sees which project ----------
 
 def test_projects_visibility_and_manager_assignment(app, client, admin_client, manager_client, manager, accounts_client):

@@ -266,11 +266,11 @@ class Project(db.Model):
             "net_amount": num(self.net_amount), "manager_code": self.manager_code,
             "manager_name": self.manager.name if self.manager else None,
             "lead_id": self.lead_id,
+            "site_state": self.site_state, "site_district": self.site_district, "site_city": self.site_city,
         }
         if detail:
             data.update({
-                "site_pincode": self.site_pincode, "site_state": self.site_state,
-                "site_district": self.site_district, "site_city": self.site_city, "site_address": self.site_address,
+                "site_pincode": self.site_pincode, "site_address": self.site_address,
                 "work_order_no": self.work_order_no,
                 "work_order_date": self.work_order_date.isoformat() if self.work_order_date else None,
                 "start_date": self.start_date.isoformat() if self.start_date else None,

@@ -891,3 +891,41 @@ a.p-client-name { color: var(--accent-dark); }
 .att-map-link:hover { text-decoration: underline; }
 
 .row-sub.absent { color: var(--signal); font-weight: 600; }
+
+/* ---------- All clients / All projects (grouped by area) ---------- */
+
+.city-box {
+  max-width: 1100px;
+  margin: 0 auto 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.city-box-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--accent-tint);
+  font: 600 18px/1.2 var(--font-display);
+}
+
+.area-block { padding: 4px 16px 8px; }
+.area-block + .area-block { border-top: 1px dashed var(--line); }
+
+.area-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 2px;
+  font: 600 15px/1.2 var(--font-body);
+  color: var(--muted);
+}
+
+.city-box .rows { max-width: none; margin: 0; }
+.city-box .p-row { padding: 10px 0; }

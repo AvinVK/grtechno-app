@@ -25,6 +25,8 @@
     <a class="sb-link" href="{{ url_for('users_page.page') }}"{% if request.endpoint == 'users_page.page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Users &amp; roles</span></a>
     <a class="sb-link" href="{{ url_for('workers_page.page') }}"{% if request.endpoint == 'workers_page.page' %} aria-current="page"{% endif %}>{{ icon('manpower') }}<span>Manpower list</span></a>
     <a class="sb-link" href="{{ url_for('staff_page.staff_page') }}"{% if request.endpoint == 'staff_page.staff_page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Staff list</span></a>
+    <a class="sb-link" href="{{ url_for('manage.all_clients') }}"{% if request.endpoint == 'manage.all_clients' %} aria-current="page"{% endif %}>{{ icon('clients') }}<span>All clients</span></a>
+    <a class="sb-link" href="{{ url_for('manage.all_projects') }}"{% if request.endpoint == 'manage.all_projects' %} aria-current="page"{% endif %}>{{ icon('projects') }}<span>All projects</span></a>
     {% endif %}
   </nav>
 
