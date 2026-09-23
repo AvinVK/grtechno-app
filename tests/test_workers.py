@@ -35,7 +35,7 @@ def test_worker_list_needs_sign_in(anon):
 def test_worker_list_page_is_titled_and_not_part_of_leads(admin_client):
     html = admin_client.get("/workers").get_data(as_text=True)
     assert 'workers.js' in html
-    assert '<span class="brand-mark" aria-hidden="true"></span>Manpower</a>' in html
+    assert '<span class="brand-mark" aria-hidden="true"></span>Manpower list</a>' in html
     assert 'app.js' not in html and 'bottom-nav' not in html
 
 
