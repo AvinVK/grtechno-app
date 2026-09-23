@@ -19,15 +19,15 @@
   }
 
   function areaBlock(area, projects) {
-    return h('div', { class: 'area-block' },
-      h('h4', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(projects.length, 'project', 'projects'))),
+    return h('details', { class: 'area-block', open: true },
+      h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(projects.length, 'project', 'projects'))),
       h('ul', { class: 'rows' }, projects.map(projectRow)));
   }
 
   function cityBox(city, areas, total) {
-    return h('div', { class: 'city-box' },
-      h('h3', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'project', 'projects'))),
-      Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area])));
+    return h('details', { class: 'city-box', open: true },
+      h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'project', 'projects'))),
+      h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area]))));
   }
 
   const sortUnknownLast = (a, b) => (a === 'Not set') - (b === 'Not set') || a.localeCompare(b);
