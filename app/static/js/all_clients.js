@@ -19,13 +19,13 @@
   }
 
   function areaBlock(area, clients) {
-    return h('details', { class: 'area-block', open: true },
+    return h('details', { class: 'area-block' },
       h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(clients.length, 'client', 'clients'))),
       h('ul', { class: 'rows' }, clients.map(clientRow)));
   }
 
   function cityBox(city, areas, total) {
-    return h('details', { class: 'city-box', open: true },
+    return h('details', { class: 'city-box' },
       h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'client', 'clients'))),
       h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area]))));
   }
