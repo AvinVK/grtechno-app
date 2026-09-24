@@ -13,6 +13,10 @@
   const view = $('#view');
   const canOpenClients = view.dataset.clients === '1';
   const filter = { q: '', status: '' };
+  // Arriving here from the admin's All projects page is a full page load, so the referrer is still
+  // set when this script starts - send the back link there instead of to this person's own Projects
+  // list, which for a non-admin browsing their own projects (referrer unset) is the right place instead.
+  const backLinkHref = document.referrer.endsWith('/all-projects') ? '/all-projects' : '#';
 
   const statusChip = (s) => {
     const [label, tone] = STATUS[s] || [s, 'planned'];
@@ -140,7 +144,7 @@
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: '#' }, '\u2190 All projects'),
+      h('a', { class: 'back-link', href: backLinkHref }, '\u2190 All projects'),
       h('div', { class: 'p-head' }, h('h2', {}, 'Add project')),
       form));
   }
@@ -295,7 +299,7 @@
     const site = [P.site_address, P.site_city, P.site_district, P.site_state].filter(Boolean).join(', ');
     const c = data.client;
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: '#' }, '← All projects'),
+      h('a', { class: 'back-link', href: backLinkHref }, '← All projects'),
       h('div', { class: 'p-head' },
         h('h2', {}, P.code), statusChip(P.status)),
       h('section', { class: 'p-client' },

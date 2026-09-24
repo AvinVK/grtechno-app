@@ -7,6 +7,10 @@
   const view = $('#view');
   const canOpenProjects = view.dataset.projects === '1';
   const filter = { q: '' };
+  // Arriving here from the admin's All clients page is a full page load, so the referrer is still
+  // set when this script starts - send the back link there instead of to this person's own Clients
+  // list, which for a non-admin browsing their own clients (referrer unset) is the right place instead.
+  const backLinkHref = document.referrer.endsWith('/all-clients') ? '/all-clients' : '#';
   const STATUS_LABEL = { planned: 'Planned', running: 'Running', on_hold: 'On hold', completed: 'Completed' };
 
   /* ---------- list ---------- */
@@ -146,7 +150,7 @@
         : h('p', { class: 'hint' }, 'No projects for this client yet.')) : null;
 
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: '#' }, '← All clients'),
+      h('a', { class: 'back-link', href: backLinkHref }, '← All clients'),
       h('div', { class: 'p-head' }, h('h2', {}, client ? client.name : 'Add client')),
       form, projectList));
     window.scrollTo(0, 0);
