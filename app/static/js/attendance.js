@@ -62,6 +62,36 @@
     });
   }
 
+  /* An in-app list to choose the project (or office work) to check in against, instead of the phone's own
+     native <select> popup - which drops the app's own look and, with a long project list, is awkward to
+     scroll on some phones. Resolves the chosen id ('' for office work), or undefined if closed without
+     choosing, so the caller can tell "picked office work" apart from "changed their mind". */
+  function pickProject(projects, selectedId) {
+    return new Promise((resolve) => {
+      const options = [{ id: '', label: 'No project (office work)' }, ...projects.map((p) => ({ id: String(p.id), label: `${p.client_name} – ${p.title}` }))];
+      const finish = (id) => { overlay.remove(); resolve(id); };
+      const list = h('ul', { class: 'picker-list', role: 'radiogroup', 'aria-label': 'Choose what you are working on' },
+        options.map((opt) => {
+          const selected = String(selectedId ?? '') === opt.id;
+          const row = h('li', {
+            class: `picker-row${selected ? ' selected' : ''}`, role: 'radio', 'aria-checked': String(selected), tabindex: '0',
+            onclick: () => finish(opt.id),
+            onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); finish(opt.id); } },
+          }, h('span', {}, opt.label), h('span', { class: 'picker-dot', 'aria-hidden': 'true' }));
+          return row;
+        }));
+      const card = h('div', { class: 'confirm-card picker-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Choose what you are working on' }, list);
+      const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) finish(undefined); } }, card);
+      window.addEventListener('keydown', function onKey(e) {
+        if (e.key !== 'Escape') return;
+        window.removeEventListener('keydown', onKey);
+        finish(undefined);
+      });
+      document.body.append(overlay);
+      (list.querySelector('.picker-row.selected') || list.firstChild).focus();
+    });
+  }
+
   function mapLink(a) {
     return a.check_in_map_url ? h('a', { class: 'att-map-link', href: a.check_in_map_url, target: '_blank', rel: 'noopener noreferrer' }, 'View location') : null;
   }
@@ -83,9 +113,18 @@
     let data;
     try { data = await api('/api/attendance/state'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
-    const projectSelect = h('select', { id: 'att-project' },
-      h('option', { value: '' }, 'No project (office work)'),
-      data.projects.map((p) => h('option', { value: p.id }, `${p.client_name} – ${p.title}`)));
+    let selectedProjectId = '';
+    const projectLabel = (id) => {
+      const p = id && data.projects.find((pr) => String(pr.id) === String(id));
+      return p ? `${p.client_name} – ${p.title}` : 'No project (office work)';
+    };
+    const projectBtn = h('button', { type: 'button', id: 'att-project', class: 'field-picker' }, projectLabel(''));
+    projectBtn.onclick = async () => {
+      const chosen = await pickProject(data.projects, selectedProjectId);
+      if (chosen === undefined) return;                        // closed without choosing
+      selectedProjectId = chosen;
+      projectBtn.textContent = projectLabel(chosen);
+    };
 
     const cardBox = h('div', {});
     const historyList = h('ul', { class: 'rows att-history' });
@@ -132,7 +171,7 @@
           try {
             await api('/api/attendance/check-in', {
               method: 'POST',
-              body: { project_id: projectSelect.value || null, lat: location.lat, lng: location.lng },
+              body: { project_id: selectedProjectId || null, lat: location.lat, lng: location.lng },
             });
             toast('Checked in with your location');
             await reload();
@@ -145,7 +184,7 @@
         card = h('div', { class: 'att-card' },
           h('h3', {}, "You haven't checked in today"),
           h('label', { for: 'att-project' }, 'Working on'),
-          projectSelect, errBox, checkInBtn,
+          projectBtn, errBox, checkInBtn,
           h('p', { class: 'hint' }, 'Location is required to check in.'));
       } else if (!data.today.check_out_at) {
         const checkOutBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check out');
