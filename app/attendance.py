@@ -61,7 +61,10 @@ def state():
                .order_by(Attendance.work_date.desc()).limit(30).all())
     return jsonify(
         today=today.to_dict() if today else None,
-        projects=[{"id": p.id, "title": p.title, "client_name": p.client.name} for p in _open_projects()],
+        projects=[
+            {"id": p.id, "title": p.title, "client_name": p.client.name, "site_district": p.site_district}
+            for p in _open_projects()
+        ],
         history=[a.to_dict() for a in history],
         can_see_team=g.user.sees_all,
     )

@@ -18,6 +18,44 @@
 
   const today = () => new Date().toISOString().slice(0, 10);
 
+  /* Approximate centre of each district we do work in, so a check-in location can be matched to "which
+     city am I in" without calling any external geocoding service - not needed at this scale, and one more
+     place a free-plan network restriction or an API key could get in the way. Add a district here once
+     work starts in a new one; until then, projects there just won't get auto-filtered (everything still
+     shows via "Show all projects"). Beyond NEARBY_KM from every known centre, we don't trust a match at
+     all - better to show everything than confidently filter to the wrong city. */
+  const DISTRICT_CENTERS = {
+    Chandrapur: [19.9615, 79.2961],
+    Dhanbad: [23.7957, 86.4304],
+    Giridih: [24.1913, 86.3000],
+    Hazaribagh: [23.9925, 85.3637],
+    Nagpur: [21.1458, 79.0882],
+    Ramgarh: [23.6300, 85.5100],
+    Sundargarh: [22.1167, 84.0333],
+    Wardha: [20.7453, 78.6022],
+  };
+  const NEARBY_KM = 100;
+
+  function distanceKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function nearestDistrict(location) {
+    if (!location) return null;
+    let best = null;
+    let bestKm = Infinity;
+    for (const [district, [lat, lng]] of Object.entries(DISTRICT_CENTERS)) {
+      const km = distanceKm(location.lat, location.lng, lat, lng);
+      if (km < bestKm) { bestKm = km; best = district; }
+    }
+    return bestKm <= NEARBY_KM ? best : null;
+  }
+
   /* Where the phone was, fetched once (getCurrentPosition, never watchPosition) after the person has seen
      our own explanation below - so the phone's own permission dialog is never a surprise. One fixed reading
      is taken and nothing is kept open or asked for again; the phone's location access ends the moment this
@@ -46,7 +84,7 @@
       const continueBtn = h('button', { class: 'btn primary', type: 'button' }, 'Continue');
       const card = h('div', { class: 'confirm-card', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'loc-title', 'aria-describedby': 'loc-message' },
         h('h2', { id: 'loc-title' }, 'Location required to check in'),
-        h('p', { id: 'loc-message' }, "Your phone will ask to share your location. We fetch it once, for this check-in, and let it go right away."),
+        h('p', { id: 'loc-message' }, "Your phone will ask to share your location. We use it to show projects near you and record where you checked in, fetching it once and letting it go right away."),
         h('div', { class: 'confirm-actions' }, continueBtn));
       const overlay = h('div', { class: 'confirm-overlay' }, card);
       const finish = (result) => { overlay.remove(); resolve(result); };
@@ -66,21 +104,39 @@
      native <select> popup - which drops the app's own look and, with a long project list, is awkward to
      scroll on some phones. Resolves the chosen id ('' for office work), or undefined if closed without
      choosing, so the caller can tell "picked office work" apart from "changed their mind". */
-  function pickProject(projects, selectedId) {
+  /* nearDistrict, when given, narrows the list to projects in that district to start with - a guess from
+     where the phone is right now, not a hard rule, so a toggle row always offers the full list too (the
+     guess can be wrong near a border, or the work is genuinely outside every district we know about). */
+  function pickProject(projects, selectedId, nearDistrict) {
     return new Promise((resolve) => {
-      const options = [{ id: '', label: 'No project (office work)' }, ...projects.map((p) => ({ id: String(p.id), label: `${p.client_name} – ${p.title}` }))];
+      const toOption = (p) => ({ id: String(p.id), label: `${p.client_name} – ${p.title}`, district: p.site_district });
+      const all = [{ id: '', label: 'No project (office work)' }, ...projects.map(toOption)];
+      const inDistrict = nearDistrict ? projects.filter((p) => p.site_district === nearDistrict) : [];
+      let showingAll = !nearDistrict || inDistrict.length === 0;
+
       const finish = (id) => { overlay.remove(); resolve(id); };
-      const list = h('ul', { class: 'picker-list', role: 'radiogroup', 'aria-label': 'Choose what you are working on' },
-        options.map((opt) => {
+      const list = h('ul', { class: 'picker-list', role: 'radiogroup', 'aria-label': 'Choose what you are working on' });
+      const toggle = nearDistrict && inDistrict.length
+        ? h('button', { type: 'button', class: 'picker-toggle' })
+        : null;
+
+      function renderRows() {
+        clear(list);
+        const shown = showingAll ? all : [all[0], ...inDistrict.map(toOption)];
+        shown.forEach((opt) => {
           const selected = String(selectedId ?? '') === opt.id;
-          const row = h('li', {
+          list.append(h('li', {
             class: `picker-row${selected ? ' selected' : ''}`, role: 'radio', 'aria-checked': String(selected), tabindex: '0',
             onclick: () => finish(opt.id),
             onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); finish(opt.id); } },
-          }, h('span', {}, opt.label), h('span', { class: 'picker-dot', 'aria-hidden': 'true' }));
-          return row;
-        }));
-      const card = h('div', { class: 'confirm-card picker-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Choose what you are working on' }, list);
+          }, h('span', {}, opt.label), h('span', { class: 'picker-dot', 'aria-hidden': 'true' })));
+        });
+        if (toggle) toggle.textContent = showingAll ? `Show only ${nearDistrict} projects` : `Not in ${nearDistrict}? Show all projects`;
+      }
+      if (toggle) toggle.onclick = () => { showingAll = !showingAll; renderRows(); };
+      renderRows();
+
+      const card = h('div', { class: 'confirm-card picker-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Choose what you are working on' }, toggle, list);
       const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) finish(undefined); } }, card);
       window.addEventListener('keydown', function onKey(e) {
         if (e.key !== 'Escape') return;
@@ -114,13 +170,15 @@
     try { data = await api('/api/attendance/state'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
     let selectedProjectId = '';
+    let cachedLocation = null;                                 // reused so check-in doesn't ask a second time
     const projectLabel = (id) => {
       const p = id && data.projects.find((pr) => String(pr.id) === String(id));
       return p ? `${p.client_name} – ${p.title}` : 'No project (office work)';
     };
     const projectBtn = h('button', { type: 'button', id: 'att-project', class: 'field-picker' }, projectLabel(''));
     projectBtn.onclick = async () => {
-      const chosen = await pickProject(data.projects, selectedProjectId);
+      if (!cachedLocation && (await explainLocationIsRequired())) cachedLocation = await getLocation();
+      const chosen = await pickProject(data.projects, selectedProjectId, nearestDistrict(cachedLocation));
       if (chosen === undefined) return;                        // closed without choosing
       selectedProjectId = chosen;
       projectBtn.textContent = projectLabel(chosen);
@@ -154,12 +212,14 @@
         const checkInBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check in');
         checkInBtn.onclick = async () => {
           errBox.textContent = '';
-          const proceed = await explainLocationIsRequired();
-          if (!proceed) return;                                    // they closed the box; nothing happened
-
-          checkInBtn.disabled = true;
-          checkInBtn.textContent = 'Getting your location…';
-          const location = await getLocation();
+          if (!cachedLocation) {
+            const proceed = await explainLocationIsRequired();
+            if (!proceed) return;                                  // they closed the box; nothing happened
+            checkInBtn.disabled = true;
+            checkInBtn.textContent = 'Getting your location…';
+            cachedLocation = await getLocation();
+          }
+          const location = cachedLocation;
           if (!location) {
             errBox.textContent = "We couldn't get your location. Allow location access for this site in your browser, then try again.";
             checkInBtn.disabled = false;
