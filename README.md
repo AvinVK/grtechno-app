@@ -86,8 +86,10 @@ python -m pytest
 | `TIMEZONE` | Decides what "today" means for follow-ups. Default `Asia/Kolkata`. |
 | `SESSION_COOKIE_SECURE` | Set to `1` once the site is on HTTPS. |
 | `DATABASE_URL` | Optional. Overrides the SQLite file location. |
+| `FIELD_ENCRYPTION_KEY` | Encrypts phone/email/address at rest. Optional for local dev (a random key is made once in `instance/field_encryption_key`); set explicitly on any server with real data, and never change it once data exists. |
 
 Generate a secret key with: `python -c "import secrets; print(secrets.token_hex(32))"`
+Generate a field encryption key with: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
 ## Deploy to PythonAnywhere
 
@@ -137,10 +139,14 @@ SESSION_COOKIE_SECURE=1
 TIMEZONE=Asia/Kolkata
 DEPLOY_SECRET=<a long random value, see below>
 WSGI_RELOAD_FILE=/var/www/YOURNAME_pythonanywhere_com_wsgi.py
+FIELD_ENCRYPTION_KEY=<generate once, see below - then never change it>
 ```
 
 Make the secret with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. `SECRET_KEY` is optional: if you
-leave it out, the app creates a strong key once in `instance/secret_key`.
+leave it out, the app creates a strong key once in `instance/secret_key`. `FIELD_ENCRYPTION_KEY` is also optional the
+same way, but pick it deliberately here and write it down somewhere safe: it encrypts phone/email/address in the
+database, and if it's ever lost or changed after real data exists, that data becomes permanently unreadable. Generate
+one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 
 **4. Create the database and the admin** (still in the Bash console, virtualenv active).
 

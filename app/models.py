@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from .constants import DEFAULT_SETTINGS
+from .crypto import EncryptedText
 from .extensions import db
 
 
@@ -52,14 +53,14 @@ class Lead(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     contact_name = db.Column(db.String(120), nullable=False, default="")
     company = db.Column(db.String(160), nullable=False, default="")
-    phone = db.Column(db.String(40), nullable=False, default="")
-    email = db.Column(db.String(160), nullable=False, default="")
+    phone = db.Column(EncryptedText, nullable=False, default="")
+    email = db.Column(EncryptedText, nullable=False, default="")
     site_category = db.Column(db.String(60), nullable=False, default="", server_default="")
     site_pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
     site_state = db.Column(db.String(80), nullable=False, default="", server_default="")
     site_district = db.Column(db.String(80), nullable=False, default="", server_default="")
     site_city = db.Column(db.String(120), nullable=False, default="", server_default="")
-    site_address = db.Column(db.String(400), nullable=False, default="")
+    site_address = db.Column(EncryptedText, nullable=False, default="")
     service = db.Column(db.String(120), nullable=False, default="")
     source = db.Column(db.String(120), nullable=False, default="")
     est_value = db.Column(db.Numeric(14, 2), nullable=True)
@@ -181,14 +182,14 @@ class Client(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False)
     contact_name = db.Column(db.String(120), nullable=False, default="", server_default="")
-    phone = db.Column(db.String(40), nullable=False, default="", server_default="")
-    email = db.Column(db.String(160), nullable=False, default="", server_default="")
+    phone = db.Column(EncryptedText, nullable=False, default="", server_default="")
+    email = db.Column(EncryptedText, nullable=False, default="", server_default="")
     site_category = db.Column(db.String(60), nullable=False, default="", server_default="")
     pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
     state = db.Column(db.String(80), nullable=False, default="", server_default="")
     district = db.Column(db.String(80), nullable=False, default="", server_default="")
     city = db.Column(db.String(120), nullable=False, default="", server_default="")
-    address = db.Column(db.String(400), nullable=False, default="", server_default="")
+    address = db.Column(EncryptedText, nullable=False, default="", server_default="")
     notes = db.Column(db.Text, nullable=False, default="", server_default="")
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
@@ -222,7 +223,7 @@ class Project(db.Model):
     site_state = db.Column(db.String(80), nullable=False, default="", server_default="")
     site_district = db.Column(db.String(80), nullable=False, default="", server_default="")
     site_city = db.Column(db.String(120), nullable=False, default="", server_default="")
-    site_address = db.Column(db.String(400), nullable=False, default="", server_default="")
+    site_address = db.Column(EncryptedText, nullable=False, default="", server_default="")
     work_order_no = db.Column(db.String(60), nullable=False, default="", server_default="")
     work_order_date = db.Column(db.Date, nullable=True)
     start_date = db.Column(db.Date, nullable=True)
