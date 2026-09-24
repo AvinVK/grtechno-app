@@ -30,12 +30,12 @@ def test_all_clients_needs_sign_in(anon):
 def test_pages_are_titled_and_not_part_of_leads(admin_client):
     html = admin_client.get("/all-clients").get_data(as_text=True)
     assert "all_clients.js" in html
-    assert '<span class="brand-mark" aria-hidden="true"></span>All clients</a>' in html
+    assert '>All clients</a>' in html
     assert "app.js" not in html and "bottom-nav" not in html
 
     html = admin_client.get("/all-projects").get_data(as_text=True)
     assert "all_projects.js" in html
-    assert '<span class="brand-mark" aria-hidden="true"></span>All projects</a>' in html
+    assert '>All projects</a>' in html
 
 
 def test_the_links_are_only_in_the_admin_menu(client, admin_client):

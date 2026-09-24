@@ -5,7 +5,7 @@
 {% block content %}
 <main class="login">
   <form class="login-card" method="post" action="{{ url_for('auth.set_pin') }}">
-    <p class="brand"><span class="brand-mark" aria-hidden="true"></span>Leads</p>
+    <p class="brand">Leads</p>
     <h1>Set your PIN</h1>
     <p class="hint">Enter the userid and setup code your admin gave you, then choose a {{ pin_length }}-digit PIN.</p>
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">

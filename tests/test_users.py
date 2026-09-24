@@ -123,7 +123,7 @@ def test_users_page_is_admin_only_and_titled_users(admin_client, client, anon):
     page = admin_client.get("/users")
     html = page.get_data(as_text=True)
     assert page.status_code == 200 and "users.js" in html
-    assert '<span class="brand-mark" aria-hidden="true"></span>Users &amp; roles</a>' in html      # top bar names the page, not Leads
+    assert '>Users &amp; roles</a>' in html                                            # top bar names the page, not Leads
     assert 'href="/users" aria-current="page"' in html                                  # marked in the menu
     assert "app.js" not in html and "bottom-nav" not in html                            # none of the Leads screen
     assert client.get("/users").status_code == 403

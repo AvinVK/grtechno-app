@@ -19,7 +19,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     {% endif %}
-    <a class="brand" href="{{ heading_href or (current_module.path if current_module else url_for('views.index')) }}"><span class="brand-mark" aria-hidden="true"></span>{{ heading or (current_module.name if current_module else 'Leads') }}</a>
+    <a class="brand" href="{{ heading_href or (current_module.path if current_module else url_for('views.index')) }}">{{ heading or (current_module.name if current_module else 'Leads') }}</a>
     {% block tabs %}{% endblock %}
     <div class="top-actions">
       {% block actions %}{% endblock %}
