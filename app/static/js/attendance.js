@@ -276,8 +276,7 @@
     renderHistory();
 
     clear(view).append(h('div', {},
-      h('div', { class: 'list-head' }, h('h2', {}, 'Attendance'),
-        data.can_see_team ? h('a', { class: 'btn', href: '#team' }, 'Team') : null),
+      h('div', { class: 'list-head' }, h('h2', {}, 'Attendance')),
       cardBox,
       h('h3', { class: 'att-sub-head' }, 'Your history'),
       historyList));
