@@ -914,6 +914,8 @@ a.p-client-name { color: var(--accent-dark); }
 
 .att-map-link { color: var(--accent-dark); font-weight: 600; font-size: 13px; text-decoration: none; }
 .att-map-link:hover { text-decoration: underline; }
+.att-delete-link { color: var(--signal); font-weight: 600; font-size: 13px; text-decoration: none; margin-left: 12px; }
+.att-delete-link:hover { text-decoration: underline; }
 
 .row-sub.absent { color: var(--signal); font-weight: 600; }
 

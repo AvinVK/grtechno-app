@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm } = window.LD;
   const view = $('#view');
 
   function fmtTime(iso) {
@@ -152,13 +152,32 @@
     return a.check_in_map_url ? h('a', { class: 'att-map-link', href: a.check_in_map_url, target: '_blank', rel: 'noopener noreferrer' }, 'View location') : null;
   }
 
-  function historyRow(a) {
+  /* Admin/Accounts only (the backend enforces this too) - removes a wrong or test record. A regular
+     person cannot delete their own attendance; that would defeat the point of keeping one. */
+  function deleteLink(a, onDeleted) {
+    const link = h('a', { href: '#', class: 'att-delete-link' }, 'Delete');
+    link.onclick = async (e) => {
+      e.preventDefault();
+      const sure = await confirm('Delete this attendance record? This cannot be undone.', { ok: 'Delete', danger: true, title: 'Delete record' });
+      if (!sure) return;
+      try {
+        await api(`/api/attendance/${a.id}`, { method: 'DELETE' });
+        toast('Record deleted');
+        await onDeleted();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    };
+    return link;
+  }
+
+  function historyRow(a, onDeleted) {
     const times = a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`;
     return h('li', { class: 'att-row' },
       h('span', { class: 'att-main' },
         h('span', { class: 'row-title' }, fmtDate(a.work_date)),
         h('span', { class: 'row-sub' }, [a.project_title, times].filter(Boolean).join(' · ')),
-        mapLink(a)),
+        mapLink(a), onDeleted ? deleteLink(a, onDeleted) : null),
       h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''));
   }
 
@@ -189,7 +208,7 @@
 
     function renderHistory() {
       clear(historyList).append(...(data.history.length
-        ? data.history.map(historyRow)
+        ? data.history.map((a) => historyRow(a, data.can_see_team ? reload : null))
         : [h('li', { class: 'empty-state' }, 'No attendance recorded yet.')]));
     }
 
@@ -227,6 +246,7 @@
             return;
           }
 
+          checkInBtn.disabled = true;
           checkInBtn.textContent = 'Checking in…';
           try {
             await api('/api/attendance/check-in', {
@@ -262,13 +282,13 @@
         card = h('div', { class: 'att-card' },
           h('h3', {}, 'Checked in'),
           h('p', { class: 'hint' }, [data.today.project_title, `since ${fmtTime(data.today.check_in_at)}`].filter(Boolean).join(' · ')),
-          mapLink(data.today),
+          mapLink(data.today), data.can_see_team ? deleteLink(data.today, reload) : null,
           checkOutBtn);
       } else {
         card = h('div', { class: 'att-card' },
           h('h3', {}, 'Done for today'),
           h('p', { class: 'hint' }, [data.today.project_title, `${fmtTime(data.today.check_in_at)} – ${fmtTime(data.today.check_out_at)}`, `${data.today.hours} h`].filter(Boolean).join(' · ')),
-          mapLink(data.today));
+          mapLink(data.today), data.can_see_team ? deleteLink(data.today, reload) : null);
       }
       clear(cardBox).append(card);
     }
@@ -301,7 +321,7 @@
           h('span', { class: 'att-main' },
             h('span', { class: 'row-title' }, a.user_name),
             h('span', { class: 'row-sub' }, [a.project_title, a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`].filter(Boolean).join(' · ')),
-            mapLink(a)),
+            mapLink(a), deleteLink(a, refresh)),
           h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''))));
       } catch (err) {
         clear(list).append(h('li', { class: 'empty-state' }, err.message));

@@ -118,6 +118,20 @@ def check_out():
     return jsonify(today=row.to_dict())
 
 
+@bp.delete("/api/attendance/<int:record_id>")
+def delete_record(record_id):
+    """Admin and other sees_all roles can remove a wrong or test record. Nobody else - a person deleting
+    their own attendance would defeat the point of keeping one."""
+    if not g.user.sees_all:
+        abort(403, "Only the admin or accounts can delete an attendance record.")
+    row = db.session.get(Attendance, record_id)
+    if row is None:
+        abort(404, "Not found")
+    db.session.delete(row)
+    db.session.commit()
+    return "", 204
+
+
 @bp.get("/api/attendance/team")
 def team():
     """The full register, for admin and other sees_all roles. Filterable by date and, for a longer look,

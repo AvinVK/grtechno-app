@@ -159,3 +159,17 @@ def test_a_users_state_only_shows_their_own_history(client, manager_client):
     state = client.get("/api/attendance/state").get_json()
     assert state["today"]["user_code"] not in (None,)  # sanity: a record is theirs
     assert all(h["user_name"] == "Tester" for h in state["history"])
+
+
+# ---------- deleting a record ----------
+
+def test_only_sees_all_roles_can_delete_a_record(client, manager_client, admin_client):
+    record_id = check_in(client).get_json()["today"]["id"]
+    assert client.delete(f"/api/attendance/{record_id}").status_code == 403
+    assert manager_client.delete(f"/api/attendance/{record_id}").status_code == 403
+    assert admin_client.delete(f"/api/attendance/{record_id}").status_code == 204
+    assert client.get("/api/attendance/state").get_json()["today"] is None
+
+
+def test_deleting_an_unknown_record_is_a_404(admin_client):
+    assert admin_client.delete("/api/attendance/999999").status_code == 404
