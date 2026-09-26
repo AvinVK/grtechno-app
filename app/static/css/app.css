@@ -35,8 +35,8 @@
   --st-won: #23845a;
   --st-lost: #8d8490;
 
-  --font-body: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Mulish", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Bitter", Georgia, "Times New Roman", serif;
 
   --radius: 6px;
   --gap: 16px;
