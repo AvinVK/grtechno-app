@@ -25,4 +25,5 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
     PERMANENT_SESSION_LIFETIME = timedelta(days=30)
-    MAX_CONTENT_LENGTH = 1024 * 1024
+    MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # room for a handful of site-survey photos in one upload
+    UPLOAD_DIR = BASE_DIR / "instance" / "uploads"
