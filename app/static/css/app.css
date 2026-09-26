@@ -721,6 +721,8 @@ a.p-client-name { color: var(--accent-dark); }
 .project-form { display: grid; gap: 22px; }
 .p-section { display: grid; gap: 10px; }
 .p-section h3 { font: 600 16px/1.1 var(--font-display); }
+.p-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.p-section-head h3 { margin: 0; }
 
 .net-amount { font: 600 16px/1.2 var(--font-display); }
 .net-amount.bad, .pay-summary.bad { color: var(--signal); }

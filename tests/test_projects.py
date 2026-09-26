@@ -195,7 +195,7 @@ def test_sales_person_sees_no_projects_module_but_conversion_still_works(client)
 
 # ---------- clients ----------
 
-def test_clients_list_edit_and_add(client, admin_client, manager_client, manager, accounts_client):
+def test_clients_list_and_edit(client, admin_client, manager_client, manager, accounts_client):
     pid = make_project(client, admin_client)
     cid = admin_client.get(f"/api/projects/{pid}").get_json()["client"]["id"]
     assert [c["name"] for c in admin_client.get("/api/clients").get_json()["clients"]] == ["Kalyani Cold Storage"]
@@ -208,17 +208,17 @@ def test_clients_list_edit_and_add(client, admin_client, manager_client, manager
     edited = manager_client.patch(f"/api/clients/{cid}", json={"phone": "9811111111", "notes": "Pays on time"})
     assert edited.status_code == 200 and edited.get_json()["client"]["phone"] == "9811111111"
 
-    created = accounts_client.post("/api/clients", json={"name": "Walk-in Traders", "pincode": "440001"})
-    assert created.status_code == 201 and created.get_json()["client"]["name"] == "Walk-in Traders"
-    assert len(accounts_client.get("/api/clients").get_json()["clients"]) == 2
+
+def test_clients_are_never_created_by_hand(admin_client):
+    # No add-client endpoint any more - a client only ever comes from winning a lead (or the direct
+    # "already running" project path below, for work that predates this pipeline).
+    assert admin_client.post("/api/clients", json={"name": "Walk-in Traders"}).status_code == 405
 
 
 def test_client_validation(admin_client):
-    assert admin_client.post("/api/clients", json={}).status_code == 422
-    assert admin_client.post("/api/clients", json={"name": "  "}).status_code == 422
-    assert "pincode" in admin_client.post("/api/clients", json={"name": "X", "pincode": "12"}).get_json()["fields"]
-    cid = admin_client.post("/api/clients", json={"name": "Valid Co"}).get_json()["client"]["id"]
+    cid = admin_client.post("/api/projects", json={"new_client_name": "Valid Co"}).get_json()["project"]["client_id"]
     assert admin_client.patch(f"/api/clients/{cid}", json={"name": ""}).status_code == 422
+    assert "pincode" in admin_client.patch(f"/api/clients/{cid}", json={"name": "Valid Co", "pincode": "12"}).get_json()["fields"]
     assert admin_client.get("/api/clients/9999").status_code == 404
 
 
@@ -236,7 +236,7 @@ def test_admin_adds_a_project_with_a_new_client(admin_client, admin):
 
 
 def test_add_project_for_an_existing_client_and_custom_details(admin_client):
-    cid = admin_client.post("/api/clients", json={"name": "Orchid Heights CHS"}).get_json()["client"]["id"]
+    cid = admin_client.post("/api/projects", json={"new_client_name": "Orchid Heights CHS"}).get_json()["project"]["client_id"]
     res = admin_client.post("/api/projects", json={"client_id": cid, "title": "Fire alarm upgrade", "status": "on_hold"})
     assert res.status_code == 201
     assert res.get_json()["project"]["title"] == "Fire alarm upgrade" and res.get_json()["project"]["status"] == "on_hold"
@@ -275,7 +275,7 @@ def test_project_manager_adds_and_runs_their_own_project(manager_client, manager
     assert len(manager_client.get("/api/projects").get_json()["projects"]) == 1                # it is theirs, so they see it
 
     # a client that belongs to someone else's project is not on their list
-    other = admin_client.post("/api/clients", json={"name": "Someone Else Ltd"}).get_json()["client"]["id"]
+    other = admin_client.post("/api/projects", json={"new_client_name": "Someone Else Ltd"}).get_json()["project"]["client_id"]
     assert manager_client.post("/api/projects", json={"client_id": other}).status_code == 422
     assert [c["name"] for c in manager_client.get("/api/projects").get_json()["clients"]] == ["Pinnacle IT Park"]
 
