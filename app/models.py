@@ -14,6 +14,21 @@ def _iso(dt):
     return dt.isoformat() + "Z" if dt else None
 
 
+# A lead or project can call for more than one service (e.g. an AMC plus a Fire NOC in the same enquiry) -
+# plain association tables, no extra columns needed on either side of the link.
+lead_services = db.Table(
+    "lead_services",
+    db.Column("lead_id", db.Integer, db.ForeignKey("leads.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("service_id", db.Integer, db.ForeignKey("services.id", ondelete="CASCADE"), primary_key=True),
+)
+
+project_services = db.Table(
+    "project_services",
+    db.Column("project_id", db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True),
+    db.Column("service_id", db.Integer, db.ForeignKey("services.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class User(db.Model):
     """A person who can sign in. The 4-digit code is the primary key and the tail of the userid
     (name-1234). PINs and setup codes are stored only as hashes."""
@@ -61,9 +76,9 @@ class Lead(db.Model):
     site_district = db.Column(db.String(80), nullable=False, default="", server_default="")
     site_city = db.Column(db.String(120), nullable=False, default="", server_default="")
     site_address = db.Column(EncryptedText, nullable=False, default="")
-    service = db.Column(db.String(120), nullable=False, default="")
+    service = db.Column(db.String(120), nullable=False, default="")  # legacy: pre-multi-service leads only
     source = db.Column(db.String(120), nullable=False, default="")
-    est_value = db.Column(db.Numeric(14, 2), nullable=True)
+    est_value = db.Column(db.Numeric(14, 2), nullable=True)  # set at Quote sent, not at creation, for new leads
     stage = db.Column(db.String(30), nullable=False, default="New enquiry", index=True)
     follow_up_date = db.Column(db.Date, nullable=True, index=True)
     notes = db.Column(db.Text, nullable=False, default="")
@@ -71,8 +86,12 @@ class Lead(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     closed_at = db.Column(db.DateTime, nullable=True)
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id"), nullable=True, index=True)
+    quote_sent_date = db.Column(db.Date, nullable=True)
 
     owner = db.relationship("User")
+    client = db.relationship("Client")
+    services = db.relationship("Service", secondary=lead_services)
     activities = db.relationship(
         "Activity",
         back_populates="lead",
@@ -86,8 +105,14 @@ class Lead(db.Model):
         order_by="ChecklistItem.position, ChecklistItem.id",
     )
     project = db.relationship("Project", back_populates="lead", uselist=False)
+    survey = db.relationship("LeadSurvey", back_populates="lead", uselist=False, cascade="all, delete-orphan")
+    negotiations = db.relationship(
+        "LeadNegotiation", back_populates="lead", cascade="all, delete-orphan",
+        order_by="LeadNegotiation.round_no",
+    )
 
     def to_dict(self, with_activities: bool = False) -> dict:
+        service_names = [s.name for s in self.services] if self.services else ([self.service] if self.service else [])
         data = {
             "id": self.id,
             "contact_name": self.contact_name,
@@ -101,6 +126,7 @@ class Lead(db.Model):
             "site_city": self.site_city,
             "site_address": self.site_address,
             "service": self.service,
+            "services": service_names,
             "source": self.source,
             "est_value": float(self.est_value) if self.est_value is not None else None,
             "stage": self.stage,
@@ -111,6 +137,11 @@ class Lead(db.Model):
             "closed_at": _iso(self.closed_at),
             "owner_name": self.owner.name if self.owner else None,
             "project_id": self.project.id if self.project else None,
+            "client_id": self.client_id,
+            "client_name": self.client.name if self.client else None,
+            "quote_sent_date": self.quote_sent_date.isoformat() if self.quote_sent_date else None,
+            "survey": self.survey.to_dict() if self.survey else None,
+            "negotiations": [n.to_dict() for n in self.negotiations],
         }
         if with_activities:
             data["activities"] = [a.to_dict() for a in self.activities]
@@ -155,6 +186,82 @@ class ChecklistItem(db.Model):
         return {"id": self.id, "text": self.text, "done": self.done}
 
 
+class LeadSurvey(db.Model):
+    """The one site survey done for a lead: when, who from the staff list went, and who they met on
+    site. Moving a lead to Quote sent requires this to exist with a date."""
+
+    __tablename__ = "lead_surveys"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, unique=True)
+    survey_date = db.Column(db.Date, nullable=True)
+    surveyor_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True)
+    rep_name = db.Column(db.String(120), nullable=False, default="", server_default="")
+    rep_role = db.Column(db.String(60), nullable=False, default="", server_default="")
+    rep_phone = db.Column(db.String(40), nullable=False, default="", server_default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    lead = db.relationship("Lead", back_populates="survey")
+    surveyor = db.relationship("Worker")
+    photos = db.relationship(
+        "SurveyPhoto", back_populates="survey", cascade="all, delete-orphan", order_by="SurveyPhoto.id",
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "survey_date": self.survey_date.isoformat() if self.survey_date else None,
+            "surveyor_id": self.surveyor_id,
+            "surveyor_name": self.surveyor.name if self.surveyor else None,
+            "rep_name": self.rep_name, "rep_role": self.rep_role, "rep_phone": self.rep_phone,
+            "photos": [p.to_dict() for p in self.photos],
+        }
+
+
+class SurveyPhoto(db.Model):
+    """One photo taken during a site survey. filename is the random name it's stored under, never the
+    original - see app/uploads.py."""
+
+    __tablename__ = "survey_photos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    survey_id = db.Column(db.Integer, db.ForeignKey("lead_surveys.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename = db.Column(db.String(80), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    survey = db.relationship("LeadSurvey", back_populates="photos")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "url": f"/uploads/survey/{self.filename}"}
+
+
+class LeadNegotiation(db.Model):
+    """One round of a lead's negotiation, repeated as many times as it takes until it's marked won or
+    lost. round_no just numbers them in order for display."""
+
+    __tablename__ = "lead_negotiations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    round_no = db.Column(db.Integer, nullable=False)
+    date = db.Column(db.Date, nullable=True)
+    authorized_person = db.Column(db.String(120), nullable=False, default="", server_default="")
+    estimate = db.Column(db.Numeric(14, 2), nullable=True)
+    finalized = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    lead = db.relationship("Lead", back_populates="negotiations")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "round_no": self.round_no,
+            "date": self.date.isoformat() if self.date else None,
+            "authorized_person": self.authorized_person,
+            "estimate": float(self.estimate) if self.estimate is not None else None,
+            "finalized": self.finalized,
+        }
+
+
 class Role(db.Model):
     """What a kind of user is called and whether they see every client and project. Edited in the database."""
 
@@ -175,7 +282,8 @@ class RoleModule(db.Model):
 
 
 class Client(db.Model):
-    """A customer. Created from a won lead (or added by hand) and kept for every project done for them."""
+    """A customer. Only ever created automatically when a lead is won - never added by hand - and kept for
+    every project done for them; one client can go on to have several projects over time."""
 
     __tablename__ = "clients"
 
@@ -198,13 +306,20 @@ class Client(db.Model):
     owner = db.relationship("User")
     projects = db.relationship("Project", back_populates="client", order_by="Project.id.desc()")
 
+    @property
+    def total_estimated_value(self):
+        amounts = [p.estimated_amount for p in self.projects if p.estimated_amount is not None]
+        return sum(amounts) if amounts else None
+
     def to_dict(self) -> dict:
+        services = sorted({name for p in self.projects for name in p.service_names})
         return {
             "id": self.id, "name": self.name, "contact_name": self.contact_name, "phone": self.phone,
             "email": self.email, "site_category": self.site_category, "pincode": self.pincode,
             "state": self.state, "district": self.district, "city": self.city, "address": self.address,
             "notes": self.notes, "owner_name": self.owner.name if self.owner else None,
-            "project_count": len(self.projects),
+            "project_count": len(self.projects), "services": services,
+            "total_estimated_value": float(self.total_estimated_value) if self.total_estimated_value is not None else None,
         }
 
 
@@ -241,6 +356,7 @@ class Project(db.Model):
     lead = db.relationship("Lead", back_populates="project")
     manager = db.relationship("User", foreign_keys=[manager_code])
     owner = db.relationship("User", foreign_keys=[owner_code])
+    services = db.relationship("Service", secondary=project_services)
     payments = db.relationship(
         "ProjectPayment", back_populates="project", cascade="all, delete-orphan",
         order_by="ProjectPayment.position, ProjectPayment.id",
@@ -256,13 +372,22 @@ class Project(db.Model):
             return None
         return self.estimated_amount - (self.discount_amount or 0)
 
+    @property
+    def service_names(self) -> list:
+        """The services this project covers - the new multi-service list if it has one, else the old
+        single work_category string for a project created before that existed."""
+        if self.services:
+            return [s.name for s in self.services]
+        return [self.work_category] if self.work_category else []
+
     def to_dict(self, detail: bool = False) -> dict:
         def num(v):
             return float(v) if v is not None else None
 
         data = {
             "id": self.id, "code": self.code, "title": self.title, "status": self.status,
-            "work_category": self.work_category, "client_id": self.client_id, "client_name": self.client.name,
+            "work_category": self.work_category, "services": self.service_names,
+            "client_id": self.client_id, "client_name": self.client.name,
             "estimated_amount": num(self.estimated_amount), "discount_amount": num(self.discount_amount),
             "net_amount": num(self.net_amount), "manager_code": self.manager_code,
             "manager_name": self.manager.name if self.manager else None,
