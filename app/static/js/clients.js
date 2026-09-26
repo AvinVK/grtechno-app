@@ -24,16 +24,16 @@
       h('span', { class: 'row-value' }, plural(c.project_count, 'project', 'projects'))));
   }
 
-  function areaBlock(area, clients) {
-    return h('details', { class: 'area-block' },
+  function areaBlock(area, clients, expand) {
+    return h('details', { class: 'area-block', open: expand || undefined },
       h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(clients.length, 'client', 'clients'))),
       h('ul', { class: 'rows' }, clients.map(clientRow)));
   }
 
-  function cityBox(city, areas, total) {
-    return h('details', { class: 'city-box' },
+  function cityBox(city, areas, total, expand) {
+    return h('details', { class: 'city-box', open: expand || undefined },
       h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'client', 'clients'))),
-      h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area]))));
+      h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area], expand))));
   }
 
   async function showList() {
@@ -82,10 +82,11 @@
         byCity[city][area].push(c);
       }
       const cities = Object.keys(byCity).sort(sortUnknownLast);
+      const expand = !!(filter.q.trim() || filter.service);       // don't leave a match hidden inside a closed box
       results.append(...cities.map((city) => {
         const areas = byCity[city];
         const total = Object.values(areas).reduce((n, list) => n + list.length, 0);
-        return cityBox(city, areas, total);
+        return cityBox(city, areas, total, expand);
       }));
     }
 

@@ -12,7 +12,10 @@
   let view = 'active';
   let openId;                   // undefined = drawer closed, otherwise the id of the open lead
   let lastFocus = null;
-  const filters = { active: { q: '', stage: '' }, closed: { q: '', stage: '' } };
+  const filters = {
+    active: { q: '', stage: '', area: '', service: '', source: '', from: '', to: '' },
+    closed: { q: '', stage: '' },
+  };
 
   const { $, h, clear, api, toast, plural } = window.LD;
 
@@ -54,7 +57,7 @@
 
   /* ---------- lead helpers ---------- */
 
-  const title = (l) => l.company || l.contact_name;
+  const title = (l) => l.company || l.contact_name || l.client_name || 'Untitled lead';
   const subtitle = (l) => (l.company && l.contact_name ? l.contact_name : '');
   const isOpen = (l) => S.open_stages.includes(l.stage);
   const telNumber = (p) => p.replace(/[^\d+]/g, '');
@@ -139,6 +142,12 @@
 
   /* ---------- lead lists (active and won / lost) ---------- */
 
+  const serviceLabel = (l) => (l.services && l.services.length ? l.services.join(', ') : l.service);
+
+  function fmtDateTime(iso) {
+    return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  }
+
   function listView(kind) {
     const isActive = kind === 'active';
     const stages = isActive ? S.open_stages : CLOSED_STAGES;
@@ -156,6 +165,30 @@
       oninput: (e) => { f.q = e.target.value; refresh(); },
     });
 
+    // Area/service/source/date filters - mainly useful for triaging fresh New enquiry leads, but they
+    // apply across whichever stage chip is selected on the Active tab.
+    let extraFilters = null;
+    if (isActive) {
+      const areas = [...new Set(pool.map((l) => l.site_district).filter(Boolean))].sort();
+      const areaSel = h('select', { 'aria-label': 'Filter by area' }, h('option', { value: '' }, 'All areas'),
+        areas.map((a) => h('option', { value: a }, a)));
+      areaSel.onchange = () => { f.area = areaSel.value; refresh(); };
+
+      const serviceSel = h('select', { 'aria-label': 'Filter by service' }, h('option', { value: '' }, 'All services'),
+        S.settings.services.map((s) => h('option', { value: s }, s)));
+      serviceSel.onchange = () => { f.service = serviceSel.value; refresh(); };
+
+      const sourceSel = h('select', { 'aria-label': 'Filter by source' }, h('option', { value: '' }, 'All sources'),
+        S.settings.sources.map((s) => h('option', { value: s }, s)));
+      sourceSel.onchange = () => { f.source = sourceSel.value; refresh(); };
+
+      const fromInput = h('input', { type: 'date', 'aria-label': 'From date', onchange: (e) => { f.from = e.target.value; refresh(); } });
+      const toInput = h('input', { type: 'date', 'aria-label': 'To date', onchange: (e) => { f.to = e.target.value; refresh(); } });
+
+      extraFilters = h('div', { class: 'filters' }, areaSel, serviceSel, sourceSel,
+        h('span', { class: 'date-range' }, fromInput, ' – ', toInput));
+    }
+
     function renderChips() {
       clear(chips);
       const options = [['', 'All', pool.length], ...stages.map((s) => [s, s, pool.filter((l) => l.stage === s).length])];
@@ -171,9 +204,17 @@
       const q = f.q.trim().toLowerCase();
       const items = pool.filter((l) => {
         if (f.stage && l.stage !== f.stage) return false;
+        if (isActive) {
+          if (f.area && l.site_district !== f.area) return false;
+          if (f.service && !(l.services.includes(f.service) || l.service === f.service)) return false;
+          if (f.source && l.source !== f.source) return false;
+          const day = l.created_at.slice(0, 10);
+          if (f.from && day < f.from) return false;
+          if (f.to && day > f.to) return false;
+        }
         if (!q) return true;
         return [l.company, l.contact_name, l.phone, l.email, l.site_pincode, l.site_city, l.site_district, l.site_state,
-          l.site_address, l.site_category, l.service, l.notes]
+          l.site_address, l.site_category, serviceLabel(l), l.notes]
           .some((v) => v.toLowerCase().includes(q));
       });
       items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
@@ -187,10 +228,10 @@
             : 'Nothing won or lost yet. Open a lead and tap Mark won or Mark lost.'));
         return;
       }
-      items.forEach((l) => list.append(h('li', {}, leadRow(l))));
+      items.forEach((l) => list.append(h('li', {}, leadRow(l, isActive))));
     }
 
-    wrap.append(h('div', { class: 'filters' }, search, chips), count, list);
+    wrap.append(h('div', { class: 'filters' }, search, chips), extraFilters, count, list);
     if (!isActive) {
       wrap.append(h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')));
     }
@@ -199,16 +240,17 @@
     return wrap;
   }
 
-  function leadRow(l) {
+  function leadRow(l, showCreated) {
     const sub = [subtitle(l), S.me.is_admin && l.owner_name ? `Owner: ${l.owner_name}` : ''].filter(Boolean).join(' · ');
     return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
       h('span', { class: 'row-main' },
         h('span', { class: 'row-title' }, title(l)),
         sub ? h('span', { class: 'row-sub' }, sub) : null),
-      h('span', { class: 'row-service' }, l.service),
+      h('span', { class: 'row-service' }, serviceLabel(l)),
       h('span', { class: 'row-stage stage-tag', 'data-stage': l.stage }, l.stage),
       h('span', { class: 'row-value' }, l.est_value !== null ? fmtMoney(l.est_value) : ''),
       h('span', { class: 'row-chip' }, followChip(l)),
+      showCreated ? h('span', { class: 'row-created' }, fmtDateTime(l.created_at)) : null,
     );
   }
 
@@ -256,9 +298,9 @@
 
   function buildLeadForm(lead, onSaved) {
     const L = lead || {
-      company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', source: '',
+      company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', services: [], source: '',
       site_category: '', site_pincode: '', site_state: '', site_district: '', site_city: '',
-      est_value: null, stage: S.stages[0], follow_up_date: null, notes: '',
+      est_value: null, quote_sent_date: null, stage: S.stages[0], follow_up_date: null, notes: '', client_id: null,
     };
     const inputs = {};
 
@@ -314,14 +356,43 @@
     const pinField = wrapField('site_pincode', 'Site pincode', pinInput);
     pinField.append(pinHint);
 
+    // A brand-new lead is either for a company we've never worked with, or a new enquiry from someone
+    // who is already a client - picking one hides the company/contact fields, since the client already
+    // has those on file, and sends client_id instead so winning this lead adds a second project to them
+    // rather than a second client.
+    let clientField = null;
+    let companyFields = null;
+    const clientSel = h('select', {}, h('option', { value: '' }, 'A new company…'),
+      S.clients.map((c) => h('option', { value: c.id }, c.name)));
+    if (!lead) {
+      clientSel.onchange = () => { companyFields.hidden = clientSel.value !== ''; };
+      clientField = h('div', { class: 'field wide' },
+        h('label', { for: 'f-client_pick' }, 'This enquiry is for'),
+        Object.assign(clientSel, { id: 'f-client_pick' }));
+    }
+
+    const serviceBoxes = S.service_options.map((opt) => {
+      const cb = h('input', { type: 'checkbox', value: String(opt.id) });
+      cb.checked = (L.services || []).includes(opt.name);
+      return { id: opt.id, box: h('label', { class: 'check-row' }, cb, h('span', {}, opt.name)) };
+    });
+    const serviceField = h('div', { class: 'field wide' },
+      h('label', {}, 'Services'),
+      h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
+      h('p', { class: 'err', id: 'err-service_ids', role: 'alert' }));
+
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
 
+    companyFields = h('div', { class: 'form-grid', hidden: !!L.client_id },
+      wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' })),
+      wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' })));
+
     const form = h('form', { novalidate: true, id: 'lead-form' },
       errorBox,
+      clientField,
+      companyFields,
       h('div', { class: 'form-grid' },
-        wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' })),
-        wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' })),
         wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' })),
         wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
         wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set')),
@@ -330,10 +401,11 @@
         wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' })),
         wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' })),
         wrapField('site_address', 'Site address', area(2, L.site_address), 'wide'),
-        wrapField('service', 'Service', choice(S.settings.services, L.service, 'Not set')),
+        serviceField,
         wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
-        wrapField('est_value', `Estimated value (${S.settings.currency})`,
-          text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })),
+        lead ? wrapField('quote_sent_date', 'Quote sent', text('date', L.quote_sent_date)) : null,
+        lead ? wrapField('est_value', `Estimated value (${S.settings.currency})`,
+          text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })) : null,
         lead ? wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)) : null,
         h('div', { class: 'field wide' },
           wrapField('follow_up_date', 'Follow-up date', dateInput),
@@ -367,6 +439,9 @@
       for (const [name, el] of Object.entries(inputs)) body[name] = el.value;
       if (body.est_value === '') body.est_value = null;
       if (!body.follow_up_date) body.follow_up_date = null;
+      if ('quote_sent_date' in body && !body.quote_sent_date) body.quote_sent_date = null;
+      body.service_ids = serviceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.id);
+      if (!lead) body.client_id = clientSel.value || null;
 
       saveBtn.disabled = true;
       const isNew = !lead;
@@ -431,6 +506,8 @@
         outcomeButtons,
         projectBox(lead),
         form,
+        surveySection(lead),
+        negotiationSection(lead),
         checklistSection(lead.id),
         activitySection(lead.id)),
       h('div', { class: 'drawer-foot' },
@@ -452,6 +529,119 @@
       form);
   }
 
+
+  /* ---------- site survey ---------- */
+
+  const plainField = (label, control) => h('div', { class: 'field' }, h('label', {}, label), control);
+
+  function surveySection(lead) {
+    const sv = lead.survey || {};
+    const dateInput = h('input', { type: 'date', value: sv.survey_date || '' });
+    const surveyorSel = h('select', {}, h('option', { value: '' }, 'Not set'),
+      S.staff.map((w) => h('option', { value: w.id, selected: w.id === sv.surveyor_id }, w.name)));
+    const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
+    const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
+    const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
+    const err = h('p', { class: 'err', role: 'alert' });
+
+    const saveBtn = h('button', { class: 'btn', type: 'button' }, 'Save survey');
+    saveBtn.onclick = async () => {
+      err.textContent = '';
+      try {
+        const res = await api(`/api/leads/${lead.id}/survey`, { method: 'PUT', body: {
+          survey_date: dateInput.value || null, surveyor_id: surveyorSel.value || null,
+          rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
+        } });
+        lead.survey = res.survey;
+        toast('Survey saved');
+      } catch (e) { err.textContent = e.message; }
+    };
+
+    const photoGrid = h('div', { class: 'photo-grid' });
+    function renderPhotos() {
+      clear(photoGrid);
+      (lead.survey?.photos || []).forEach((p) => photoGrid.append(h('div', { class: 'photo-thumb' },
+        h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Site photo' })),
+        h('button', {
+          class: 'icon-x', type: 'button', 'aria-label': 'Remove photo',
+          onclick: async () => {
+            await api(`/api/leads/${lead.id}/survey/photos/${p.id}`, { method: 'DELETE' });
+            lead.survey.photos = lead.survey.photos.filter((x) => x.id !== p.id);
+            renderPhotos();
+          },
+        }, '×'))));
+    }
+    renderPhotos();
+
+    const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true });
+    fileInput.onchange = async () => {
+      if (!fileInput.files.length) return;
+      if (!lead.survey) { err.textContent = 'Save the survey details first'; fileInput.value = ''; return; }
+      const body = new FormData();
+      for (const f of fileInput.files) body.append('photos', f);
+      try {
+        const res = await fetch(`/api/leads/${lead.id}/survey/photos`, { method: 'POST', body, credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not upload the photo');
+        lead.survey = data.survey;
+        renderPhotos();
+        toast('Photos added');
+      } catch (e) { err.textContent = e.message; }
+      fileInput.value = '';
+    };
+
+    return h('section', { class: 'p-section' },
+      h('h3', {}, 'Site survey'),
+      h('div', { class: 'form-grid' },
+        plainField('Survey date', dateInput), plainField('Surveyed by', surveyorSel),
+        plainField('Site representative', repName), plainField('Role (manager, guard, ...)', repRole),
+        plainField('Representative phone', repPhone)),
+      err, saveBtn,
+      h('p', { class: 'hint' }, 'Site photos'), photoGrid,
+      h('label', { class: 'btn small' }, 'Add photos', fileInput));
+  }
+
+  /* ---------- negotiation rounds ---------- */
+
+  function negotiationSection(lead) {
+    const list = h('div', { class: 'negotiation-rows' });
+    const err = h('p', { class: 'err', role: 'alert' });
+
+    function buildRow(round) {
+      const dateInput = h('input', { type: 'date', value: round ? round.date || '' : '' });
+      const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120, placeholder: 'Authorized person' });
+      const estimate = h('input', { type: 'number', min: '0', step: 'any', value: round && round.estimate != null ? round.estimate : '' });
+      const finalized = h('input', { type: 'checkbox' });
+      finalized.checked = !!(round && round.finalized);
+      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Add round');
+      saveBtn.onclick = async () => {
+        err.textContent = '';
+        const body = {
+          date: dateInput.value || null, authorized_person: person.value,
+          estimate: estimate.value === '' ? null : estimate.value, finalized: finalized.checked,
+        };
+        try {
+          const res = round
+            ? await api(`/api/leads/${lead.id}/negotiations/${round.id}`, { method: 'PATCH', body })
+            : await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body });
+          lead.negotiations = res.negotiations;
+          renderRows();
+          toast('Saved');
+        } catch (e) { err.textContent = e.message; }
+      };
+      return h('div', { class: 'negotiation-row' }, dateInput, person, estimate,
+        h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')), saveBtn);
+    }
+
+    function renderRows() {
+      clear(list);
+      lead.negotiations.forEach((r) => list.append(buildRow(r)));
+      list.append(buildRow(null));
+    }
+    renderRows();
+
+    return h('section', { class: 'p-section' }, h('h3', {}, 'Negotiation'), list, err);
+  }
 
   /* ---------- work checklist ---------- */
 
