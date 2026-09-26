@@ -14,16 +14,18 @@ def make_lead(client, **fields):
 
 
 def won_lead(client, **fields):
+    """Winning a lead now creates its client/project automatically - returns the lead as it stood right
+    before winning it (fields like company/service), same as before, for callers that only need those."""
     lead = make_lead(client, **fields)
-    assert client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).status_code == 200
+    res = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
+    assert res.status_code == 200, res.get_json()
     return lead
 
 
 def make_project(client, admin_client, **fields):
     lead = won_lead(client, **fields)
-    res = client.post(f"/api/leads/{lead['id']}/project")
-    assert res.status_code == 201, res.get_json()
-    return res.get_json()["project_id"]
+    detail = client.get(f"/api/leads/{lead['id']}").get_json()
+    return detail["project_id"]
 
 
 # ---------- Leads additions ----------
@@ -73,12 +75,9 @@ def test_only_a_won_lead_becomes_a_project(client):
 
 def test_won_lead_creates_client_and_project_with_its_data(client, user):
     lead = won_lead(client)
-    res = client.post(f"/api/leads/{lead['id']}/project")
-    assert res.status_code == 201
-    body = res.get_json()
-    assert body["code"] == "PRJ-0001" and body["client_reused"] is False
-
-    project = db.session.get(Project, body["project_id"])
+    detail = client.get(f"/api/leads/{lead['id']}").get_json()
+    project = db.session.get(Project, detail["project_id"])
+    assert project.code == "PRJ-0001"
     assert project.title == "Kalyani Cold Storage - Sprinklers setup" and project.status == "planned"
     assert float(project.estimated_amount) == 1000000 and project.work_category == "Sprinklers setup"
     assert (project.site_pincode, project.site_city, project.site_address) == ("411001", "Pune City", "Plot 12, MIDC")
@@ -86,15 +85,9 @@ def test_won_lead_creates_client_and_project_with_its_data(client, user):
     c = project.client
     assert (c.name, c.contact_name, c.phone, c.site_category, c.pincode) == (
         "Kalyani Cold Storage", "R. Kulkarni", "9800000001", "Commercial complex", "411001")
+    assert any("PRJ-0001" in a["text"] for a in detail["activities"])
 
-    refreshed = client.get(f"/api/leads/{lead['id']}").get_json()
-    assert refreshed["project_id"] == project.id
-    assert any("PRJ-0001" in a["text"] for a in refreshed["activities"])
-
-
-def test_a_lead_can_only_become_a_project_once(client):
-    lead = won_lead(client)
-    assert client.post(f"/api/leads/{lead['id']}/project").status_code == 201
+    # The manual endpoint is still there as a fallback, but a lead only ever becomes a project once.
     assert client.post(f"/api/leads/{lead['id']}/project").status_code == 409
     assert Project.query.count() == 1
 
@@ -102,16 +95,19 @@ def test_a_lead_can_only_become_a_project_once(client):
 def test_repeat_client_is_reused(client):
     first = won_lead(client, company="Orchid Heights CHS")
     second = won_lead(client, company="orchid heights chs", service="AMC")
-    a = client.post(f"/api/leads/{first['id']}/project").get_json()
-    b = client.post(f"/api/leads/{second['id']}/project").get_json()
-    assert a["client_reused"] is False and b["client_reused"] is True and a["client_id"] == b["client_id"]
+    a = client.get(f"/api/leads/{first['id']}").get_json()
+    b = client.get(f"/api/leads/{second['id']}").get_json()
+    a_client = db.session.get(Project, a["project_id"]).client_id
+    b_client = db.session.get(Project, b["project_id"]).client_id
+    assert a_client == b_client
     assert Client.query.count() == 1 and Project.query.count() == 2
 
 
 def test_person_without_a_company_uses_the_contact_name(client):
     lead = won_lead(client, company="", contact_name="Mrs. Deshpande")
-    body = client.post(f"/api/leads/{lead['id']}/project").get_json()
-    assert db.session.get(Client, body["client_id"]).name == "Mrs. Deshpande"
+    detail = client.get(f"/api/leads/{lead['id']}").get_json()
+    project = db.session.get(Project, detail["project_id"])
+    assert project.client.name == "Mrs. Deshpande"
 
 
 def test_someone_elses_lead_cannot_be_converted(app, client):
@@ -189,7 +185,7 @@ def test_project_details_validation_and_payment_schedule(client, admin_client):
 
 def test_sales_person_sees_no_projects_module_but_conversion_still_works(client):
     lead = won_lead(client)
-    assert client.post(f"/api/leads/{lead['id']}/project").status_code == 201
+    assert client.get(f"/api/leads/{lead['id']}").get_json()["project_id"] is not None
     assert client.get("/api/projects").status_code == 403
 
 

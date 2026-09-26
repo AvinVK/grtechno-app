@@ -45,9 +45,11 @@ def test_stage_change_logs_and_sets_closed_at(client):
     lead = make(client)
     res = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).get_json()
     assert res["stage"] == "Won" and res["closed_at"]
-    assert res["activities"][0]["text"] == "Stage changed: New enquiry \u2192 Won"
+    # Winning also auto-creates the project, logged as its own activity ahead of the stage change.
+    assert "Project" in res["activities"][0]["text"]
+    assert res["activities"][1]["text"] == "Stage changed: New enquiry \u2192 Won"
 
-    reopened = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Negotiation"}).get_json()
+    reopened = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Site survey"}).get_json()
     assert reopened["closed_at"] is None
 
 

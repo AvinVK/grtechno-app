@@ -7,13 +7,17 @@ from urllib.request import Request, urlopen
 from flask import Blueprint, g, jsonify, request
 from werkzeug.exceptions import HTTPException, abort
 
-from .auth import visible_leads
+from .auth import visible_clients, visible_leads
 from .modules import check_module, modules_for
 from .projects import ProjectError, create_project_from_lead
 from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
 from .extensions import db
-from .models import Activity, ChecklistItem, Lead, Pincode, settings_for_client, utcnow
+from .models import (
+    Activity, ChecklistItem, Client, Lead, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
+    Worker, settings_for_client, utcnow,
+)
 from .timeutil import to_local, today_local
+from .uploads import UploadError, delete_upload, save_upload
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -103,6 +107,48 @@ def _validate(payload: dict) -> tuple[dict, dict]:
             except ValueError:
                 errors["follow_up_date"] = "Pick a valid date"
 
+    if "quote_sent_date" in payload:
+        raw = payload["quote_sent_date"]
+        if raw in (None, ""):
+            data["quote_sent_date"] = None
+        else:
+            try:
+                data["quote_sent_date"] = date.fromisoformat(str(raw))
+            except ValueError:
+                errors["quote_sent_date"] = "Pick a valid date"
+
+    if "client_id" in payload:
+        raw = payload["client_id"]
+        if raw in (None, ""):
+            data["client_id"] = None
+        else:
+            client = None
+            try:
+                client = visible_clients().filter(Client.id == int(raw)).first()
+            except (TypeError, ValueError):
+                pass
+            if client is None:
+                errors["client_id"] = "Choose a client from the list"
+            else:
+                data["client_id"] = client.id
+
+    if "service_ids" in payload:
+        raw = payload["service_ids"]
+        ids = None
+        if isinstance(raw, list):
+            try:
+                ids = [int(x) for x in raw]
+            except (TypeError, ValueError):
+                ids = None
+        if ids is None:
+            errors["service_ids"] = "Choose at least one service"
+        else:
+            found = Service.query.filter(Service.id.in_(ids)).count() if ids else 0
+            if found != len(set(ids)):
+                errors["service_ids"] = "Choose valid services"
+            else:
+                data["service_ids"] = ids
+
     if "stage" in payload:
         if payload["stage"] in STAGES:
             data["stage"] = payload["stage"]
@@ -127,8 +173,24 @@ def _log(lead: Lead, kind: str, text: str) -> None:
     lead.activities.insert(0, Activity(kind=kind, text=text))
 
 
+def _stage_gate_error(lead: Lead, new_stage: str):
+    """Why the pipeline refuses this jump, or None if it's fine - each stage needs the one before it
+    actually done, not just skipped past."""
+    if new_stage == "Quote sent" and not (lead.survey and lead.survey.survey_date):
+        return "Complete the site survey first"
+    if new_stage == "Negotiation" and not lead.quote_sent_date:
+        return "Send a quote first"
+    return None
+
+
 def _apply(lead: Lead, data: dict) -> None:
     new_stage = data.pop("stage", None)
+    service_ids = data.pop("service_ids", None)
+
+    if new_stage and new_stage != lead.stage:
+        gate_error = _stage_gate_error(lead, new_stage)
+        if gate_error:
+            abort(422, gate_error)
 
     if "follow_up_date" in data and data["follow_up_date"] != lead.follow_up_date:
         new_date = data["follow_up_date"]
@@ -137,13 +199,23 @@ def _apply(lead: Lead, data: dict) -> None:
     for field, value in data.items():
         setattr(lead, field, value)
 
+    if service_ids is not None:
+        lead.services = Service.query.filter(Service.id.in_(service_ids)).all() if service_ids else []
+
     if new_stage and new_stage != lead.stage:
         _log(lead, "stage", f"Stage changed: {lead.stage} \u2192 {new_stage}")
         lead.stage = new_stage
         lead.closed_at = utcnow() if new_stage in CLOSED_STAGES else None
+        if new_stage == WON and lead.project is None:
+            try:
+                create_project_from_lead(lead, g.user)
+            except ProjectError as err:
+                abort(err.status, err.message)
 
 
-def _needs_name(lead_values: dict) -> dict:
+def _needs_name(lead_values: dict, has_client: bool) -> dict:
+    if has_client:
+        return {}
     if not (lead_values.get("company") or lead_values.get("contact_name")):
         return {"company": "Enter a company or a contact name"}
     return {}
@@ -190,6 +262,9 @@ def state():
         stages=STAGES,
         open_stages=OPEN_STAGES,
         settings=settings_for_client(),
+        service_options=[{"id": s.id, "name": s.name} for s in Service.query.filter_by(is_active=True).order_by(Service.sort_order, Service.name)],
+        staff=[{"id": w.id, "name": w.name} for w in Worker.query.filter_by(category="staff").order_by(Worker.name)],
+        clients=[{"id": c.id, "name": c.name} for c in visible_clients().order_by(Client.name)],
         leads=[l.to_dict() for l in leads],
         summary=compute_summary(leads, today),
     )
@@ -229,12 +304,15 @@ def pincode_lookup(pin):
 @bp.post("/leads")
 def create_lead():
     data, errors = _validate(_payload())
-    errors.update(_needs_name(data))
+    errors.update(_needs_name(data, has_client=data.get("client_id") is not None))
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
+    service_ids = data.pop("service_ids", None)
     lead = Lead(**{k: v for k, v in data.items() if k != "stage"})
     lead.owner_code = g.user.code
+    if service_ids:
+        lead.services = Service.query.filter(Service.id.in_(service_ids)).all()
     stage = data.get("stage", STAGES[0])
     lead.stage = stage
     if stage in CLOSED_STAGES:
@@ -257,7 +335,8 @@ def update_lead(lead_id):
     data, errors = _validate(_payload())
 
     merged = {"company": lead.company, "contact_name": lead.contact_name, **data}
-    errors.update(_needs_name(merged))
+    has_client = (data["client_id"] if "client_id" in data else lead.client_id) is not None
+    errors.update(_needs_name(merged, has_client))
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
@@ -283,6 +362,144 @@ def create_project(lead_id):
         abort(err.status, err.message)
     db.session.commit()
     return jsonify(project_id=project.id, code=project.code, client_id=project.client_id, client_reused=reused), 201
+
+
+# ---------- site survey ----------
+
+@bp.put("/leads/<int:lead_id>/survey")
+def upsert_survey(lead_id):
+    lead = _own_lead_or_404(lead_id)
+    payload = _payload()
+    errors = {}
+
+    survey_date = None
+    raw_date = payload.get("survey_date")
+    if raw_date:
+        try:
+            survey_date = date.fromisoformat(str(raw_date))
+        except ValueError:
+            errors["survey_date"] = "Pick a valid date"
+
+    surveyor_id = None
+    raw_surveyor = payload.get("surveyor_id")
+    if raw_surveyor not in (None, ""):
+        surveyor = None
+        if str(raw_surveyor).isdigit():
+            surveyor = Worker.query.filter_by(id=int(raw_surveyor), category="staff").first()
+        if surveyor is None:
+            errors["surveyor_id"] = "Choose someone from the staff list"
+        else:
+            surveyor_id = surveyor.id
+
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+
+    survey = lead.survey or LeadSurvey(lead=lead)
+    survey.survey_date = survey_date
+    survey.surveyor_id = surveyor_id
+    survey.rep_name = str(payload.get("rep_name") or "").strip()[:120]
+    survey.rep_role = str(payload.get("rep_role") or "").strip()[:60]
+    survey.rep_phone = str(payload.get("rep_phone") or "").strip()[:40]
+    db.session.add(survey)
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True))
+
+
+@bp.post("/leads/<int:lead_id>/survey/photos")
+def upload_survey_photos(lead_id):
+    lead = _own_lead_or_404(lead_id)
+    if lead.survey is None:
+        abort(422, "Save the site survey details first")
+    files = request.files.getlist("photos")
+    if not files:
+        abort(422, "Choose at least one photo")
+    for f in files:
+        try:
+            filename = save_upload(f, "survey")
+        except UploadError as err:
+            abort(422, err.message)
+        lead.survey.photos.append(SurveyPhoto(filename=filename))
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True)), 201
+
+
+@bp.delete("/leads/<int:lead_id>/survey/photos/<int:photo_id>")
+def delete_survey_photo(lead_id, photo_id):
+    lead = _own_lead_or_404(lead_id)
+    photo = next((p for p in (lead.survey.photos if lead.survey else [])if p.id == photo_id), None)
+    if photo is None:
+        abort(404)
+    delete_upload("survey", photo.filename)
+    lead.survey.photos.remove(photo)
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True))
+
+
+# ---------- negotiation rounds ----------
+
+def _negotiation_fields(payload, errors):
+    date_val = None
+    raw_date = payload.get("date")
+    if raw_date:
+        try:
+            date_val = date.fromisoformat(str(raw_date))
+        except ValueError:
+            errors["date"] = "Pick a valid date"
+
+    estimate = None
+    raw_estimate = payload.get("estimate")
+    if raw_estimate not in (None, ""):
+        try:
+            amount = Decimal(str(raw_estimate))
+            if not amount.is_finite() or amount < 0 or amount > MAX_VALUE:
+                raise InvalidOperation
+            estimate = amount.quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            errors["estimate"] = "Enter a number, 0 or more"
+
+    authorized_person = str(payload.get("authorized_person") or "").strip()[:120]
+    finalized = bool(payload.get("finalized"))
+    return date_val, authorized_person, estimate, finalized
+
+
+@bp.post("/leads/<int:lead_id>/negotiations")
+def add_negotiation(lead_id):
+    lead = _own_lead_or_404(lead_id)
+    if not lead.quote_sent_date:
+        abort(422, "Send a quote first")
+    errors = {}
+    date_val, authorized_person, estimate, finalized = _negotiation_fields(_payload(), errors)
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+
+    round_no = max((n.round_no for n in lead.negotiations), default=0) + 1
+    db.session.add(LeadNegotiation(
+        lead=lead, round_no=round_no, date=date_val, authorized_person=authorized_person,
+        estimate=estimate, finalized=finalized,
+    ))
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True)), 201
+
+
+@bp.patch("/leads/<int:lead_id>/negotiations/<int:round_id>")
+def update_negotiation(lead_id, round_id):
+    lead = _own_lead_or_404(lead_id)
+    round_ = next((n for n in lead.negotiations if n.id == round_id), None)
+    if round_ is None:
+        abort(404)
+    errors = {}
+    date_val, authorized_person, estimate, finalized = _negotiation_fields(_payload(), errors)
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+
+    round_.date, round_.authorized_person, round_.estimate, round_.finalized = date_val, authorized_person, estimate, finalized
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True))
 
 
 def _checklist_text(value):

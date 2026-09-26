@@ -34,27 +34,39 @@ def _projects_service():
 
 
 def create_project_from_lead(lead, user):
-    """Turn a won lead into a client (reusing one with the same name) and a project. Returns (project, reused)."""
+    """Turn a won lead into a project. If the lead was raised for an existing client (lead.client_id -
+    someone adding a new project for a client they already have), that client just gains another project;
+    otherwise a client is created (reusing one with the same name if there is one). Returns (project, reused)."""
     if lead.stage != "Won":
         raise ProjectError("Only a won lead can become a project.")
     if lead.project is not None:
         raise ProjectError("This lead already has a project.", 409)
 
-    name = lead.company or lead.contact_name
-    client = Client.query.filter(func.lower(Client.name) == name.lower()).first()
-    reused = client is not None
     owner = lead.owner_code or user.code
-    if client is None:
-        client = Client(
-            name=name, contact_name=lead.contact_name if lead.company else "", phone=lead.phone, email=lead.email,
-            site_category=lead.site_category, pincode=lead.site_pincode, state=lead.site_state,
-            district=lead.site_district, city=lead.site_city, address=lead.site_address, owner_code=owner,
-        )
-        db.session.add(client)
+    name = lead.company or lead.contact_name
+
+    if lead.client_id is not None:
+        client = lead.client
+        reused = True
+    else:
+        client = Client.query.filter(func.lower(Client.name) == name.lower()).first()
+        reused = client is not None
+        if client is None:
+            client = Client(
+                name=name, contact_name=lead.contact_name if lead.company else "", phone=lead.phone, email=lead.email,
+                site_category=lead.site_category, pincode=lead.site_pincode, state=lead.site_state,
+                district=lead.site_district, city=lead.site_city, address=lead.site_address, owner_code=owner,
+            )
+            db.session.add(client)
+
+    service_names = [s.name for s in lead.services] if lead.services else ([lead.service] if lead.service else [])
+    title = f"{client.name} - {', '.join(service_names)}" if service_names else client.name
+    latest_round = max(lead.negotiations, key=lambda n: n.round_no, default=None)
+    estimated_amount = (latest_round.estimate if latest_round and latest_round.estimate is not None else None) or lead.est_value
 
     project = Project(
-        client=client, lead=lead, title=f"{name} - {lead.service}" if lead.service else name,
-        work_category=lead.service, estimated_amount=lead.est_value, owner_code=owner,
+        client=client, lead=lead, title=title,
+        work_category=lead.service, services=list(lead.services), estimated_amount=estimated_amount, owner_code=owner,
         site_pincode=lead.site_pincode, site_state=lead.site_state, site_district=lead.site_district,
         site_city=lead.site_city, site_address=lead.site_address,
     )
