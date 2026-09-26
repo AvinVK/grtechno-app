@@ -157,6 +157,77 @@
     return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
   }
 
+  /* A master-detail popup for the active-leads filters: category names on the left, that category's
+     own options on the right - tapping a category swaps the right pane, tapping an option sets it
+     straight away (no separate "apply" per field). Mutates `f` in place; resolves once closed via Done,
+     Escape or tapping outside, so the caller just re-runs its own refresh() afterwards. */
+  function openFilterPicker(f, { areas }) {
+    return new Promise((resolve) => {
+      const CATS = [
+        { key: 'area', label: 'Area', options: areas, allLabel: 'All areas' },
+        { key: 'service', label: 'Service', options: S.settings.services, allLabel: 'All services' },
+        { key: 'source', label: 'Source', options: S.settings.sources, allLabel: 'All sources' },
+        { key: 'date', label: 'Date', options: null, allLabel: 'All dates' },
+      ];
+      let active = CATS[0].key;
+
+      const catList = h('div', { class: 'filter-cats', role: 'tablist', 'aria-label': 'Filter by' });
+      const optionsPane = h('div', { class: 'filter-options' });
+
+      const valueText = (cat) => {
+        if (cat.key === 'date') return (f.from || f.to) ? `${f.from || '…'} – ${f.to || '…'}` : cat.allLabel;
+        return f[cat.key] || cat.allLabel;
+      };
+
+      function renderCats() {
+        clear(catList);
+        CATS.forEach((cat) => catList.append(h('button', {
+          type: 'button', role: 'tab', 'aria-selected': String(cat.key === active),
+          class: `filter-cat${cat.key === active ? ' active' : ''}`,
+          onclick: () => { active = cat.key; renderCats(); renderOptions(); },
+        }, h('span', { class: 'filter-cat-name' }, cat.label),
+           h('span', { class: 'filter-cat-value' }, valueText(cat)))));
+      }
+
+      function renderOptions() {
+        clear(optionsPane);
+        const cat = CATS.find((c) => c.key === active);
+        if (cat.key === 'date') {
+          const fromInput = h('input', { type: 'date', value: f.from, 'aria-label': 'From date' });
+          const toInput = h('input', { type: 'date', value: f.to, 'aria-label': 'To date' });
+          fromInput.onchange = () => { f.from = fromInput.value; renderCats(); };
+          toInput.onchange = () => { f.to = toInput.value; renderCats(); };
+          optionsPane.append(h('label', { class: 'filter-date-field' }, 'From', fromInput),
+            h('label', { class: 'filter-date-field' }, 'To', toInput));
+          return;
+        }
+        const opts = [{ value: '', label: cat.allLabel }, ...cat.options.map((o) => ({ value: o, label: o }))];
+        opts.forEach((opt) => optionsPane.append(h('button', {
+          type: 'button', class: `filter-opt${(f[cat.key] || '') === opt.value ? ' selected' : ''}`,
+          onclick: () => { f[cat.key] = opt.value; renderCats(); renderOptions(); },
+        }, opt.label)));
+      }
+
+      renderCats();
+      renderOptions();
+
+      const doneBtn = h('button', { class: 'btn primary', type: 'button' }, 'Done');
+      const card = h('div', { class: 'confirm-card filter-modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Filters' },
+        h('h2', { class: 'filter-modal-title' }, 'Filters'),
+        h('div', { class: 'filter-modal-body' }, catList, optionsPane),
+        h('div', { class: 'confirm-actions' }, doneBtn));
+      const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) finish(); } }, card);
+      function finish() { overlay.remove(); resolve(); }
+      doneBtn.onclick = finish;
+      window.addEventListener('keydown', function onKey(e) {
+        if (e.key !== 'Escape') return;
+        window.removeEventListener('keydown', onKey);
+        finish();
+      });
+      document.body.append(overlay);
+    });
+  }
+
   function listView(kind) {
     const isActive = kind === 'active';
     const stages = isActive ? S.open_stages : CLOSED_STAGES;
@@ -175,8 +246,9 @@
     });
 
     // Area/service/source/date filters - mainly useful for triaging fresh New enquiry leads, but they
-    // apply across whichever stage chip is selected on the Active tab.
-    let extraFilters = null;
+    // apply across whichever stage chip is selected on the Active tab. Picked in a popup (filterButton
+    // below) rather than shown inline, since four controls at once crowded the list above.
+    let filterButton = null;
     if (isActive) {
       const areas = [...new Set(pool.map((l) => l.site_district).filter(Boolean))].sort();
       // A filter left over from an earlier visit (this view's state persists across tab switches) can
@@ -185,33 +257,17 @@
       if (f.service && !S.settings.services.includes(f.service)) f.service = '';
       if (f.source && !S.settings.sources.includes(f.source)) f.source = '';
 
-      const areaSel = h('select', { 'aria-label': 'Filter by area' }, h('option', { value: '' }, 'All areas'),
-        areas.map((a) => h('option', { value: a }, a)));
-      areaSel.value = f.area;
-      areaSel.onchange = () => { f.area = areaSel.value; refresh(); };
-
-      const serviceSel = h('select', { 'aria-label': 'Filter by service' }, h('option', { value: '' }, 'All services'),
-        S.settings.services.map((s) => h('option', { value: s }, s)));
-      serviceSel.value = f.service;
-      serviceSel.onchange = () => { f.service = serviceSel.value; refresh(); };
-
-      const sourceSel = h('select', { 'aria-label': 'Filter by source' }, h('option', { value: '' }, 'All sources'),
-        S.settings.sources.map((s) => h('option', { value: s }, s)));
-      sourceSel.value = f.source;
-      sourceSel.onchange = () => { f.source = sourceSel.value; refresh(); };
-
-      const fromInput = h('input', { type: 'date', value: f.from, 'aria-label': 'From date', onchange: (e) => { f.from = e.target.value; refresh(); } });
-      const toInput = h('input', { type: 'date', value: f.to, 'aria-label': 'To date', onchange: (e) => { f.to = e.target.value; refresh(); } });
-
       const activeCount = [f.area, f.service, f.source, f.from, f.to].filter(Boolean).length;
-      extraFilters = h('details', { class: 'stage-section', open: activeCount > 0 },
-        h('summary', { class: 'stage-section-title' }, 'More filters',
-          activeCount ? h('span', { class: 'chip chip-today' }, `${activeCount} active`) : null),
-        h('div', { class: 'stage-section-body' },
-          h('div', { class: 'filters' }, areaSel, serviceSel, sourceSel),
-          h('div', { class: 'date-range' },
-            h('label', {}, 'From', fromInput),
-            h('label', {}, 'To', toInput))));
+      filterButton = h('button', { type: 'button', class: 'btn filter-btn' }, 'Filters',
+        activeCount ? h('span', { class: 'chip chip-today' }, activeCount) : null);
+      filterButton.onclick = async () => {
+        await openFilterPicker(f, { areas });
+        filterButton.textContent = '';
+        filterButton.append('Filters');
+        const n = [f.area, f.service, f.source, f.from, f.to].filter(Boolean).length;
+        if (n) filterButton.append(h('span', { class: 'chip chip-today' }, n));
+        refresh();
+      };
     }
 
     function renderChips() {
@@ -256,7 +312,7 @@
       items.forEach((l) => list.append(h('li', {}, leadRow(l, isActive))));
     }
 
-    wrap.append(h('div', { class: 'filters' }, search, chips), extraFilters, count, list);
+    wrap.append(h('div', { class: 'filters' }, search, chips, filterButton), count, list);
     if (!isActive) {
       wrap.append(h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')));
     }
