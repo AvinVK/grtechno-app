@@ -424,11 +424,19 @@
     ];
 
     const stageField = lead
-      ? h('div', { class: 'form-grid' },
-          wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)))
+      ? h('div', { class: 'stage-section' },
+          h('div', { class: 'stage-section-body' },
+            h('div', { class: 'form-grid' },
+              wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)))))
       : null;
 
+    // Quote sent's fields are built into this same <form> (so Save changes submits them together with
+    // everything else) but rendered as a separate DOM node, quoteSection, so the caller can place it in
+    // pipeline order - after Site survey - instead of stuck wherever it was built. Its inputs still land
+    // in `inputs`/get submitted normally: the submit handler reads them by JS reference, not by DOM
+    // position, so where the node ends up in the drawer doesn't matter to it.
     let form;
+    let quoteSection = null;
     if (!lead) {
       // Creating: one flat form, same as always - the stage accordion only makes sense once a lead exists.
       form = h('form', { novalidate: true, id: 'lead-form' },
@@ -440,6 +448,9 @@
         wrapField('quote_sent_date', 'Quote sent', text('date', L.quote_sent_date)),
         wrapField('est_value', `Estimated value (${S.settings.currency})`,
           text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })));
+      quoteSection = h('details', { class: 'stage-section', open: expand === 2 },
+        h('summary', { class: 'stage-section-title' }, 'Quote sent'),
+        h('div', { class: 'stage-section-body' }, quoteFields));
 
       form = h('form', { novalidate: true, id: 'lead-form' },
         errorBox,
@@ -447,9 +458,6 @@
         h('details', { class: 'stage-section', open: expand === 0 },
           h('summary', { class: 'stage-section-title' }, 'New enquiry'),
           h('div', { class: 'stage-section-body' }, companyFields, h('div', { class: 'form-grid' }, enquiryFields))),
-        h('details', { class: 'stage-section', open: expand === 2 },
-          h('summary', { class: 'stage-section-title' }, 'Quote sent'),
-          h('div', { class: 'stage-section-body' }, quoteFields)),
       );
     }
 
@@ -468,9 +476,13 @@
       h('button', { class: 'btn primary', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won'),
       h('button', { class: 'btn danger', type: 'button', onclick: () => markOutcome('Lost') }, 'Mark lost')) : null;
 
+    // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
+    // display has to check both roots instead of just `form`.
+    const formRoots = quoteSection ? [form, quoteSection] : [form];
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      form.querySelectorAll('.err').forEach((p) => { p.textContent = ''; });
+      formRoots.forEach((root) => root.querySelectorAll('.err').forEach((p) => { p.textContent = ''; }));
       Object.values(inputs).forEach((i) => i.removeAttribute('aria-invalid'));
       errorBox.hidden = true;
 
@@ -502,7 +514,7 @@
         errorBox.hidden = false;
         let first = null;
         for (const [name, message] of Object.entries(err.fields || {})) {
-          const p = $(`#err-${name}`, form);
+          const p = formRoots.map((root) => root.querySelector(`#err-${name}`)).find(Boolean);
           if (p) p.textContent = message;
           if (inputs[name]) { inputs[name].setAttribute('aria-invalid', 'true'); first = first || inputs[name]; }
         }
@@ -514,11 +526,11 @@
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
-    return { form, saveBtn, outcomeButtons };
+    return { form, saveBtn, outcomeButtons, quoteSection };
   }
 
   function buildDrawer(lead) {
-    const { form, saveBtn, outcomeButtons } = buildLeadForm(lead, closeDrawer);
+    const { form, saveBtn, outcomeButtons, quoteSection } = buildLeadForm(lead, closeDrawer);
 
     const remove = lead ? h('button', {
       class: 'btn danger', type: 'button',
@@ -545,8 +557,9 @@
         outcomeButtons,
         projectBox(lead),
         form,
-        surveySection(lead),
-        negotiationSection(lead),
+        lead ? surveySection(lead) : null,
+        quoteSection,
+        lead ? negotiationSection(lead) : null,
         checklistSection(lead.id),
         activitySection(lead.id)),
       h('div', { class: 'drawer-foot' },
