@@ -1014,3 +1014,38 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 
 .city-box .rows { max-width: none; margin: 0; }
 .city-box .p-row { padding: 10px 0; }
+
+/* A lead's stage sections, collapsible the same way (native <details>) - only the section for the next
+   stage in the pipeline opens by default, so filling in what's next is one tap away without last stage's
+   fields still cluttering the screen. */
+.stage-section { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 14px; }
+.stage-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 40px 12px 16px;
+  background: var(--paper);
+  font: 600 15px/1.2 var(--font-display);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  position: relative;
+}
+.stage-section-title::-webkit-details-marker { display: none; }
+.stage-section-title::before {
+  content: "";
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+details[open] > summary.stage-section-title::before { transform: rotate(-135deg); margin-top: -3px; }
+.stage-section-body { padding: 16px; }

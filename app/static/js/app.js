@@ -6,6 +6,15 @@
 
   const VIEWS = ['active', 'add', 'closed', 'status'];
   const CLOSED_STAGES = ['Won', 'Lost'];
+  const STAGE_ORDER = ['New enquiry', 'Site survey', 'Quote sent', 'Negotiation'];
+
+  // Which stage section should open by default: the one right after where the lead actually is, so
+  // whatever's already done stays out of the way and what's next is one tap away. The last stage keeps
+  // itself open once reached (min() clamps at the end); a closed (Won/Lost) lead opens nothing.
+  function nextStageIndex(lead) {
+    const i = STAGE_ORDER.indexOf(lead.stage);
+    return i === -1 ? -1 : Math.min(i + 1, STAGE_ORDER.length - 1);
+  }
   const SNOOZE = [['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]];
 
   let S = null;                 // latest server state
@@ -397,31 +406,52 @@
       wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' })),
       wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' })));
 
-    const form = h('form', { novalidate: true, id: 'lead-form' },
-      errorBox,
-      clientField,
-      companyFields,
-      h('div', { class: 'form-grid' },
-        wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' })),
-        wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
-        wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set')),
-        pinField,
-        wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' })),
-        wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' })),
-        wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' })),
-        wrapField('site_address', 'Site address', area(2, L.site_address), 'wide'),
-        serviceField,
-        wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
-        lead ? wrapField('quote_sent_date', 'Quote sent', text('date', L.quote_sent_date)) : null,
-        lead ? wrapField('est_value', `Estimated value (${S.settings.currency})`,
-          text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })) : null,
-        lead ? wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)) : null,
-        h('div', { class: 'field wide' },
-          wrapField('follow_up_date', 'Follow-up date', dateInput),
-          quick),
-        wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
-      ),
-    );
+    const enquiryFields = [
+      wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' })),
+      wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
+      wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set')),
+      pinField,
+      wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' })),
+      wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' })),
+      wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' })),
+      wrapField('site_address', 'Site address', area(2, L.site_address), 'wide'),
+      serviceField,
+      wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
+      h('div', { class: 'field wide' },
+        wrapField('follow_up_date', 'Follow-up date', dateInput),
+        quick),
+      wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
+    ];
+
+    const stageField = lead
+      ? h('div', { class: 'form-grid' },
+          wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)))
+      : null;
+
+    let form;
+    if (!lead) {
+      // Creating: one flat form, same as always - the stage accordion only makes sense once a lead exists.
+      form = h('form', { novalidate: true, id: 'lead-form' },
+        errorBox, clientField, companyFields,
+        h('div', { class: 'form-grid' }, enquiryFields));
+    } else {
+      const expand = nextStageIndex(lead);
+      const quoteFields = h('div', { class: 'form-grid' },
+        wrapField('quote_sent_date', 'Quote sent', text('date', L.quote_sent_date)),
+        wrapField('est_value', `Estimated value (${S.settings.currency})`,
+          text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })));
+
+      form = h('form', { novalidate: true, id: 'lead-form' },
+        errorBox,
+        stageField,
+        h('details', { class: 'stage-section', open: expand === 0 },
+          h('summary', { class: 'stage-section-title' }, 'New enquiry'),
+          h('div', { class: 'stage-section-body' }, companyFields, h('div', { class: 'form-grid' }, enquiryFields))),
+        h('details', { class: 'stage-section', open: expand === 2 },
+          h('summary', { class: 'stage-section-title' }, 'Quote sent'),
+          h('div', { class: 'stage-section-body' }, quoteFields)),
+      );
+    }
 
     // Won / Lost is only set by pressing Mark won / Mark lost, which saves the form with that outcome.
     let outcome = null;
@@ -599,15 +629,16 @@
       fileInput.value = '';
     };
 
-    return h('section', { class: 'p-section' },
-      h('h3', {}, 'Site survey'),
-      h('div', { class: 'form-grid' },
-        plainField('Survey date', dateInput), plainField('Surveyed by', surveyorSel),
-        plainField('Site representative', repName), plainField('Role (manager, guard, ...)', repRole),
-        plainField('Representative phone', repPhone)),
-      err, saveBtn,
-      h('p', { class: 'hint' }, 'Site photos'), photoGrid,
-      h('label', { class: 'btn small' }, 'Add photos', fileInput));
+    return h('details', { class: 'stage-section', open: nextStageIndex(lead) === 1 },
+      h('summary', { class: 'stage-section-title' }, 'Site survey'),
+      h('div', { class: 'stage-section-body' },
+        h('div', { class: 'form-grid' },
+          plainField('Survey date', dateInput), plainField('Surveyed by', surveyorSel),
+          plainField('Site representative', repName), plainField('Role (manager, guard, ...)', repRole),
+          plainField('Representative phone', repPhone)),
+        err, saveBtn,
+        h('p', { class: 'hint' }, 'Site photos'), photoGrid,
+        h('label', { class: 'btn small' }, 'Add photos', fileInput)));
   }
 
   /* ---------- negotiation rounds ---------- */
@@ -649,7 +680,9 @@
     }
     renderRows();
 
-    return h('section', { class: 'p-section' }, h('h3', {}, 'Negotiation'), list, err);
+    return h('details', { class: 'stage-section', open: nextStageIndex(lead) === 3 },
+      h('summary', { class: 'stage-section-title' }, 'Negotiation'),
+      h('div', { class: 'stage-section-body' }, list, err));
   }
 
   /* ---------- work checklist ---------- */
