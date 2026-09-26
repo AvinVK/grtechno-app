@@ -46,6 +46,25 @@ def test_service_ids_must_be_real_services(admin_client):
     assert res.status_code == 422 and "service_ids" in res.get_json()["fields"]
 
 
+# ---------- who took the enquiry ----------
+
+def test_enquired_by_must_be_staff_and_defaults_the_surveyor(admin_client):
+    staff = make_staff("Priya Frontdesk")
+    manpower = Worker(name="Not staff", category="manpower")
+    db.session.add(manpower)
+    db.session.commit()
+
+    bad = admin_client.post("/api/leads", json={"company": "X", "enquired_by_id": manpower.id})
+    assert bad.status_code == 422 and "enquired_by_id" in bad.get_json()["fields"]
+
+    lead = make_lead(admin_client, enquired_by_id=staff.id)
+    assert lead["enquired_by_id"] == staff.id and lead["enquired_by_name"] == "Priya Frontdesk"
+
+    # The survey doesn't inherit a surveyor server-side (that's a client-side default only) - it starts empty.
+    detail = admin_client.get(f"/api/leads/{lead['id']}").get_json()
+    assert detail["survey"] is None
+
+
 # ---------- an enquiry for an existing client ----------
 
 def test_existing_client_lead_needs_no_company_name(admin_client):

@@ -88,9 +88,11 @@ class Lead(db.Model):
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id"), nullable=True, index=True)
     quote_sent_date = db.Column(db.Date, nullable=True)
+    enquired_by_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True)
 
     owner = db.relationship("User")
     client = db.relationship("Client")
+    enquired_by = db.relationship("Worker", foreign_keys=[enquired_by_id])
     services = db.relationship("Service", secondary=lead_services)
     activities = db.relationship(
         "Activity",
@@ -140,6 +142,8 @@ class Lead(db.Model):
             "client_id": self.client_id,
             "client_name": self.client.name if self.client else None,
             "quote_sent_date": self.quote_sent_date.isoformat() if self.quote_sent_date else None,
+            "enquired_by_id": self.enquired_by_id,
+            "enquired_by_name": self.enquired_by.name if self.enquired_by else None,
             "survey": self.survey.to_dict() if self.survey else None,
             "negotiations": [n.to_dict() for n in self.negotiations],
         }

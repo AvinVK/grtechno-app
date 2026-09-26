@@ -132,6 +132,19 @@ def _validate(payload: dict) -> tuple[dict, dict]:
             else:
                 data["client_id"] = client.id
 
+    if "enquired_by_id" in payload:
+        raw = payload["enquired_by_id"]
+        if raw in (None, ""):
+            data["enquired_by_id"] = None
+        else:
+            worker = None
+            if str(raw).isdigit():
+                worker = Worker.query.filter_by(id=int(raw), category="staff").first()
+            if worker is None:
+                errors["enquired_by_id"] = "Choose someone from the staff list"
+            else:
+                data["enquired_by_id"] = worker.id
+
     if "service_ids" in payload:
         raw = payload["service_ids"]
         ids = None

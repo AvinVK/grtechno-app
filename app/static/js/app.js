@@ -319,6 +319,7 @@
       company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', services: [], source: '',
       site_category: '', site_pincode: '', site_state: '', site_district: '', site_city: '',
       est_value: null, quote_sent_date: null, stage: S.stages[0], follow_up_date: null, notes: '', client_id: null,
+      enquired_by_id: null,
     };
     const inputs = {};
 
@@ -399,6 +400,11 @@
       h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
       h('p', { class: 'err', id: 'err-service_ids', role: 'alert' }));
 
+    // Who took the call - also the default pick for "surveyed by" below, since it's usually the same
+    // person, though the survey can always be reassigned to whoever actually went out.
+    const enquiredBySel = h('select', {}, h('option', { value: '' }, 'Not set'),
+      S.staff.map((w) => h('option', { value: w.id, selected: w.id === L.enquired_by_id }, w.name)));
+
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
 
@@ -417,6 +423,7 @@
       wrapField('site_address', 'Site address', area(2, L.site_address), 'wide'),
       serviceField,
       wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
+      wrapField('enquired_by_id', 'Enquired by', enquiredBySel),
       h('div', { class: 'field wide' },
         wrapField('follow_up_date', 'Follow-up date', dateInput),
         quick),
@@ -491,6 +498,7 @@
       if (body.est_value === '') body.est_value = null;
       if (!body.follow_up_date) body.follow_up_date = null;
       if ('quote_sent_date' in body && !body.quote_sent_date) body.quote_sent_date = null;
+      body.enquired_by_id = body.enquired_by_id || null;
       body.service_ids = serviceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.id);
       if (!lead) body.client_id = clientSel.value || null;
 
@@ -588,9 +596,12 @@
 
   function surveySection(lead) {
     const sv = lead.survey || {};
+    // No surveyor picked yet: default to whoever took the enquiry, since that's usually the same person -
+    // still just a starting guess, changeable here before Save survey commits it.
+    const defaultSurveyor = sv.surveyor_id ?? lead.enquired_by_id;
     const dateInput = h('input', { type: 'date', value: sv.survey_date || '' });
     const surveyorSel = h('select', {}, h('option', { value: '' }, 'Not set'),
-      S.staff.map((w) => h('option', { value: w.id, selected: w.id === sv.surveyor_id }, w.name)));
+      S.staff.map((w) => h('option', { value: w.id, selected: w.id === defaultSurveyor }, w.name)));
     const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
     const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
     const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
