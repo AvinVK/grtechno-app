@@ -170,20 +170,29 @@
     let extraFilters = null;
     if (isActive) {
       const areas = [...new Set(pool.map((l) => l.site_district).filter(Boolean))].sort();
+      // A filter left over from an earlier visit (this view's state persists across tab switches) can
+      // point at a value that no longer applies here - drop it instead of silently hiding everything.
+      if (f.area && !areas.includes(f.area)) f.area = '';
+      if (f.service && !S.settings.services.includes(f.service)) f.service = '';
+      if (f.source && !S.settings.sources.includes(f.source)) f.source = '';
+
       const areaSel = h('select', { 'aria-label': 'Filter by area' }, h('option', { value: '' }, 'All areas'),
         areas.map((a) => h('option', { value: a }, a)));
+      areaSel.value = f.area;
       areaSel.onchange = () => { f.area = areaSel.value; refresh(); };
 
       const serviceSel = h('select', { 'aria-label': 'Filter by service' }, h('option', { value: '' }, 'All services'),
         S.settings.services.map((s) => h('option', { value: s }, s)));
+      serviceSel.value = f.service;
       serviceSel.onchange = () => { f.service = serviceSel.value; refresh(); };
 
       const sourceSel = h('select', { 'aria-label': 'Filter by source' }, h('option', { value: '' }, 'All sources'),
         S.settings.sources.map((s) => h('option', { value: s }, s)));
+      sourceSel.value = f.source;
       sourceSel.onchange = () => { f.source = sourceSel.value; refresh(); };
 
-      const fromInput = h('input', { type: 'date', 'aria-label': 'From date', onchange: (e) => { f.from = e.target.value; refresh(); } });
-      const toInput = h('input', { type: 'date', 'aria-label': 'To date', onchange: (e) => { f.to = e.target.value; refresh(); } });
+      const fromInput = h('input', { type: 'date', value: f.from, 'aria-label': 'From date', onchange: (e) => { f.from = e.target.value; refresh(); } });
+      const toInput = h('input', { type: 'date', value: f.to, 'aria-label': 'To date', onchange: (e) => { f.to = e.target.value; refresh(); } });
 
       extraFilters = h('div', { class: 'filters' }, areaSel, serviceSel, sourceSel,
         h('span', { class: 'date-range' }, fromInput, ' – ', toInput));
