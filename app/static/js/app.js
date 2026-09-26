@@ -203,8 +203,15 @@
       const fromInput = h('input', { type: 'date', value: f.from, 'aria-label': 'From date', onchange: (e) => { f.from = e.target.value; refresh(); } });
       const toInput = h('input', { type: 'date', value: f.to, 'aria-label': 'To date', onchange: (e) => { f.to = e.target.value; refresh(); } });
 
-      extraFilters = h('div', { class: 'filters' }, areaSel, serviceSel, sourceSel,
-        h('span', { class: 'date-range' }, fromInput, ' – ', toInput));
+      const activeCount = [f.area, f.service, f.source, f.from, f.to].filter(Boolean).length;
+      extraFilters = h('details', { class: 'stage-section', open: activeCount > 0 },
+        h('summary', { class: 'stage-section-title' }, 'More filters',
+          activeCount ? h('span', { class: 'chip chip-today' }, `${activeCount} active`) : null),
+        h('div', { class: 'stage-section-body' },
+          h('div', { class: 'filters' }, areaSel, serviceSel, sourceSel),
+          h('div', { class: 'date-range' },
+            h('label', {}, 'From', fromInput),
+            h('label', {}, 'To', toInput))));
     }
 
     function renderChips() {

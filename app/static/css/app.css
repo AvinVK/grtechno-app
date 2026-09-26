@@ -432,7 +432,8 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 .form-grid .wide { grid-column: 1 / -1; }
 
-.date-range { display: inline-flex; align-items: center; gap: 6px; }
+.date-range { display: flex; gap: 12px; margin-top: 12px; }
+.date-range label { display: grid; gap: 4px; font-size: 14px; font-weight: 600; }
 .date-range input { width: auto; }
 
 .check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
