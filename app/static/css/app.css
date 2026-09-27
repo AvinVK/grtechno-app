@@ -1148,6 +1148,38 @@ body.has-att-bar { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
 .wk-dot.absent { background: var(--signal); }
 .wk-dot.none { border: 1.5px solid var(--line-strong); }
 .att-bar > i.low { background: var(--signal); }
+button.people-row { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+
+/* Read by screen readers, not shown. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* One person's popup on Manpower & staff: current site, average hours, the last 2 weeks as circled dates. */
+.fn-card { max-width: 400px; max-height: 88vh; overflow-y: auto; }
+.fn-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin: -6px -8px 10px 0; }
+.fn-head h2 { margin: 6px 0 2px; }
+.fn-group { color: var(--muted); font-size: 13px; }
+.fn-body { display: grid; gap: 16px; }
+.fn-body .stat-label { display: block; font-size: 13px; margin-bottom: 4px; }
+.fn-site strong { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-weight: 600; overflow-wrap: anywhere; }
+.fn-site-when { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; }
+.fn-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fn-stats > div { padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.fn-stat-value { display: block; font: 500 22px/1.2 var(--font-num); }
+.fn-stat-note { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.fn-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px 4px; margin: 0; padding: 0; list-style: none; }
+.fn-cell { display: grid; justify-items: center; gap: 3px; }
+.fn-weekday { color: var(--muted); font-size: 11px; font-weight: 600; }
+.fn-date {
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+  width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line-strong);
+  color: var(--muted); font: 500 13px/1 var(--font-num);
+}
+.fn-date.present { border-color: var(--ok); background: var(--ok-tint); color: var(--ok-ink); }
+.fn-date.absent { border-color: var(--signal); background: var(--signal-tint); color: var(--signal); }
+.fn-date.none { border-style: dashed; }
+.fn-section .wk-legend { margin: 10px 0 0; }
+.fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
+.fn-full-link:hover { text-decoration: underline; }
 
 /* ---------- Clients: plain list, and one client's summary ---------- */
 

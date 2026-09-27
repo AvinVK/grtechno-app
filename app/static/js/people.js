@@ -2,9 +2,10 @@
    in to the app, tracked from the WhatsApp groups they mark attendance in. Both pages open on two boxes,
    Manpower and Staff, with a head count each; a box opens that group's people:
    - Manpower & staff (data-mode="roster"): each person, where they worked on their most recent working
-     day, and the last 7 days as green (present) / red (absent) dots.
+     day, and the last 7 days as green (present) / red (absent) dots. A person opens a popup: their current
+     site, average hours, and the last 2 weeks as dates circled green or red.
    - Attendance sheet (data-mode="sheet"): everyone ranked by attendance, lowest first.
-   Either way, a person opens their day-by-day record, laid out like Your attendance's history.
+   On the sheet, a person opens their day-by-day record, laid out like Your attendance's history.
    Workers often work Sundays, so every day counts here (unlike Your attendance, which skips Sundays). The
    data arrives through imports, so days after the last one are "no data yet" - never marked absent. */
 (() => {
@@ -90,7 +91,7 @@
     const where = dep
       ? [relativeDay(dep.date, today), dep.project_code ? `${dep.project_code} · ${dep.project_title}` : 'site not recorded'].join(' · ')
       : 'No working day on record';
-    return h('li', {}, h('a', { class: 'att-day people-row', href: `#p${p.id}` },
+    return h('li', {}, h('button', { type: 'button', class: 'att-day people-row', onclick: () => openPerson(p) },
       h('div', { class: 'att-day-top' }, h('span', { class: 'att-day-date' }, p.name), weekDots(p.week)),
       h('span', { class: 'att-day-sub' }, where)));
   }
@@ -110,6 +111,105 @@
         ? h('ul', { class: 'att-week-card' }, people.map((p) => rosterRow(p, data.today)))
         : h('p', { class: 'empty-state' }, `No ${GROUPS[key].toLowerCase()} yet.`),
       dataNote(data)));
+  }
+
+  /* ---------- Manpower & staff: one person at a glance, in a popup ---------- */
+
+  const FORTNIGHT = 14;
+  const WEEKDAY_LETTER = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+  /* How a day stands for this person: present, absent, or "none" - after the data ends, before they first
+     turned up (period.start is already their own start), or no data at all. Same rule as the week dots. */
+  function dayStatus(dayIso, byDay, data) {
+    const a = byDay.get(dayIso);
+    if (a && a.status === 'present') return 'present';
+    if (!data.period || !data.data_until || dayIso > data.data_until || dayIso < data.period.start) return 'none';
+    return 'absent';
+  }
+
+  function fortnightGrid(data, byDay) {
+    const today = parseDay(data.today);
+    const cells = [];
+    for (let back = FORTNIGHT - 1; back >= 0; back -= 1) {
+      const day = addDays(today, -back);
+      const status = dayStatus(dayKey(day), byDay, data);
+      cells.push(h('li', { class: 'fn-cell', title: `${shortDate(day)}: ${DOT_LABEL[status]}` },
+        h('span', { class: 'fn-weekday', 'aria-hidden': 'true' }, WEEKDAY_LETTER[day.getDay()]),
+        h('span', { class: `fn-date ${status}` }, day.getDate()),
+        h('span', { class: 'visually-hidden' }, `${shortDate(day)}, ${DOT_LABEL[status]}`)));
+    }
+    return h('ol', { class: 'fn-grid', 'aria-label': 'Last 2 weeks, oldest first' }, cells);
+  }
+
+  function popupBody(p, data) {
+    const today = parseDay(data.today);
+    const first = dayKey(addDays(today, -(FORTNIGHT - 1)));
+    const inFortnight = data.attendance.filter((a) => a.work_date >= first && a.work_date <= data.today);
+    const byDay = new Map(inFortnight.map((a) => [a.work_date, a]));
+    const came = inFortnight.filter((a) => a.status === 'present');
+    const counted = [...Array(FORTNIGHT).keys()]
+      .map((i) => dayStatus(dayKey(addDays(today, -i)), byDay, data))
+      .filter((s) => s !== 'none').length;
+    const timed = came.filter((a) => a.hours != null);
+    const avg = timed.length ? roundHours(timed.reduce((sum, a) => sum + a.hours, 0) / timed.length) : null;
+
+    const dep = p.deployed;
+    const site = h('div', { class: 'fn-site' },
+      h('span', { class: 'stat-label' }, 'Current site'),
+      h('strong', {}, dep ? (dep.project_code ? `${dep.project_code} · ${dep.project_title}` : 'Site not recorded') : 'No working day on record'),
+      dep ? h('span', { class: 'fn-site-when' },
+        `Last worked ${relativeDay(dep.date, data.today).replace(/^(Today|Yesterday)$/, (w) => w.toLowerCase())}`,
+        dep.map_url ? ' · ' : null, mapLink(dep.map_url, 'Location')) : null);
+
+    return [
+      site,
+      h('div', { class: 'fn-stats' },
+        h('div', {},
+          h('span', { class: 'stat-label' }, 'Average hours'),
+          h('span', { class: 'fn-stat-value' }, avg != null ? `${avg} h` : '—'),
+          h('span', { class: 'fn-stat-note' }, timed.length ? `a day, over ${plural(timed.length, 'day', 'days')} with in and out times` : 'No days with both in and out times')),
+        h('div', {},
+          h('span', { class: 'stat-label' }, 'Came'),
+          h('span', { class: 'fn-stat-value' }, counted ? `${came.length}/${counted}` : '—'),
+          h('span', { class: 'fn-stat-note' }, counted ? 'days, last 2 weeks' : 'No data for the last 2 weeks'))),
+      h('div', { class: 'fn-section' },
+        h('span', { class: 'stat-label' }, 'Last 2 weeks'),
+        fortnightGrid(data, byDay),
+        h('p', { class: 'wk-legend' },
+          h('i', { class: 'wk-dot present' }), ' present ',
+          h('i', { class: 'wk-dot absent' }), ' absent ',
+          h('i', { class: 'wk-dot none' }), ' no data yet')),
+      h('a', { class: 'fn-full-link', href: `/attendance-sheet#p${p.id}` }, 'Full attendance record →'),
+    ];
+  }
+
+  function openPerson(p) {
+    const opener = document.activeElement;
+    const body = h('div', { class: 'fn-body' }, h('p', { class: 'loading' }, 'Loading…'));
+    const closeBtn = h('button', { type: 'button', class: 'icon-x', 'aria-label': 'Close' }, '×');
+    const card = h('div', { class: 'confirm-card fn-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'fn-title' },
+      h('div', { class: 'fn-head' },
+        h('div', {}, h('h2', { id: 'fn-title' }, p.name), h('span', { class: 'fn-group' }, GROUPS[p.category] || '')),
+        closeBtn),
+      body);
+    const overlay = h('div', { class: 'confirm-overlay' }, card);
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    function close() {
+      window.removeEventListener('keydown', onKey);
+      overlay.remove();
+      document.body.classList.remove('locked');
+      opener?.focus?.();
+    }
+    closeBtn.onclick = close;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    window.addEventListener('keydown', onKey);
+    document.body.append(overlay);
+    document.body.classList.add('locked');
+    closeBtn.focus();
+
+    api(`/api/workforce/${p.id}`)
+      .then((data) => clear(body).append(...popupBody(p, data)))
+      .catch((err) => clear(body).append(h('p', { class: 'empty-state' }, err.message)));
   }
 
   /* ---------- Attendance sheet: lowest attendance first ---------- */
