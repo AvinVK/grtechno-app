@@ -171,6 +171,20 @@ def test_editing_a_survey_later_does_not_move_the_stage_backwards(admin_client):
     assert edited.get_json()["stage"] == "Quote sent"
 
 
+def test_sending_a_quote_advances_site_survey_to_negotiation(admin_client):
+    lead = make_lead(admin_client)
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    assert admin_client.get(f"/api/leads/{lead['id']}").get_json()["stage"] == "Site survey"
+
+    sent = admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-22", "est_value": 56000})
+    assert sent.get_json()["stage"] == "Negotiation"
+    assert any("Negotiation" in a["text"] for a in sent.get_json()["activities"])
+
+    # editing the quote again afterwards doesn't move it a second time
+    edited = admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-23", "est_value": 60000})
+    assert edited.get_json()["stage"] == "Negotiation"
+
+
 def test_survey_photos_upload_and_delete(admin_client):
     lead = make_lead(admin_client)
     no_survey = admin_client.post(f"/api/leads/{lead['id']}/survey/photos", data={}, content_type="multipart/form-data")

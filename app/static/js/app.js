@@ -569,10 +569,13 @@
       const isNew = !lead;
       if (isNew) body.stage = S.open_stages[0];
       try {
-        if (isNew) await api('/api/leads', { method: 'POST', body });
-        else await api(`/api/leads/${lead.id}`, { method: 'PATCH', body });
+        const res = isNew
+          ? await api('/api/leads', { method: 'POST', body })
+          : await api(`/api/leads/${lead.id}`, { method: 'PATCH', body });
         onSaved();
-        toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}` : 'Changes saved');
+        const autoAdvanced = !isNew && !outcome && res.stage !== lead.stage;
+        toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}`
+          : autoAdvanced ? `Changes saved – moved to ${res.stage}` : 'Changes saved');
         if (isNew && view !== 'active') window.location.hash = '#active';
         await load();
       } catch (err) {

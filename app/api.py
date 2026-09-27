@@ -209,6 +209,10 @@ def _apply(lead: Lead, data: dict) -> None:
         new_date = data["follow_up_date"]
         _log(lead, "followup", f"Follow-up set for {_fmt_date(new_date)}" if new_date else "Follow-up cleared")
 
+    # A quote being sent for the first time, while sitting at Site survey, means the real next step is
+    # negotiating it - there's no separate "waiting" period at Quote sent worth stopping on.
+    quote_just_sent = bool(data.get("quote_sent_date")) and not lead.quote_sent_date
+
     for field, value in data.items():
         setattr(lead, field, value)
 
@@ -224,6 +228,9 @@ def _apply(lead: Lead, data: dict) -> None:
                 create_project_from_lead(lead, g.user)
             except ProjectError as err:
                 abort(err.status, err.message)
+    elif quote_just_sent and lead.stage == "Site survey":
+        _log(lead, "stage", f"Stage changed: {lead.stage} \u2192 Negotiation")
+        lead.stage = "Negotiation"
 
 
 def _needs_name(lead_values: dict, has_client: bool) -> dict:
