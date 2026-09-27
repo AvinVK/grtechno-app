@@ -537,26 +537,56 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 @media (prefers-reduced-motion: no-preference) {
   .drawer { animation: slide-in 0.18s ease-out; }
   @keyframes slide-in { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes slide-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+}
+@media (prefers-reduced-motion: no-preference) and (max-width: 640px) {
+  .drawer, .action-sheet { animation: slide-up 0.18s ease-out; }
 }
 
 .drawer-head {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
   gap: 12px;
-  padding: 16px 20px 12px;
+  padding: 16px 20px 14px;
   border-bottom: 1px solid var(--line);
 }
-
+.drawer-head-row { display: flex; align-items: flex-start; gap: 12px; }
+.drawer-titles { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .drawer-head h2 {
-  flex: 1;
   font: 600 21px/1.15 var(--font-display);
   overflow-wrap: anywhere;
   outline: none;
 }
+.drawer-sub { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.drawer-phone { font-family: var(--font-num); font-weight: 500; }
+.drawer-head-row .icon-x { margin: -6px -8px 0 0; }
 
-.drawer-scroll { flex: 1; overflow-y: auto; padding: 16px 20px 24px; }
+/* Grab handle - the sheet can be dragged down by it to close (phone only, see the 640px block). */
+.sheet-handle { display: none; width: 40px; height: 4px; margin: -6px auto 0; border-radius: 2px; background: var(--line-strong); }
 
-.contact-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.drawer-scroll { flex: 1; overflow-y: auto; padding: 16px 20px 24px; background: var(--paper); }
+
+/* Call / WhatsApp / Map (/ Email): equal buttons across the sheet header. */
+.contact-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.contact-btn { min-height: 44px; padding: 0 6px; font-size: 13px; }
+.contact-btn.call { background: var(--ok); border-color: var(--ok); color: #fff; }
+.contact-btn.call:hover { background: var(--ok-ink); border-color: var(--ok-ink); }
+
+/* Pipeline stepper: New, Survey, Quote, Negot., Won - a 4px bar and a small label each. */
+.stage-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0 0 14px; padding: 0; list-style: none; }
+.stage-steps .step { display: grid; gap: 5px; }
+.stage-steps .step i { height: 4px; border-radius: 2px; background: var(--line); }
+.stage-steps .step span { color: var(--muted); font-size: 11px; font-weight: 600; text-align: center; }
+.stage-steps .step.done i { background: var(--ok); }
+.stage-steps .step.current i { background: var(--accent); }
+.stage-steps .step.current span { color: var(--accent-dark); font-weight: 700; }
+.stage-steps.lost .step i { background: var(--st-lost); }
+
+.due-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 12px; padding: 10px 12px 10px 14px;
+  border-radius: var(--r-card); background: var(--signal-tint); color: var(--signal); font-weight: 600;
+}
+.due-banner .btn { flex: none; border-color: color-mix(in srgb, var(--signal) 35%, transparent); color: var(--signal); }
 
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 .form-grid .wide { grid-column: 1 / -1; }
@@ -572,14 +602,25 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 .quick-dates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 
 .drawer-foot {
+  position: sticky;
+  bottom: 0;
   display: flex;
   gap: 8px;
   padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
-  background: var(--hover);
+  background: var(--panel);
 }
+.drawer-foot .btn.primary { flex: 1; min-height: 50px; font-size: 16px; }
+.more-btn { flex: none; width: 50px; min-height: 50px; padding: 0; font-size: 22px; line-height: 1; }
 
-.drawer-foot .spacer { flex: 1; }
+/* A menu of a few actions, sliding up from the bottom (the sheet's "More actions"). */
+.confirm-overlay.sheet-overlay { align-items: flex-end; padding: 0; }
+.action-sheet {
+  display: grid; gap: 8px; max-width: 520px;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  border-radius: var(--r-card) var(--r-card) 0 0;
+}
+.action-sheet .btn { width: 100%; }
 
 .form-error {
   margin-bottom: 12px;
@@ -590,8 +631,6 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
   font-weight: 600;
 }
 
-.activity { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }
-.activity h3 { margin-bottom: 10px; font: 600 16px/1.1 var(--font-display); }
 
 .note-form { display: flex; gap: 8px; margin-bottom: 8px; }
 .note-form input { flex: 1; }
@@ -917,9 +956,6 @@ a.p-client-name { color: var(--accent-dark); }
 
 /* ---------- Lead checklist and won-lead box ---------- */
 
-.checklist-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.checklist-head h3 { margin-bottom: 10px; }
-.checklist-count { color: var(--muted); font-size: 14px; }
 .checklist { margin: 8px 0 0; padding: 0; list-style: none; }
 .checklist li { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--line); }
 .checklist label { display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 0; padding: 10px 0; cursor: pointer; overflow-wrap: anywhere; }
@@ -972,8 +1008,19 @@ a.p-client-name { color: var(--accent-dark); }
   .lbl-full { display: none; }
   .lbl-short { display: inline; }
   .form-grid { grid-template-columns: 1fr; }
-  .drawer { width: 100%; }
-  .drawer-foot { flex-wrap: wrap; }
+  /* The lead opens as a sheet from the bottom, leaving the top bar showing above it. */
+  .drawer {
+    top: 52px;
+    left: 0;
+    right: 0;
+    width: 100%;
+    border-radius: var(--r-card) var(--r-card) 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+    transition: transform 0.18s ease;
+  }
+  .sheet-handle { display: block; touch-action: none; cursor: grab; box-shadow: 0 0 0 12px transparent; }
+  .drawer-head { padding-top: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1392,15 +1439,15 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 /* A lead's stage sections, collapsible the same way (native <details>) - only the section for the next
    stage in the pipeline opens by default, so filling in what's next is one tap away without last stage's
    fields still cluttering the screen. */
-.stage-section { border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; margin-bottom: 14px; }
+.stage-section { border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; margin-bottom: 10px; background: var(--panel); }
 .stage-section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin: 0;
-  padding: 12px 40px 12px 16px;
-  background: var(--paper);
+  padding: 14px 40px 14px 16px;
+  background: var(--panel);
   font: 600 15px/1.2 var(--font-display);
   cursor: pointer;
   list-style: none;
@@ -1422,6 +1469,10 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
   transition: transform 0.15s ease;
 }
 details[open] > summary.stage-section-title::before { transform: rotate(-135deg); margin-top: -3px; }
+details[open] > summary.stage-section-title { border-bottom: 1px solid var(--line); }
+.section-status { flex: none; font: 600 12px/1.2 var(--font-body); color: var(--ok); }
+.section-status.next { padding: 4px 10px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-dark); }
+.section-count { flex: none; color: var(--muted); font: 500 13px/1.2 var(--font-num); }
 .stage-section-body { padding: 16px; }
 
 /* A stage that can't be entered yet - the section before it isn't done. Still shows what's coming,

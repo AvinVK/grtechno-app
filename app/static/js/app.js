@@ -503,20 +503,6 @@
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
   }
 
-  function contactLinks(l) {
-    const links = [];
-    if (l.phone) {
-      links.push(h('a', { class: 'btn small', href: `tel:${telNumber(l.phone)}` }, 'Call'));
-      links.push(h('a', {
-        class: 'btn small', href: `https://wa.me/${waNumber(l.phone)}`, target: '_blank', rel: 'noopener noreferrer',
-      }, 'WhatsApp'));
-    }
-    if (l.email) {
-      links.push(h('a', { class: 'btn small', href: `mailto:${encodeURIComponent(l.email).replace('%40', '@')}` }, 'Email'));
-    }
-    return links.length ? h('div', { class: 'contact-actions' }, links) : null;
-  }
-
   function buildLeadForm(lead, onSaved) {
     const L = lead || {
       company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', services: [], source: '',
@@ -838,9 +824,9 @@
       inputs.stage.value = result;
       saveBtn.click();
     };
+    // Mark won stays in view; Mark lost sits in the sheet's "More actions" menu with the other destructive ones.
     const outcomeButtons = lead && isOpen(lead) ? h('div', { class: 'outcome' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won'),
-      h('button', { class: 'btn danger', type: 'button', onclick: () => markOutcome('Lost') }, 'Mark lost')) : null;
+      h('button', { class: 'btn', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won')) : null;
 
     // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
     // display has to check both roots instead of just `form`.
@@ -935,48 +921,172 @@
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
-    return { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode, negotiationSectionNode };
+    return { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode };
+  }
+
+  // The pipeline as five steps across the top of the sheet: done ones green, the current one in the accent.
+  const STEP_STAGES = [['New enquiry', 'New'], ['Site survey', 'Survey'], ['Quote sent', 'Quote'], ['Negotiation', 'Negot.'], ['Won', 'Won']];
+  function stageSteps(lead) {
+    const lost = lead.stage === 'Lost';
+    const at = STEP_STAGES.findIndex(([s]) => s === lead.stage);
+    return h('ol', { class: `stage-steps${lost ? ' lost' : ''}`, 'aria-label': `Stage: ${lead.stage}` },
+      STEP_STAGES.map(([stage, short], i) => {
+        const state = lost ? 'lost' : i < at || lead.stage === 'Won' ? 'done' : i === at ? 'current' : 'pending';
+        return h('li', { class: `step ${state}`, 'aria-current': state === 'current' ? 'step' : null },
+          h('i', { 'aria-hidden': 'true' }), h('span', {}, lost && i === STEP_STAGES.length - 1 ? 'Lost' : short));
+      }));
+  }
+
+  const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayName = (iso) => `${WEEKDAY[parseISO(iso).getUTCDay()]}, ${fmtDate(iso)}`;
+
+  // Call / WhatsApp / Map (and Email when there is one) - a button only for what this lead has.
+  function contactActions(l) {
+    const site = [l.site_address, l.site_city, l.site_district, l.site_state, l.site_pincode].filter(Boolean).join(', ');
+    const links = [
+      l.phone ? h('a', { class: 'btn contact-btn call', href: `tel:${telNumber(l.phone)}` }, 'Call') : null,
+      l.phone ? h('a', { class: 'btn contact-btn', href: `https://wa.me/${waNumber(l.phone)}`, target: '_blank', rel: 'noopener noreferrer' }, 'WhatsApp') : null,
+      site ? h('a', { class: 'btn contact-btn', href: `https://maps.google.com/?q=${encodeURIComponent(site)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Map') : null,
+      l.email ? h('a', { class: 'btn contact-btn', href: `mailto:${encodeURIComponent(l.email).replace('%40', '@')}` }, 'Email') : null,
+    ].filter(Boolean);
+    return links.length ? h('div', { class: 'contact-actions' }, links) : null;
+  }
+
+  // What each stage card's header says on its right: "Next step" on the one that's up next, "Done" (with a
+  // detail like the photo count) on finished ones. Locked ones stay dimmed with nothing extra.
+  function markSections(lead, sections) {
+    const next = nextStageIndex(lead);
+    const rounds = lead.negotiations || [];
+    const photos = (lead.survey?.photos || []).length;
+    const done = [
+      STAGE_ORDER.indexOf(lead.stage) > 0 || CLOSED_STAGES.includes(lead.stage),
+      !!lead.survey?.survey_date,
+      !!lead.quote_sent_date,
+      rounds.some((r) => r.finalized) || CLOSED_STAGES.includes(lead.stage),
+    ];
+    const detail = ['', photos ? ` · ${plural(photos, 'photo', 'photos')}` : '', '', rounds.length ? ` · ${plural(rounds.length, 'round', 'rounds')}` : ''];
+    sections.forEach((node, i) => {
+      const summary = node && node.querySelector(':scope > summary');
+      if (!summary || node.classList.contains('locked')) return;
+      let status = null;
+      if (done[i]) status = h('span', { class: 'section-status done' }, `Done${detail[i]}`);
+      else if (i === next) status = h('span', { class: 'section-status next' }, 'Next step');
+      if (status) summary.append(status);
+    });
+  }
+
+  // A small menu of the less-used, mostly destructive actions, sliding up from the bottom like the sheet.
+  function actionSheet(actions) {
+    const previous = document.activeElement;
+    const cancel = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const card = h('div', { class: 'confirm-card action-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'More actions' },
+      actions.map(({ label, danger, run }) => h('button', {
+        class: `btn${danger ? ' danger' : ''}`, type: 'button',
+        onclick: () => { finish(); run(); },
+      }, label)),
+      cancel);
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' }, card);
+    function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); finish(); } }
+    function finish() {
+      window.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      if (previous && previous.isConnected) previous.focus();
+    }
+    cancel.onclick = finish;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(); });
+    window.addEventListener('keydown', onKey, true);
+    document.body.append(overlay);
+    card.querySelector('button').focus();
+  }
+
+  // Dragging the sheet's handle down more than 80px closes it; less springs it back.
+  function swipeToClose(handle) {
+    let startY = null;
+    handle.addEventListener('pointerdown', (e) => {
+      startY = e.clientY;
+      handle.setPointerCapture(e.pointerId);
+      drawer.style.transition = 'none';
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (startY === null) return;
+      drawer.style.transform = `translateY(${Math.max(0, e.clientY - startY)}px)`;
+    });
+    const end = (e) => {
+      if (startY === null) return;
+      const moved = e.clientY - startY;
+      startY = null;
+      drawer.style.transition = '';
+      drawer.style.transform = '';
+      if (moved > 80) closeDrawer();
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
   }
 
   function buildDrawer(lead) {
-    const { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode, negotiationSectionNode } = buildLeadForm(lead, closeDrawer);
+    const { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode } = buildLeadForm(lead, closeDrawer);
     const hasRounds = !!(lead && (lead.negotiations || []).length > 0);
+    const negotiation = hasRounds ? negotiationSection(lead) : negotiationSectionNode;
+    markSections(lead, [form.querySelector('details.stage-section'), surveySectionNode, quoteSection, negotiation]);
 
-    const remove = lead ? h('button', {
-      class: 'btn danger', type: 'button',
-      onclick: async () => {
-        if (!(await LD.confirm(`Delete ${title(lead)}? This also removes its activity log.`,
-          { title: 'Delete lead', ok: 'Yes, delete', danger: true }))) return;
-        try {
-          await api(`/api/leads/${lead.id}`, { method: 'DELETE' });
-          closeDrawer();
-          toast('Lead deleted');
-        } catch (err) {
-          toast(err.message, true);
-        }
-        await load();
-      },
-    }, 'Delete') : null;
+    const removeLead = async () => {
+      if (!(await LD.confirm(`Delete ${title(lead)}? This also removes its activity log.`,
+        { title: 'Delete lead', ok: 'Yes, delete', danger: true }))) return;
+      try {
+        await api(`/api/leads/${lead.id}`, { method: 'DELETE' });
+        closeDrawer();
+        toast('Lead deleted');
+      } catch (err) {
+        toast(err.message, true);
+      }
+      await load();
+    };
+    const moreActions = [
+      isOpen(lead) ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
+      { label: 'Delete lead', danger: true, run: removeLead },
+    ].filter(Boolean);
+    const moreBtn = h('button', { class: 'btn more-btn', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(moreActions) }, '⋯');
+
+    // Overdue follow-up: say so up top, with a way straight to the date field.
+    const overdue = isOpen(lead) && lead.follow_up_date && diffDays(lead.follow_up_date, S.today) < 0;
+    const dueBanner = overdue ? h('div', { class: 'due-banner', role: 'status' },
+      h('span', {}, `Follow-up was due ${dayName(lead.follow_up_date)}`),
+      h('button', {
+        class: 'btn small', type: 'button',
+        onclick: () => {
+          const dateBtn = form.querySelector('#f-follow_up_date');
+          dateBtn.closest('details')?.setAttribute('open', '');
+          dateBtn.scrollIntoView({ block: 'center' });
+          dateBtn.click();
+        },
+      }, 'Reschedule')) : null;
+
+    const handle = h('div', { class: 'sheet-handle', 'aria-hidden': 'true' });
+    swipeToClose(handle);
+    const contactLine = [lead.contact_name && lead.contact_name !== title(lead) ? lead.contact_name : null,
+      lead.phone ? h('span', { class: 'drawer-phone' }, lead.phone) : null].filter(Boolean);
 
     clear(drawer).append(
       h('div', { class: 'drawer-head' },
-        h('h2', { id: 'drawer-title', tabindex: '-1' }, title(lead)),
-        h('button', { class: 'btn small', type: 'button', onclick: closeDrawer }, 'Close')),
+        handle,
+        h('div', { class: 'drawer-head-row' },
+          h('div', { class: 'drawer-titles' },
+            h('h2', { id: 'drawer-title', tabindex: '-1' }, title(lead)),
+            contactLine.length ? h('p', { class: 'drawer-sub' }, contactLine.flatMap((part, i) => (i ? [' · ', part] : [part]))) : null),
+          h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close', onclick: closeDrawer }, '×')),
+        contactActions(lead)),
       h('div', { class: 'drawer-scroll' },
-        contactLinks(lead),
+        stageSteps(lead),
+        dueBanner,
         outcomeButtons,
         projectBox(lead),
         form,
         surveySectionNode,
         quoteSection,
-        hasRounds ? negotiationSection(lead) : negotiationSectionNode,
+        negotiation,
         checklistSection(lead.id),
         activitySection(lead.id)),
-      h('div', { class: 'drawer-foot' },
-        saveBtn,
-        h('button', { class: 'btn', type: 'button', onclick: closeDrawer }, 'Cancel'),
-        h('span', { class: 'spacer' }),
-        remove),
+      h('div', { class: 'drawer-foot' }, saveBtn, moreBtn),
     );
   }
 
@@ -1123,20 +1233,23 @@
       input.value = '';
       input.focus();
     };
-    return h('section', { class: 'activity', 'aria-labelledby': 'checklist-title' },
-      h('div', { class: 'checklist-head' },
-        h('h3', { id: 'checklist-title' }, 'Checklist'),
-        h('span', { class: 'checklist-count', id: 'checklist-count' })),
-      h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add')),
-      error,
-      h('ul', { class: 'checklist', id: 'checklist' }));
+    return h('details', { class: 'stage-section' },
+      h('summary', { class: 'stage-section-title' },
+        h('span', { id: 'checklist-title' }, 'Checklist'),
+        h('span', { class: 'section-count', id: 'checklist-count' })),
+      h('div', { class: 'stage-section-body' },
+        h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add')),
+        error,
+        h('ul', { class: 'checklist', id: 'checklist' })));
   }
 
   function renderChecklist(items) {
     const list = $('#checklist');
     if (!list) return;
     clear(list);
-    $('#checklist-count').textContent = items.length ? `${items.filter((i) => i.done).length} of ${items.length} done` : '';
+    const count = $('#checklist-count');
+    count.textContent = items.length ? `${items.filter((i) => i.done).length} / ${items.length}` : '';
+    count.setAttribute('aria-label', items.length ? `${items.filter((i) => i.done).length} of ${items.length} done` : '');
     items.forEach((item) => list.append(h('li', { class: item.done ? 'done' : '' },
       h('label', {},
         h('input', { type: 'checkbox', checked: item.done, onchange: (e) => checklistApi.toggle(item.id, e.target.checked) }),
@@ -1200,18 +1313,22 @@
         error.textContent = err.message;
       }
     };
-    return h('section', { class: 'activity', 'aria-labelledby': 'activity-title' },
-      h('h3', { id: 'activity-title' }, 'Activity'),
-      h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add note')),
-      error,
-      h('ul', { class: 'timeline', id: 'timeline' }),
-    );
+    return h('details', { class: 'stage-section' },
+      h('summary', { class: 'stage-section-title' },
+        h('span', { id: 'activity-title' }, 'Activity'),
+        h('span', { class: 'section-count', id: 'activity-count' })),
+      h('div', { class: 'stage-section-body' },
+        h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add note')),
+        error,
+        h('ul', { class: 'timeline', id: 'timeline' })));
   }
 
   function renderTimeline(activities) {
     const list = $('#timeline');
     if (!list) return;
     clear(list);
+    const count = $('#activity-count');
+    if (count) count.textContent = activities.length || '';
     activities.forEach((a) => {
       const when = new Date(a.created_at).toLocaleString('en-IN', {
         day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
