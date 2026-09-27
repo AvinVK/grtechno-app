@@ -62,3 +62,28 @@ def test_other_pages_get_a_way_back_to_the_hub(client, admin_client):
     assert 'class="icon-btn hub-back" href="/me"' in client.get("/attendance").get_data(as_text=True)
     assert 'class="icon-btn hub-back" href="/me"' in admin_client.get("/users").get_data(as_text=True)
     assert "hub-back" not in client.get("/me").get_data(as_text=True)
+
+
+def test_hub_keeps_the_bottom_tabs_leading_back_into_leads(client):
+    html = client.get("/me").get_data(as_text=True)
+    for view in ("active", "closed", "add", "status"):
+        assert f'href="/#{view}"' in html
+    assert 'href="/me" aria-current="page"' in html and "page-app" in html
+
+
+def test_leads_page_tabs_still_switch_in_place(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'href="#active"' in html and 'href="/#active"' not in html
+
+
+def test_hub_shows_the_due_count_on_the_active_tab(app, client, user):
+    from app.models import Lead
+    with app.app_context():
+        db.session.add(Lead(company="Due Co", owner_code=user.code, stage="New enquiry", follow_up_date=today_local()))
+        db.session.commit()
+    assert '<b class="nav-badge">1</b>' in client.get("/me").get_data(as_text=True)
+
+
+def test_no_bottom_tabs_without_leads(app, manager_client):
+    html = manager_client.get("/me").get_data(as_text=True)          # project managers have no Leads service
+    assert 'class="bottom-nav"' not in html and "page-plain" in html
