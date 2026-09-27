@@ -530,6 +530,7 @@
           saveBtn.textContent = quoteDateInput.value ? 'Save & move to Quote sent' : 'Save changes';
         };
         quoteDateInput.addEventListener('input', updateSaveLabel);
+        quoteDateInput.addEventListener('change', updateSaveLabel);
         updateSaveLabel();
       }
 
@@ -690,6 +691,7 @@
         saveBtn.textContent = dateInput.value ? 'Save & move to Site survey' : 'Save survey';
       };
       dateInput.addEventListener('input', updateSaveLabel);
+      dateInput.addEventListener('change', updateSaveLabel);
       updateSaveLabel();
     }
     saveBtn.onclick = async () => {
