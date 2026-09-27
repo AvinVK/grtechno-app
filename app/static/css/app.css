@@ -181,6 +181,37 @@ a { color: var(--accent-dark); }
 
 .status-cards { display: grid; gap: 12px; max-width: 640px; margin: 0 auto; }
 
+/* Status: a dark hero card for the open pipeline, split by stage. */
+.status-hero { display: grid; gap: 4px; padding: 18px; border-radius: var(--r-card); background: var(--ink); color: #fff; }
+.hero-label { font-size: 14px; opacity: 0.8; }
+.hero-value { font: 500 36px/1.1 var(--font-num); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hero-note { font-size: 13px; opacity: 0.8; }
+.hero-bar { display: flex; gap: 2px; height: 8px; margin-top: 12px; border-radius: 4px; overflow: hidden; background: rgba(255, 255, 255, 0.14); }
+.hero-bar i { flex: 1 1 0; min-width: 4px; background: var(--seg, var(--st-new)); }
+.hero-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; opacity: 0.9; }
+.hero-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.hero-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--seg, var(--st-new)); }
+.hero-legend b { font: 500 13px/1 var(--font-num); }
+[data-stage="Site survey"] { --seg: var(--st-survey); }
+[data-stage="Quote sent"] { --seg: var(--st-quote); }
+[data-stage="Negotiation"] { --seg: var(--st-negotiation); }
+
+/* Overdue follow-ups: a white card with a red count, leading to the Overdue group on Active. */
+.status-alert {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+  border: 1px solid #e8b9c0; border-radius: var(--r-card); background: var(--panel);
+  color: inherit; text-decoration: none;
+}
+.alert-count { flex: none; min-width: 40px; color: var(--signal); font: 500 34px/1 var(--font-num); text-align: center; }
+.alert-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.alert-text span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.alert-open { flex: none; color: var(--accent-dark); font-weight: 600; }
+
+.status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.status-grid .stat { padding: 14px; }
+.status-grid .stat-label, .status-grid .stat-note { font-size: 13px; }
+.status-me { color: var(--muted); font-size: 13px; text-align: center; }
+
 .stat {
   display: block;
   padding: 16px 18px;

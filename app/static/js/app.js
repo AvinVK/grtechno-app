@@ -97,29 +97,64 @@
 
   /* ---------- summary and navigation ---------- */
 
+  // Set by the overdue card's "Open": after switching to Active, scroll to the Overdue group.
+  let scrollToGroup = null;
+
   function statusView() {
     const s = S.summary;
-    const stat = (label, value, notes, opts = {}) => {
-      const body = [
-        h('span', { class: 'stat-label' }, label),
-        h('span', { class: 'stat-value' }, value),
-        notes.map((n, i) => h('span', { class: `stat-note${opts.warn && i === 0 ? ' warn' : ''}` }, n)),
-      ];
-      return opts.href ? h('a', { class: 'stat', href: opts.href }, body) : h('div', { class: 'stat' }, body);
-    };
+    const open = S.leads.filter(isOpen);
+    const openValue = open.reduce((sum, l) => sum + (l.est_value || 0), 0);
 
-    const winNote = s.win_rate === null ? 'No closed leads yet' : `Win rate ${s.win_rate}%`;
-    const worth = s.won_month_value ? `Worth ${fmtCompact(s.won_month_value)}` : 'No wins yet this month';
+    // Hero: the whole open pipeline, with a bar split by how many leads sit at each open stage.
+    const byStage = S.open_stages.map((stage) => ({ stage, n: open.filter((l) => l.stage === stage).length }));
+    const bar = h('div', { class: 'hero-bar', 'aria-hidden': 'true' },
+      byStage.filter((b) => b.n).map((b) => {
+        const seg = h('i', { 'data-stage': b.stage });
+        seg.style.flexGrow = String(b.n);
+        return seg;
+      }));
+    const hero = h('section', { class: 'status-hero' },
+      h('span', { class: 'hero-label' }, 'Open pipeline'),
+      h('span', { class: 'hero-value' }, fmtMoney(openValue)),
+      h('span', { class: 'hero-note' }, plural(open.length, 'open lead', 'open leads')),
+      open.length ? bar : null,
+      open.length ? h('ul', { class: 'hero-legend' }, byStage.map((b) => h('li', { 'data-stage': b.stage },
+        h('i', { 'aria-hidden': 'true' }), `${SHORT_STAGE[b.stage] || b.stage} `, h('b', {}, b.n)))) : null);
+
+    // Overdue follow-ups, if any: how many, and the one that has waited longest.
+    const overdue = open.filter((l) => l.follow_up_date && l.follow_up_date < S.today)
+      .sort((a, b) => a.follow_up_date.localeCompare(b.follow_up_date));
+    const overdueCard = overdue.length ? h('a', {
+      class: 'status-alert', href: '#active',
+      onclick: () => { filters.active.stage = ''; scrollToGroup = 'overdue'; },
+    },
+    h('span', { class: 'alert-count' }, overdue.length),
+    h('span', { class: 'alert-text' },
+      h('strong', {}, overdue.length === 1 ? 'Follow-up overdue' : 'Follow-ups overdue'),
+      h('span', {}, `Oldest: ${title(overdue[0])}, ${plural(-diffDays(overdue[0].follow_up_date, S.today), 'day', 'days')}`)),
+    h('span', { class: 'alert-open' }, 'Open ›')) : null;
+
+    // The rest: numbers already in the summary, or counted from the leads we have.
+    const dueToday = open.filter((l) => l.follow_up_date === S.today).length;
+    const weekStart = addDays(S.today, -((parseISO(S.today).getUTCDay() + 6) % 7));
+    const newThisWeek = S.leads.filter((l) => l.created_at.slice(0, 10) >= weekStart).length;
+    const tile = (label, value, note, href) => {
+      const body = [h('span', { class: 'stat-label' }, label), h('span', { class: 'stat-value' }, value),
+        note ? h('span', { class: 'stat-note' }, note) : null];
+      return href ? h('a', { class: 'stat', href }, body) : h('div', { class: 'stat' }, body);
+    };
+    const grid = h('div', { class: 'status-grid' },
+      tile('Due today', String(dueToday), s.due_count > dueToday ? `${s.due_count} due incl. overdue` : 'Follow-ups', '#active'),
+      tile('New this week', String(newThisWeek), 'Leads added since Monday'),
+      tile('Won this month', String(s.won_month_count), s.won_month_count ? `Worth ${fmtCompact(s.won_month_value)}` : 'No wins yet', '#closed'),
+      tile('Win rate', s.win_rate === null ? '—' : `${s.win_rate}%`, s.win_rate === null ? 'No closed leads yet' : 'Of all closed leads'));
 
     return h('div', { class: 'status-cards' },
-      stat('Signed in as', S.me.name, [S.me.userid, S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads']),
-      stat('Open pipeline', fmtMoney(s.open_value), [plural(s.open_count, 'open lead', 'open leads')]),
-      stat('Follow-ups due', String(s.due_count),
-        [s.overdue_count ? `${s.overdue_count} overdue` : 'Nothing overdue'],
-        { href: '#active', warn: s.overdue_count > 0 }),
-      stat('Won this month', String(s.won_month_count), s.won_month_count ? [worth, winNote] : [winNote],
-        { href: '#closed' }),
-    );
+      hero,
+      overdueCard,
+      grid,
+      h('p', { class: 'status-me' }, `Signed in as ${S.me.name} (${S.me.userid}) · `,
+        S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads'));
   }
 
   function renderNav() {
@@ -146,6 +181,10 @@
   function renderMain() {
     const screens = { status: statusView, add: addView };
     clear($('#view')).append(screens[view] ? screens[view]() : listView(view));
+    if (view === 'active' && scrollToGroup) {
+      $(`#view .group-${scrollToGroup}`)?.scrollIntoView({ block: 'start' });
+      scrollToGroup = null;
+    }
   }
 
 
