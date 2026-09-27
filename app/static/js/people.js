@@ -96,20 +96,51 @@
       h('span', { class: 'att-day-sub' }, where)));
   }
 
+  const groupLabel = (k) => GROUPS[k] || k.charAt(0).toUpperCase() + k.slice(1);
+
+  // A search by name and a chip per group, taken from the groups the data actually has (not a fixed list).
   function showRoster(data, key) {
-    const people = data[key];
+    const groups = Object.keys(data).filter((k) => Array.isArray(data[k]));
+    const state = { q: '', group: key };
     const legend = h('p', { class: 'wk-legend' },
       'Last 7 days, oldest first: ',
       h('i', { class: 'wk-dot present' }), ' present ',
       h('i', { class: 'wk-dot absent' }), ' absent ',
       h('i', { class: 'wk-dot none' }), ' no data yet');
+    const heading = h('h2', {});
+    const count = h('span', { class: 'att-week-sum' });
+    const chips = h('div', { class: 'stage-filter people-chips', role: 'group', 'aria-label': 'Show group' });
+    const listBox = h('div', {});
+    const search = h('input', {
+      type: 'search', placeholder: 'Search by name', 'aria-label': 'Search by name',
+      oninput: (e) => { state.q = e.target.value; render(); },
+    });
+
+    function render() {
+      const pool = state.group === 'all' ? groups.flatMap((g) => data[g]) : data[state.group];
+      const q = state.q.trim().toLowerCase();
+      const people = pool.filter((p) => !q || p.name.toLowerCase().includes(q))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      heading.textContent = state.group === 'all' ? 'Everyone' : groupLabel(state.group);
+      count.textContent = plural(people.length, 'person', 'people');
+      clear(chips).append(...[['all', 'All', groups.reduce((n, g) => n + data[g].length, 0)],
+        ...groups.map((g) => [g, groupLabel(g), data[g].length])].map(([value, label, n]) => h('button', {
+        type: 'button', class: 'filter-chip', 'aria-pressed': String(state.group === value),
+        onclick: () => { state.group = value; render(); },
+      }, label, h('span', { class: 'n' }, n))));
+      clear(listBox).append(people.length
+        ? h('ul', { class: 'att-week-card' }, people.map((p) => rosterRow(p, data.today)))
+        : h('p', { class: 'empty-state' }, pool.length ? 'Nobody matches this search.' : 'Nobody here yet.'));
+    }
+    render();
+
     clear(view).append(h('div', { class: 'people' },
       h('a', { class: 'back-link', href: '#' }, `← ${mode === 'sheet' ? 'Attendance sheet' : 'Manpower & staff'}`),
-      h('div', { class: 'list-head' }, h('h2', {}, GROUPS[key]), h('span', { class: 'att-week-sum' }, plural(people.length, 'person', 'people'))),
+      h('div', { class: 'list-head' }, heading, count),
+      search,
+      chips,
       legend,
-      people.length
-        ? h('ul', { class: 'att-week-card' }, people.map((p) => rosterRow(p, data.today)))
-        : h('p', { class: 'empty-state' }, `No ${GROUPS[key].toLowerCase()} yet.`),
+      listBox,
       dataNote(data)));
   }
 

@@ -44,14 +44,25 @@ window.LD = (() => {
     return data;
   }
 
+  /* A short message at the bottom of the screen. The second argument is either true (an error) or options:
+     { error, actionLabel, onAction, ms } - with an action (for example Undo) the toast carries a button for
+     it and stays a little longer. */
   let toastTimer;
-  function toast(message, isError = false) {
+  function toast(message, opts = false) {
+    const o = opts && typeof opts === 'object' ? opts : { error: !!opts };
     const el = $('#toast');
-    el.textContent = message;
-    el.classList.toggle('error', isError);
+    const hide = () => el.classList.remove('show');
+    clear(el).append(message);
+    if (o.actionLabel && o.onAction) {
+      el.append(h('button', {
+        type: 'button', class: 'toast-action',
+        onclick: () => { clearTimeout(toastTimer); hide(); o.onAction(); },
+      }, o.actionLabel));
+    }
+    el.classList.toggle('error', !!o.error);
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 4500 : 2600);
+    toastTimer = setTimeout(hide, o.ms || (o.error ? 4500 : o.onAction ? 6000 : 2600));
   }
 
   /* An in-app "are you sure?" box, used instead of the browser's own popup. Resolves true or false.

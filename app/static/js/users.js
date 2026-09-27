@@ -18,7 +18,7 @@
 
   function usersView() {
     const wrap = h('div', { class: 'users' });
-    const listBox = h('div', { class: 'user-list' }, h('p', { class: 'loading' }, 'Loading users…'));
+    const listBox = h('div', { class: 'user-list card-group' }, h('p', { class: 'loading' }, 'Loading users…'));
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
     let roles = [];
     const roleSelect = selectField([], '', { title: 'Role' });
@@ -35,15 +35,15 @@
           h('dt', {}, 'Setup code'), h('dd', { class: 'code-value' }, data.setup_code)),
         h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days. ${u.name} opens the app, taps "Set a new PIN" on the sign-in page and enters both.`),
         h('div', { class: 'code-actions' },
-          h('a', { class: 'btn primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Send on WhatsApp'),
+          h('a', { class: 'btn primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Share on WhatsApp'),
           h('button', {
             class: 'btn', type: 'button',
             onclick: async () => {
-              try { await navigator.clipboard.writeText(message); toast('Message copied'); }
-              catch (err) { toast('Could not copy. Select the text and copy it.', true); }
+              try { await navigator.clipboard.writeText(data.setup_code); toast('Copied'); }
+              catch (err) { toast('Could not copy. Select the code and copy it.', true); }
             },
-          }, 'Copy message'),
-          h('button', { class: 'btn', type: 'button', onclick: () => { resultBox.hidden = true; clear(resultBox); } }, 'Done'))));
+          }, 'Copy code')),
+        h('button', { class: 'link-btn code-done', type: 'button', onclick: () => { resultBox.hidden = true; clear(resultBox); } }, 'Done')));
       resultBox.hidden = false;
       resultBox.scrollIntoView({ block: 'nearest' });
     }
@@ -114,7 +114,7 @@
         h('div', { class: 'user-main' },
           h('span', { class: 'user-name' }, u.name, u.is_admin ? h('span', { class: 'user-tag' }, 'Admin') : null),
           h('span', { class: 'user-id' }, u.userid),
-          h('span', { class: 'user-meta' }, `${u.role_name} \u00b7 ${plural(u.leads, 'lead', 'leads')}`)),
+          h('span', { class: 'user-meta' }, h('span', { class: 'chip chip-role' }, u.role_name), ` ${plural(u.leads, 'lead', 'leads')}`)),
         chip(tone, label),
         actions);
     }

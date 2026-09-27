@@ -257,7 +257,7 @@
         h('h2', { class: 'filter-modal-title' }, 'Filters'),
         h('div', { class: 'filter-modal-body' }, catList, optionsPane),
         h('div', { class: 'confirm-actions' }, doneBtn));
-      const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) finish(); } }, card);
+      const overlay = h('div', { class: 'confirm-overlay filter-overlay', onclick: (e) => { if (e.target === overlay) finish(); } }, card);
       function finish() { overlay.remove(); resolve(); }
       doneBtn.onclick = finish;
       window.addEventListener('keydown', function onKey(e) {
@@ -933,8 +933,18 @@
         }
         onSaved();
         const autoAdvanced = !isNew && !outcome && res.stage !== lead.stage;
+        const undoLost = outcome === 'Lost' ? {
+          actionLabel: 'Undo',
+          onAction: async () => {
+            try {
+              await api(`/api/leads/${lead.id}`, { method: 'PATCH', body: { stage: lead.stage } });
+              toast(`Back to ${lead.stage}`);
+              await load();
+            } catch (e) { toast(e.message, true); }
+          },
+        } : undefined;
         toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}`
-          : autoAdvanced ? `Changes saved – moved to ${res.stage}` : 'Changes saved');
+          : autoAdvanced ? `Changes saved – moved to ${res.stage}` : 'Changes saved', undoLost);
         if (isNew && view !== 'active') window.location.hash = '#active';
         await load();
       } catch (err) {
@@ -1258,12 +1268,28 @@
     const error = h('p', { class: 'err', role: 'alert' });
     const base = `/api/leads/${id}/checklist`;
     const call = async (path, opts) => {
-      try { renderChecklist((await api(path, opts)).checklist); error.textContent = ''; }
-      catch (err) { error.textContent = err.message; }
+      try { renderChecklist((await api(path, opts)).checklist); error.textContent = ''; return true; }
+      catch (err) { error.textContent = err.message; return false; }
+    };
+    // Undo puts a removed item back with the same text and tick - at the end of the list, since the API
+    // has no way to set an item's position.
+    const restore = async (item) => {
+      try {
+        let res = await api(base, { method: 'POST', body: { text: item.text } });
+        if (item.done) {
+          const added = res.checklist[res.checklist.length - 1];
+          res = await api(`${base}/${added.id}`, { method: 'PATCH', body: { done: true } });
+        }
+        renderChecklist(res.checklist);
+      } catch (err) { toast(err.message, true); }
     };
     checklistApi = {
       toggle: (itemId, done) => call(`${base}/${itemId}`, { method: 'PATCH', body: { done } }),
-      remove: (itemId) => call(`${base}/${itemId}`, { method: 'DELETE' }),
+      remove: async (item) => {
+        if (await call(`${base}/${item.id}`, { method: 'DELETE' })) {
+          toast('Checklist item removed', { actionLabel: 'Undo', onAction: () => restore(item) });
+        }
+      },
     };
     const submit = async (e) => {
       e.preventDefault();
@@ -1293,7 +1319,7 @@
       h('label', {},
         h('input', { type: 'checkbox', checked: item.done, onchange: (e) => checklistApi.toggle(item.id, e.target.checked) }),
         h('span', {}, item.text)),
-      h('button', { class: 'icon-x', type: 'button', 'aria-label': `Remove ${item.text}`, onclick: () => checklistApi.remove(item.id) }, '\u00d7'))));
+      h('button', { class: 'icon-x', type: 'button', 'aria-label': `Remove ${item.text}`, onclick: () => checklistApi.remove(item) }, '\u00d7'))));
   }
 
   /* ---------- won lead -> project ---------- */
