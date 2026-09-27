@@ -314,7 +314,13 @@
       items.forEach((l) => list.append(h('li', {}, leadRow(l, isActive))));
     }
 
-    wrap.append(h('div', { class: 'filters' }, search, chips, filterButton), count, list);
+    // Column headers for the wide-screen row layout only - the phone layout below 820px stacks each
+    // row's pieces instead, where a header naming six "columns" wouldn't line up with anything.
+    const rowHead = h('div', { class: 'row-head', 'aria-hidden': 'true' },
+      h('span', {}, 'Lead'), h('span', {}, 'Service'), h('span', {}, 'Stage'),
+      h('span', {}, 'Value'), h('span', {}, 'Follow-up'), isActive ? h('span', {}, 'Added') : null);
+
+    wrap.append(h('div', { class: 'filters' }, search, chips, filterButton), count, rowHead, list);
     if (!isActive) {
       wrap.append(h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')));
     }
@@ -511,7 +517,9 @@
     let form;
     let quoteSection = null;
     let surveySectionNode = null;
-    let surveyBody = null;      // set only when the survey section exists - read by the submit handler
+    let surveyBody = null;              // set only when the survey section exists - read by the submit handler
+    let negotiationSectionNode = null;
+    let negotiationBody = null;         // set only when this is the lead's first (stage-advancing) round
     if (!lead) {
       // Creating: one flat form, same as always - the stage accordion only makes sense once a lead exists.
       form = h('form', { novalidate: true, id: 'lead-form' },
@@ -520,6 +528,7 @@
     } else {
       const expand = nextStageIndex(lead);
       const surveyDone = !!(lead.survey && lead.survey.survey_date);
+      const quoteSent = !!lead.quote_sent_date;
 
       // Site survey - always editable, since it's either already done or is exactly what's next.
       const sv = lead.survey || {};
@@ -619,6 +628,45 @@
         updateSaveLabel();
       }
 
+      // Negotiation's first round is what completes Quote sent's own step, so - same as the survey and
+      // quote sections above - it rides along with the one Save changes button instead of a button of its
+      // own. Once a round already exists, further rounds are a repeatable list of their own (edited below,
+      // in negotiationSection) rather than something one Save button can represent.
+      const hasRounds = (lead.negotiations || []).length > 0;
+      if (!hasRounds) {
+        const negDateInput = dateField('', { placeholder: 'Round date' });
+        const negPerson = h('input', { type: 'text', maxlength: 120 });
+        const negEstimate = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${S.settings.currency})` });
+        const negFinalized = h('input', { type: 'checkbox' });
+        negotiationBody = () => (negDateInput.value ? {
+          date: negDateInput.value, authorized_person: negPerson.value,
+          estimate: negEstimate.value === '' ? null : negEstimate.value, finalized: negFinalized.checked,
+        } : null);
+
+        const negFields = h('div', { class: 'form-grid' },
+          plainField('Round date', negDateInput),
+          plainField('Authorized person', negPerson),
+          plainField(`Estimate (${S.settings.currency})`, negEstimate),
+          h('label', { class: 'check-row wide' }, negFinalized, h('span', {}, 'Finalized')));
+        negotiationSectionNode = h('details', { class: `stage-section${quoteSent ? '' : ' locked'}`, open: quoteSent && expand === 3 },
+          h('summary', { class: 'stage-section-title' }, 'Negotiation'),
+          h('div', { class: 'stage-section-body' }, negFields));
+
+        if (!quoteSent) {
+          negotiationSectionNode.querySelector('summary').addEventListener('click', (e) => {
+            e.preventDefault();
+            toast('Send a quote first', true);
+          });
+        } else {
+          const updateSaveLabel = () => {
+            saveBtn.textContent = negDateInput.value ? 'Save & move to Negotiation' : 'Save changes';
+          };
+          negDateInput.addEventListener('input', updateSaveLabel);
+          negDateInput.addEventListener('change', updateSaveLabel);
+          updateSaveLabel();
+        }
+      }
+
       form = h('form', { novalidate: true, id: 'lead-form' },
         errorBox,
         stageField,
@@ -645,7 +693,7 @@
 
     // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
     // display has to check both roots instead of just `form`.
-    const formRoots = [form, quoteSection, surveySectionNode].filter(Boolean);
+    const formRoots = [form, quoteSection, surveySectionNode, negotiationSectionNode].filter(Boolean);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -672,6 +720,13 @@
         // Site survey has no save button of its own - whatever's in its fields rides along with the
         // same Save changes click, right after the lead's own fields land.
         if (surveyBody) res = await api(`/api/leads/${lead.id}/survey`, { method: 'PUT', body: surveyBody() });
+        // Same for the first negotiation round - but only when a round date was actually entered, since
+        // (unlike the survey's upsert) this always creates a new round, so an untouched section must not
+        // silently log an empty one just because Save changes was clicked for some other field.
+        if (negotiationBody) {
+          const nb = negotiationBody();
+          if (nb) res = await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body: nb });
+        }
         onSaved();
         const autoAdvanced = !isNew && !outcome && res.stage !== lead.stage;
         toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}`
@@ -700,11 +755,12 @@
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
-    return { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode };
+    return { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode, negotiationSectionNode };
   }
 
   function buildDrawer(lead) {
-    const { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode } = buildLeadForm(lead, closeDrawer);
+    const { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode, negotiationSectionNode } = buildLeadForm(lead, closeDrawer);
+    const hasRounds = !!(lead && (lead.negotiations || []).length > 0);
 
     const remove = lead ? h('button', {
       class: 'btn danger', type: 'button',
@@ -733,7 +789,7 @@
         form,
         surveySectionNode,
         quoteSection,
-        lead ? negotiationSection(lead) : null,
+        hasRounds ? negotiationSection(lead) : negotiationSectionNode,
         checklistSection(lead.id),
         activitySection(lead.id)),
       h('div', { class: 'drawer-foot' },
@@ -760,25 +816,24 @@
 
   /* ---------- negotiation rounds ---------- */
 
+  /* Only called once at least one round already exists - a lead's very first round is what completes
+     Quote sent's own step, so it's handled in buildLeadForm instead, riding along with the main Save
+     changes button like the survey and quote sections. This is purely "edit a past round, or log one
+     more" - neither changes the stage, so each keeps its own small Save/Add button. */
   function negotiationSection(lead) {
-    const quoteSent = !!lead.quote_sent_date;
     const list = h('div', { class: 'negotiation-rows' });
     const err = h('p', { class: 'err', role: 'alert' });
 
-    function buildRow(round) {
-      const dateInput = dateField(round ? round.date || '' : '');
+    function buildRow(round, roundNo) {
+      const dateInput = dateField(round ? round.date || '' : '', { placeholder: 'Round date' });
       const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120, placeholder: 'Authorized person' });
-      const estimate = h('input', { type: 'number', min: '0', step: 'any', value: round && round.estimate != null ? round.estimate : '' });
+      const estimate = h('input', {
+        type: 'number', min: '0', step: 'any', inputmode: 'decimal',
+        value: round && round.estimate != null ? round.estimate : '', placeholder: `Estimate (${S.settings.currency})`,
+      });
       const finalized = h('input', { type: 'checkbox' });
       finalized.checked = !!(round && round.finalized);
-      // Logging the first round is what completes Quote sent's own step - say so on the button itself.
-      const addLabel = lead.stage === 'Quote sent' ? 'Save & move to Negotiation' : 'Add round';
-      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : addLabel);
-      if (!round && !quoteSent) {
-        // A round can't exist before a quote does - lock the blank "add a round" row rather than let
-        // someone fill it in only to have the save rejected.
-        [dateInput, person, estimate, finalized, saveBtn].forEach((el) => { el.disabled = true; });
-      }
+      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Add round');
       saveBtn.onclick = async () => {
         err.textContent = '';
         const body = {
@@ -789,40 +844,27 @@
           const res = round
             ? await api(`/api/leads/${lead.id}/negotiations/${round.id}`, { method: 'PATCH', body })
             : await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body });
-          const advanced = res.stage !== lead.stage;
-          if (advanced) {
-            // Adding the first round is what actually completes Quote sent - the stage dropdown and
-            // which section opens by default were built for the old stage, so rebuild the drawer.
-            toast(`Saved – moved to ${res.stage}`);
-            await load();
-            openDrawer(lead.id);
-          } else {
-            lead.negotiations = res.negotiations;
-            renderRows();
-            toast('Saved');
-          }
+          lead.negotiations = res.negotiations;
+          renderRows();
+          toast('Saved');
         } catch (e) { err.textContent = e.message; }
       };
-      return h('div', { class: 'negotiation-row' }, dateInput, person, estimate,
-        h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')), saveBtn);
+      return h('div', { class: 'negotiation-row-block' },
+        h('p', { class: 'negotiation-round-label' }, round ? `Round ${roundNo}` : `Round ${roundNo} (new)`),
+        h('div', { class: 'negotiation-row' }, dateInput, person, estimate,
+          h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')), saveBtn));
     }
 
     function renderRows() {
       clear(list);
-      lead.negotiations.forEach((r) => list.append(buildRow(r)));
-      list.append(buildRow(null));
+      lead.negotiations.forEach((r, i) => list.append(buildRow(r, i + 1)));
+      list.append(buildRow(null, lead.negotiations.length + 1));
     }
     renderRows();
 
-    const section = h('details', { class: `stage-section${quoteSent ? '' : ' locked'}`, open: quoteSent && nextStageIndex(lead) === 3 },
+    const section = h('details', { class: 'stage-section', open: nextStageIndex(lead) === 3 },
       h('summary', { class: 'stage-section-title' }, 'Negotiation'),
       h('div', { class: 'stage-section-body' }, list, err));
-    if (!quoteSent) {
-      section.querySelector('summary').addEventListener('click', (e) => {
-        e.preventDefault();
-        toast('Send a quote first', true);
-      });
-    }
     return section;
   }
 

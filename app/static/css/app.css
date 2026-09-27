@@ -264,6 +264,24 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .row:hover { background: #faf6f8; }
 
+.row-head {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.3fr) 130px 110px 120px 110px;
+  gap: 4px 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 10px 6px;
+  font: 600 11px/1.2 var(--font-body);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.row-head span:nth-child(4), .row-head span:nth-child(6) { text-align: right; }
+
+@media (max-width: 820px) {
+  .row-head { display: none; }
+}
+
 .row-main > span { display: block; }
 .row-title { font: 600 16px/1.2 var(--font-display); overflow-wrap: anywhere; }
 .row-sub, .row-service { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
@@ -751,7 +769,8 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-date { grid-area: date; }
 .pay-row .icon-x { grid-area: x; }
 
-.negotiation-rows { display: grid; gap: 10px; }
+.negotiation-rows { display: grid; gap: 16px; }
+.negotiation-round-label { margin: 0 0 6px; font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
 .negotiation-row {
   display: flex;
   flex-wrap: wrap;
