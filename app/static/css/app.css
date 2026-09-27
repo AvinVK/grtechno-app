@@ -1181,7 +1181,77 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }
 
-/* ---------- Clients: plain list, and one client's summary ---------- */
+/* ---------- All clients / All projects (grouped by area) ---------- */
+
+.city-box {
+  max-width: 1100px;
+  margin: 0 auto 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.city-box-body { padding-top: 4px; }
+
+/* Both levels collapse (native <details>/<summary>): a plain header row that toggles, with a chevron
+   that turns to show open/closed state instead of the browser's own disclosure triangle. */
+.city-box-title,
+.area-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.city-box-title::-webkit-details-marker,
+.area-title::-webkit-details-marker { display: none; }
+
+.city-box-title {
+  margin: 0;
+  padding: 14px 40px 14px 16px;
+  background: var(--accent-tint);
+  font: 600 18px/1.2 var(--font-display);
+  position: relative;
+}
+
+.area-block { padding: 4px 16px 8px; }
+.area-block + .area-block { border-top: 1px dashed var(--line); }
+
+.area-title {
+  margin: 12px 0 2px;
+  padding-right: 24px;
+  font: 600 15px/1.2 var(--font-body);
+  color: var(--muted);
+  position: relative;
+}
+
+.city-box-title::before,
+.area-title::before {
+  content: "";
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -6px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+.area-title::before { right: 2px; width: 7px; height: 7px; margin-top: -5px; }
+
+details[open] > summary.city-box-title::before,
+details[open] > summary.area-title::before { transform: rotate(-135deg); margin-top: -3px; }
+
+.city-box .rows { max-width: none; margin: 0; }
+.city-box .client-list { border: 0; border-radius: 0; background: none; }
+.city-box .client-row { padding: 12px 0; }
+
+/* ---------- Clients: list rows, and one client's summary ---------- */
 
 .client-list { max-width: 1100px; margin: 0 auto; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
 .client-list > li + li { border-top: 1px solid var(--line); }

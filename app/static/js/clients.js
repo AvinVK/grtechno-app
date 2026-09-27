@@ -1,6 +1,8 @@
 /* Clients & Projects: clients only ever come from a won lead now (see app.js), so this is a browse screen,
-   not an add screen - one plain list of clients and how many projects each has, with a search and a
-   service filter. Clicking a client opens a short look at the relationship (how long they've been a
+   not an add screen - grouped by district (the "city" box) then city (the area within it, see
+   app/static/css/app.css for why that's the natural way round for this data), both collapsed to start
+   with, each client showing just its name and how many projects it has; a search and a service filter
+   open every box so no match stays hidden. Clicking a client opens a short look at the relationship (how long they've been a
    client, what their work is worth, their projects); editing their contact details is one tap further. */
 (() => {
   'use strict';
@@ -15,17 +17,31 @@
     on_hold: ['On hold', 'hold'],
     completed: ['Completed', 'done'],
   };
+  const sortUnknownLast = (a, b) => (a === 'Not set') - (b === 'Not set') || a.localeCompare(b);
+
   const statusChip = (s) => {
     const [label, tone] = STATUS[s] || [s, 'planned'];
     return h('span', { class: `chip chip-p-${tone}` }, label);
   };
 
-  /* ---------- list, with a search and a service filter ---------- */
+  /* ---------- list, grouped by area, with a search and a service filter ---------- */
 
   function clientRow(c) {
     return h('li', {}, h('a', { class: 'client-row', href: `#c${c.id}` },
       h('span', { class: 'client-row-name' }, c.name),
       h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))));
+  }
+
+  function areaBlock(area, clients, expand) {
+    return h('details', { class: 'area-block', open: expand || undefined },
+      h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(clients.length, 'client', 'clients'))),
+      h('ul', { class: 'client-list' }, clients.map(clientRow)));
+  }
+
+  function cityBox(city, areas, total, expand) {
+    return h('details', { class: 'city-box', open: expand || undefined },
+      h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'client', 'clients'))),
+      h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area], expand))));
   }
 
   async function showList() {
@@ -66,7 +82,20 @@
           : 'No clients yet. A client appears here automatically once a lead is won.'));
         return;
       }
-      results.append(h('ul', { class: 'client-list' }, items.map(clientRow)));
+      const byCity = {};
+      for (const c of items) {
+        const city = c.district || 'Not set';
+        const area = c.city || 'Not set';
+        if (!byCity[city]) byCity[city] = {};
+        if (!byCity[city][area]) byCity[city][area] = [];
+        byCity[city][area].push(c);
+      }
+      const expand = !!(filter.q.trim() || filter.service);       // don't leave a match hidden inside a closed box
+      results.append(...Object.keys(byCity).sort(sortUnknownLast).map((city) => {
+        const areas = byCity[city];
+        const total = Object.values(areas).reduce((n, list) => n + list.length, 0);
+        return cityBox(city, areas, total, expand);
+      }));
     }
 
     clear(view).append(h('div', {},
