@@ -171,18 +171,38 @@ def test_editing_a_survey_later_does_not_move_the_stage_backwards(admin_client):
     assert edited.get_json()["stage"] == "Quote sent"
 
 
-def test_sending_a_quote_advances_site_survey_to_negotiation(admin_client):
+def test_sending_a_quote_advances_site_survey_to_quote_sent(admin_client):
     lead = make_lead(admin_client)
     admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
     assert admin_client.get(f"/api/leads/{lead['id']}").get_json()["stage"] == "Site survey"
 
     sent = admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-22", "est_value": 56000})
-    assert sent.get_json()["stage"] == "Negotiation"
-    assert any("Negotiation" in a["text"] for a in sent.get_json()["activities"])
+    assert sent.get_json()["stage"] == "Quote sent"        # not skipped straight to Negotiation
+    assert any("Quote sent" in a["text"] for a in sent.get_json()["activities"])
 
     # editing the quote again afterwards doesn't move it a second time
     edited = admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-23", "est_value": 60000})
-    assert edited.get_json()["stage"] == "Negotiation"
+    assert edited.get_json()["stage"] == "Quote sent"
+
+
+def test_adding_a_negotiation_round_advances_quote_sent_to_negotiation(admin_client):
+    lead = make_lead(admin_client)
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-22", "est_value": 56000})
+    assert admin_client.get(f"/api/leads/{lead['id']}").get_json()["stage"] == "Quote sent"
+
+    first = admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-24", "authorized_person": "Mr. Rao", "estimate": 54000, "finalized": False,
+    })
+    assert first.status_code == 201
+    assert first.get_json()["stage"] == "Negotiation"        # completing Quote sent's own step, one stage forward
+    assert any("Negotiation" in a["text"] for a in first.get_json()["activities"])
+
+    # a second round afterwards doesn't move it a second time
+    second = admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-26", "authorized_person": "Mr. Rao", "estimate": 50000, "finalized": False,
+    })
+    assert second.get_json()["stage"] == "Negotiation"
 
 
 def test_survey_photos_upload_and_delete(admin_client):

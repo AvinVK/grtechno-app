@@ -762,9 +762,18 @@
           const res = round
             ? await api(`/api/leads/${lead.id}/negotiations/${round.id}`, { method: 'PATCH', body })
             : await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body });
-          lead.negotiations = res.negotiations;
-          renderRows();
-          toast('Saved');
+          const advanced = res.stage !== lead.stage;
+          if (advanced) {
+            // Adding the first round is what actually completes Quote sent - the stage dropdown and
+            // which section opens by default were built for the old stage, so rebuild the drawer.
+            toast(`Saved – moved to ${res.stage}`);
+            await load();
+            openDrawer(lead.id);
+          } else {
+            lead.negotiations = res.negotiations;
+            renderRows();
+            toast('Saved');
+          }
         } catch (e) { err.textContent = e.message; }
       };
       return h('div', { class: 'negotiation-row' }, dateInput, person, estimate,

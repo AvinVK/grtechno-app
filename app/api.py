@@ -209,8 +209,9 @@ def _apply(lead: Lead, data: dict) -> None:
         new_date = data["follow_up_date"]
         _log(lead, "followup", f"Follow-up set for {_fmt_date(new_date)}" if new_date else "Follow-up cleared")
 
-    # A quote being sent for the first time, while sitting at Site survey, means the real next step is
-    # negotiating it - there's no separate "waiting" period at Quote sent worth stopping on.
+    # A quote being sent for the first time, while sitting at Site survey, completes that stage's own
+    # step - it moves the lead on to Quote sent, never further. Negotiation only starts once a round is
+    # actually logged (see add_negotiation below) - no stage gets skipped past.
     quote_just_sent = bool(data.get("quote_sent_date")) and not lead.quote_sent_date
 
     for field, value in data.items():
@@ -229,8 +230,8 @@ def _apply(lead: Lead, data: dict) -> None:
             except ProjectError as err:
                 abort(err.status, err.message)
     elif quote_just_sent and lead.stage == "Site survey":
-        _log(lead, "stage", f"Stage changed: {lead.stage} \u2192 Negotiation")
-        lead.stage = "Negotiation"
+        _log(lead, "stage", f"Stage changed: {lead.stage} \u2192 Quote sent")
+        lead.stage = "Quote sent"
 
 
 def _needs_name(lead_values: dict, has_client: bool) -> dict:
@@ -507,6 +508,9 @@ def add_negotiation(lead_id):
         lead=lead, round_no=round_no, date=date_val, authorized_person=authorized_person,
         estimate=estimate, finalized=finalized,
     ))
+    if lead.stage == "Quote sent":
+        _log(lead, "stage", f"Stage changed: {lead.stage} → Negotiation")
+        lead.stage = "Negotiation"
     lead.updated_at = utcnow()
     db.session.commit()
     return jsonify(lead.to_dict(with_activities=True)), 201
