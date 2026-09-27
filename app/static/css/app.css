@@ -293,6 +293,7 @@ a.stat:hover { border-color: var(--line-strong); }
   text-overflow: ellipsis;
 }
 .row-round { font: 400 12px/1 var(--font-body); color: var(--muted); margin-left: 6px; }
+.row-round.finalized { color: var(--accent-dark); font-weight: 600; }
 .row-created { color: var(--muted); font-size: 13px; text-align: right; }
 
 .stage-tag {
