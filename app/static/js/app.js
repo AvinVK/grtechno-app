@@ -891,7 +891,7 @@
   /* Only called once at least one round already exists - a lead's very first round is what completes
      Quote sent's own step, so it's handled in buildLeadForm instead, riding along with the main Save
      changes button like the survey and quote sections. This is purely "edit a past round, or log one
-     more" - neither changes the stage, so each keeps its own small Save/Add button. */
+     more" - neither changes the stage, so each keeps its own small Save / Save round button. */
   function negotiationSection(lead) {
     const list = h('div', { class: 'negotiation-rows' });
     const err = h('p', { class: 'err', role: 'alert' });
@@ -905,7 +905,7 @@
       });
       const finalized = h('input', { type: 'checkbox' });
       finalized.checked = !!(round && round.finalized);
-      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Add round');
+      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Save round');
       saveBtn.onclick = async () => {
         err.textContent = '';
         if (!requireFilled([dateInput, person, estimate])) return;
