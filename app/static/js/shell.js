@@ -25,6 +25,8 @@
   }
 
   button.addEventListener('click', () => (isOpen() ? close() : open()));
+  // Other controls that open the same menu (the bottom nav's "Me" when there is no attendance to show).
+  document.querySelectorAll('[data-open-menu]').forEach((b) => b.addEventListener('click', open));
   closeButton.addEventListener('click', () => close());
   overlay.addEventListener('click', () => close());
   // Choosing an item on the page you are already on (for example Users) changes only the hash, so close here.

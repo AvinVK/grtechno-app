@@ -71,7 +71,7 @@ body {
 
 body.locked { overflow: hidden; }
 
-.page-app { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+.page-app { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }   /* clears the bottom nav and its raised Add button */
 
 h1, h2, h3, p { margin: 0; }
 
@@ -411,6 +411,7 @@ a.stat:hover { border-color: var(--line-strong); }
   bottom: 0;
   z-index: 20;
   display: flex;
+  align-items: flex-end;
   gap: 2px;
   padding: 6px calc(6px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left));
   background: var(--nav);
@@ -440,9 +441,22 @@ a.stat:hover { border-color: var(--line-strong); }
 .bottom-nav-item svg { width: 22px; height: 22px; }
 .bottom-nav-item span { letter-spacing: 0.02em; white-space: nowrap; }
 .bottom-nav-item[aria-current="page"] { color: var(--nav-active); }
-.bottom-nav-item.add { color: var(--ink); }
-.bottom-nav-item.add[aria-current="page"] { color: var(--nav-active); }
-.bottom-nav-item.add svg { width: 30px; height: 30px; padding: 4px; border-radius: 8px; background: var(--accent); color: #fff; }
+/* Add: a raised tile in the middle of the bar, its label read out but not shown. */
+.bottom-nav-item.add { justify-content: flex-start; }
+.add-tile {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-top: -26px;
+  border-radius: 18px;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.bottom-nav-item .add-tile svg { width: 28px; height: 28px; }
+.bottom-nav-item.add[aria-current="page"] .add-tile { background: var(--accent-dark); }
+button.bottom-nav-item { font: 600 12px/1 var(--font-body); }
 .bottom-nav-item:active { transform: scale(0.96); }
 
 .nav-badge {
@@ -600,7 +614,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(88px + env(safe-area-inset-bottom));
+  bottom: calc(104px + env(safe-area-inset-bottom));   /* above the bottom nav's raised Add button */
   z-index: 60;
   max-width: calc(100% - 32px);
   padding: 10px 16px;
