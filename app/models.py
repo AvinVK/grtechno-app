@@ -324,6 +324,7 @@ class Client(db.Model):
             "notes": self.notes, "owner_name": self.owner.name if self.owner else None,
             "project_count": len(self.projects), "services": services,
             "total_estimated_value": float(self.total_estimated_value) if self.total_estimated_value is not None else None,
+            "created_at": _iso(self.created_at),
         }
 
 

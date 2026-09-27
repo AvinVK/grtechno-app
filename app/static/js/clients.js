@@ -1,8 +1,7 @@
-/* Clients & Projects: clients only ever come from a won lead now (see app.js), so this is a browse-and-edit
-   screen, not an add screen - grouped by district (the "city" box) then city (the area within it, see
-   app/static/css/app.css for why that's the natural way round for this data), with a service filter,
-   the same grouping the old admin-only "All clients" page used before it was folded in here. Clicking a
-   client shows its own projects and their estimates. */
+/* Clients & Projects: clients only ever come from a won lead now (see app.js), so this is a browse screen,
+   not an add screen - one plain list of clients and how many projects each has, with a search and a
+   service filter. Clicking a client opens a short look at the relationship (how long they've been a
+   client, what their work is worth, their projects); editing their contact details is one tap further. */
 (() => {
   'use strict';
 
@@ -10,30 +9,23 @@
 
   const view = $('#view');
   const canOpenProjects = view.dataset.projects === '1';
-  const STATUS_LABEL = { planned: 'Planned', running: 'Running', on_hold: 'On hold', completed: 'Completed' };
+  const STATUS = {
+    planned: ['Planned', 'planned'],
+    running: ['Running', 'running'],
+    on_hold: ['On hold', 'hold'],
+    completed: ['Completed', 'done'],
+  };
+  const statusChip = (s) => {
+    const [label, tone] = STATUS[s] || [s, 'planned'];
+    return h('span', { class: `chip chip-p-${tone}` }, label);
+  };
 
-  const sortUnknownLast = (a, b) => (a === 'Not set') - (b === 'Not set') || a.localeCompare(b);
-
-  /* ---------- list, grouped by area with a service filter ---------- */
+  /* ---------- list, with a search and a service filter ---------- */
 
   function clientRow(c) {
-    return h('li', {}, h('a', { class: 'p-row', href: `#c${c.id}` },
-      h('span', { class: 'p-main' },
-        h('span', { class: 'row-title' }, c.name),
-        h('span', { class: 'row-sub' }, [c.contact_name, c.phone].filter(Boolean).join(' · '))),
-      h('span', { class: 'row-value' }, plural(c.project_count, 'project', 'projects'))));
-  }
-
-  function areaBlock(area, clients, expand) {
-    return h('details', { class: 'area-block', open: expand || undefined },
-      h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(clients.length, 'client', 'clients'))),
-      h('ul', { class: 'rows' }, clients.map(clientRow)));
-  }
-
-  function cityBox(city, areas, total, expand) {
-    return h('details', { class: 'city-box', open: expand || undefined },
-      h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'client', 'clients'))),
-      h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area], expand))));
+    return h('li', {}, h('a', { class: 'client-row', href: `#c${c.id}` },
+      h('span', { class: 'client-row-name' }, c.name),
+      h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))));
   }
 
   async function showList() {
@@ -74,21 +66,7 @@
           : 'No clients yet. A client appears here automatically once a lead is won.'));
         return;
       }
-      const byCity = {};
-      for (const c of items) {
-        const city = c.district || 'Not set';
-        const area = c.city || 'Not set';
-        if (!byCity[city]) byCity[city] = {};
-        if (!byCity[city][area]) byCity[city][area] = [];
-        byCity[city][area].push(c);
-      }
-      const cities = Object.keys(byCity).sort(sortUnknownLast);
-      const expand = !!(filter.q.trim() || filter.service);       // don't leave a match hidden inside a closed box
-      results.append(...cities.map((city) => {
-        const areas = byCity[city];
-        const total = Object.values(areas).reduce((n, list) => n + list.length, 0);
-        return cityBox(city, areas, total, expand);
-      }));
+      results.append(h('ul', { class: 'client-list' }, items.map(clientRow)));
     }
 
     clear(view).append(h('div', {},
@@ -97,19 +75,92 @@
     refresh();
   }
 
-  /* ---------- one client: edit details, see its projects and their estimates ---------- */
+  /* ---------- one client: how the relationship stands, then their projects ---------- */
 
-  async function showDetail(id) {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /* "2 yrs 3 mos", "5 months", "12 days" - how long ago `since` was, in the largest units that read well. */
+  function durationSince(since) {
+    const now = new Date();
+    let months = (now.getFullYear() - since.getFullYear()) * 12 + (now.getMonth() - since.getMonth());
+    if (now.getDate() < since.getDate()) months -= 1;
+    if (months < 1) {
+      const days = Math.max(0, Math.floor((now - since) / 86400000));
+      return days === 0 ? 'Today' : plural(days, 'day', 'days');
+    }
+    if (months < 12) return plural(months, 'month', 'months');
+    const years = Math.floor(months / 12);
+    const rest = months % 12;
+    return rest ? `${plural(years, 'yr', 'yrs')} ${plural(rest, 'mo', 'mos')}` : plural(years, 'year', 'years');
+  }
+
+  async function showDetail(id, editing) {
     clear(view).append(h('p', { class: 'loading' }, 'Loading client…'));
     try {
       const data = await api(`/api/clients/${id}`);
-      renderForm(data.client, data.projects, data.site_categories, data.currency);
+      if (editing) renderForm(data.client, data.site_categories);
+      else renderSummary(data.client, data.projects, data.currency);
     } catch (err) {
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to clients')));
     }
+    window.scrollTo(0, 0);
   }
 
-  function renderForm(client, projects, categories, currency) {
+  function renderSummary(client, projects, currency) {
+    const since = new Date(client.created_at);
+    const sinceText = `Since ${since.getDate()} ${MONTHS[since.getMonth()]} ${since.getFullYear()}`;
+
+    // What the work is worth: each project's estimate less its discount (net). Projects with no estimate
+    // yet are counted separately so the total isn't read as covering them.
+    const priced = projects.filter((p) => p.net_amount != null);
+    const total = priced.reduce((sum, p) => sum + p.net_amount, 0);
+    const unpriced = projects.length - priced.length;
+    const valueNote = [plural(projects.length, 'project', 'projects'), unpriced ? `${unpriced} without an amount yet` : null]
+      .filter(Boolean).join(' · ');
+
+    const counts = {};
+    projects.forEach((p) => { counts[p.status] = (counts[p.status] || 0) + 1; });
+    const statusLine = Object.keys(STATUS).filter((s) => counts[s])
+      .map((s) => h('span', { class: `chip chip-p-${STATUS[s][1]}` }, `${counts[s]} ${STATUS[s][0].toLowerCase()}`));
+
+    const contact = [client.contact_name, client.phone].filter(Boolean).join(' · ');
+
+    function projectRow(p) {
+      const title = `${p.code} · ${p.title}`;
+      return h('li', { class: 'client-project' },
+        h('span', { class: 'client-project-main' },
+          canOpenProjects ? h('a', { href: `/projects#p${p.id}` }, title) : h('span', { class: 'client-project-title' }, title),
+          h('span', { class: 'client-project-meta' }, statusChip(p.status), p.services.length ? h('span', {}, p.services.join(', ')) : null)),
+        h('span', { class: 'row-value' }, p.net_amount != null ? money(p.net_amount, currency) : '—'));
+    }
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('a', { class: 'back-link', href: '#' }, '← Clients & Projects'),
+      h('div', { class: 'client-head' },
+        h('div', {},
+          h('h2', {}, client.name),
+          contact ? h('p', { class: 'hint' }, contact) : null),
+        h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details')),
+      h('div', { class: 'client-stats' },
+        h('div', { class: 'stat' },
+          h('span', { class: 'stat-label' }, 'Client for'),
+          h('span', { class: 'stat-value is-text' }, durationSince(since)),
+          h('span', { class: 'stat-note' }, sinceText)),
+        h('div', { class: 'stat' },
+          h('span', { class: 'stat-label' }, 'Total value'),
+          h('span', { class: 'stat-value' }, priced.length ? money(total, currency) : '—'),
+          h('span', { class: 'stat-note' }, valueNote))),
+      statusLine.length ? h('div', { class: 'client-status-line' }, statusLine) : null,
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Projects'),
+        projects.length
+          ? h('ul', { class: 'client-projects' }, projects.map(projectRow))
+          : h('p', { class: 'hint' }, 'No projects for this client yet.'))));
+  }
+
+  /* ---------- one client: edit contact and site details ---------- */
+
+  function renderForm(client, categories) {
     const C = client;
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
     const area = (rows, value) => { const t = h('textarea', { rows }); t.value = value ?? ''; return t; };
@@ -148,7 +199,7 @@
         try {
           const saved = await api(`/api/clients/${client.id}`, { method: 'PATCH', body });
           toast('Client saved');
-          renderForm(saved.client, saved.projects, categories, currency);
+          window.location.hash = `#c${saved.client.id}`;
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
@@ -171,33 +222,16 @@
         field('notes', 'Notes', controls.notes, { wide: true })),
       h('div', { class: 'form-actions' }, saveBtn));
 
-    function projectRow(p) {
-      const meta = [STATUS_LABEL[p.status] || p.status, p.services.join(', '), p.estimated_amount != null ? money(p.estimated_amount, currency) : null]
-        .filter(Boolean).join(' · ');
-      return h('li', {},
-        canOpenProjects ? h('a', { href: `/projects#p${p.id}` }, `${p.code} · ${p.title}`) : h('span', {}, `${p.code} · ${p.title}`),
-        h('span', { class: 'p-code' }, meta));
-    }
-
-    const projectList = h('section', { class: 'p-section' },
-      h('div', { class: 'p-section-head' },
-        h('h3', {}, 'Projects'),
-        C.total_estimated_value != null ? h('span', { class: 'p-code' }, `Total ${money(C.total_estimated_value, currency)}`) : null),
-      projects.length
-        ? h('ul', { class: 'client-projects' }, projects.map(projectRow))
-        : h('p', { class: 'hint' }, 'No projects for this client yet.'));
-
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: '#' }, '← Clients & Projects'),
-      h('div', { class: 'p-head' }, h('h2', {}, client.name)),
-      form, projectList));
-    window.scrollTo(0, 0);
+      h('a', { class: 'back-link', href: `#c${client.id}` }, `← ${client.name}`),
+      h('div', { class: 'p-head' }, h('h2', {}, 'Edit details')),
+      form));
   }
 
   function route() {
     const hash = window.location.hash;
-    const m = /^#c(\d+)$/.exec(hash);
-    if (m) return showDetail(Number(m[1]));
+    const m = /^#c(\d+)(\/edit)?$/.exec(hash);
+    if (m) return showDetail(Number(m[1]), !!m[2]);
     return showList();
   }
 

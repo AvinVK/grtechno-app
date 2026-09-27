@@ -11,11 +11,6 @@
     return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
   }
 
-  function fmtDate(iso) {
-    const [y, m, d] = iso.split('-');
-    return new Date(Date.UTC(+y, m - 1, +d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-  }
-
   const today = () => new Date().toISOString().slice(0, 10);
 
   /* Approximate centre of each district we do work in, so a check-in location can be matched to "which
@@ -171,22 +166,152 @@
     return link;
   }
 
-  function historyRow(a, onDeleted) {
-    const times = a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`;
-    return h('li', { class: 'att-row' },
-      h('span', { class: 'att-main' },
-        h('span', { class: 'row-title' }, fmtDate(a.work_date)),
-        h('span', { class: 'row-sub' }, [a.project_title, times].filter(Boolean).join(' · ')),
-        mapLink(a), onDeleted ? deleteLink(a, onDeleted) : null),
-      h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''));
+  /* ---------- dates and hours ---------- */
+
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const parseDay = (iso) => { const [y, m, d] = iso.split('-'); return new Date(+y, m - 1, +d); };
+  const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const mondayOf = (d) => addDays(d, -((d.getDay() + 6) % 7));
+  const dayMonth = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const shortDate = (d) => `${WEEKDAYS[d.getDay()]}, ${dayMonth(d)}`;               // "Sun, 27 Sep"
+  const roundHours = (n) => Math.round(n * 10) / 10;
+
+  function elapsedSince(iso) {
+    const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+    return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
+  }
+
+  /* The average time of day this person has checked out, over whatever history we have - a rough "you
+     usually leave around" guide, not a target. null when nothing in the history has a check-out yet. */
+  function usualFinish(history) {
+    const outs = history.filter((a) => a.check_out_at).map((a) => new Date(a.check_out_at));
+    if (!outs.length) return null;
+    const avg = Math.round(outs.reduce((sum, d) => sum + d.getHours() * 60 + d.getMinutes(), 0) / outs.length);
+    const at = new Date();
+    at.setHours(Math.floor(avg / 60), avg % 60, 0, 0);
+    return at.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function timesText(a) {
+    return a.check_out_at
+      ? h('span', { class: 'att-num' }, `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}`)
+      : [h('span', { class: 'att-num' }, fmtTime(a.check_in_at)), ' – still checked in'];
+  }
+
+  /* 4px bar filled to hours/9 (a full day plus lunch), green once it reaches 8 h, amber when shorter. */
+  function hoursBar(hours) {
+    if (hours == null) return null;
+    const fill = h('i', { class: hours >= 8 ? 'full' : null });
+    fill.style.width = `${Math.min(100, (hours / 9) * 100)}%`;
+    return h('div', { class: 'att-bar', 'aria-hidden': 'true' }, fill);
+  }
+
+  /* One day (or, on the Team screen, one person) as a row inside a white card. */
+  function dayRow({ title, right, sub, hours, links }) {
+    const shownLinks = (links || []).filter(Boolean);
+    return h('li', { class: 'att-day' },
+      h('div', { class: 'att-day-top' }, h('span', { class: 'att-day-date' }, title), right),
+      sub ? h('span', { class: 'att-day-sub' }, sub) : null,
+      hoursBar(hours),
+      shownLinks.length ? h('div', { class: 'att-day-links' }, shownLinks) : null);
+  }
+
+  function recordRow(title, a, onDeleted) {
+    return dayRow({
+      title,
+      right: h('span', { class: 'att-day-hours' }, a.hours != null ? `${a.hours} h` : ''),
+      sub: a.project_title ? [a.project_title, ' · ', timesText(a)] : timesText(a),
+      hours: a.hours,
+      links: [mapLink(a), onDeleted ? deleteLink(a, onDeleted) : null],
+    });
+  }
+
+  /* History grouped into Mon–Sun weeks, newest first. A past Mon–Sat with no record, inside the span the
+     history covers, is marked Absent; Sundays and today (still time to check in) never are. */
+  function historyWeeks(history, onDeleted) {
+    if (!history.length) return [h('p', { class: 'empty-state att-history-empty' }, 'No attendance recorded yet.')];
+    const byDay = new Map(history.map((a) => [a.work_date, a]));
+    const todayDate = parseDay(dayKey(new Date()));
+    const firstDay = parseDay(history.reduce((min, a) => (a.work_date < min ? a.work_date : min), history[0].work_date));
+    const thisMonday = mondayOf(todayDate);
+    const weeks = [];
+
+    for (let monday = thisMonday; monday >= mondayOf(firstDay); monday = addDays(monday, -7)) {
+      const rows = [];
+      let worked = 0;
+      let absent = 0;
+      let total = 0;
+      for (let i = 6; i >= 0; i -= 1) {
+        const day = addDays(monday, i);
+        if (day < firstDay || day > todayDate) continue;
+        const a = byDay.get(dayKey(day));
+        if (a) {
+          worked += 1;
+          total += a.hours || 0;
+          rows.push(recordRow(shortDate(day), a, onDeleted));
+        } else if (day < todayDate && day.getDay() !== 0) {
+          absent += 1;
+          rows.push(dayRow({ title: shortDate(day), right: h('span', { class: 'chip chip-absent' }, 'Absent') }));
+        }
+      }
+      if (!rows.length) continue;
+      const label = +monday === +thisMonday ? 'This week'
+        : +monday === +addDays(thisMonday, -7) ? 'Last week'
+          : `${dayMonth(monday)} – ${dayMonth(addDays(monday, 6))}`;
+      weeks.push(h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' },
+          h('h3', {}, label),
+          h('span', { class: 'att-week-sum' }, `${roundHours(total)} h · ${worked} of ${worked + absent} days`)),
+        h('ul', { class: 'att-week-card' }, rows)));
+    }
+    return weeks;
+  }
+
+  /* ---------- today's timeline ---------- */
+
+  // The same check the bottom nav's "Won / Lost" item draws.
+  const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+  /* state: 'done' (green check), 'current' (hollow ring), 'active' (tinted ring) or 'pending' (grey dot). */
+  function marker(state) {
+    let mark;
+    if (state === 'done') { mark = h('i', { class: 'check' }); mark.innerHTML = CHECK_SVG; }
+    else if (state === 'current') mark = h('i', { class: 'ring' });
+    else if (state === 'active') mark = h('i', { class: 'ring filled' });
+    else mark = h('i', { class: 'dot' });
+    return h('span', { class: 'att-marker' }, mark);
+  }
+
+  function step(state, label, right, ...body) {
+    return h('li', { class: `att-step ${state === 'done' || state === 'pending' ? state : 'current'}` },
+      marker(state),
+      h('div', { class: 'att-step-body' },
+        h('div', { class: 'att-step-top' }, h('span', { class: 'att-step-label' }, label), right),
+        body));
+  }
+
+  let elapsedTimer = null;
+  const stopElapsedTimer = () => { clearInterval(elapsedTimer); elapsedTimer = null; };
+
+  /* The Team link lives in the top bar, outside #view, so it is added and removed by hand. */
+  function setTeamLink(show) {
+    const existing = document.getElementById('att-team-link');
+    if (existing) existing.remove();
+    const actions = document.querySelector('.topbar .top-actions');
+    if (show && actions) actions.append(h('a', { id: 'att-team-link', class: 'att-team-link', href: '#team' }, 'Team'));
   }
 
   /* ---------- my attendance ---------- */
 
   async function showMine() {
+    stopElapsedTimer();
     clear(view).append(h('p', { class: 'loading' }, 'Loading attendance…'));
     let data;
     try { data = await api('/api/attendance/state'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    setTeamLink(data.can_see_team);
 
     let selectedProjectId = '';
     let cachedLocation = null;                                 // reused so check-in doesn't ask a second time
@@ -194,9 +319,16 @@
       const p = id && data.projects.find((pr) => String(pr.id) === String(id));
       return p ? `${p.client_name} – ${p.title}` : 'No project (office work)';
     };
+    const districtHint = h('p', { class: 'att-step-note', hidden: true });
+    const showDistrict = () => {
+      const district = nearestDistrict(cachedLocation);
+      districtHint.textContent = district ? `Showing projects near ${district}` : '';
+      districtHint.hidden = !district;
+    };
     const projectBtn = h('button', { type: 'button', id: 'att-project', class: 'field-picker' }, projectLabel(''));
     projectBtn.onclick = async () => {
       if (!cachedLocation && (await explainLocationIsRequired())) cachedLocation = await getLocation();
+      showDistrict();
       const chosen = await pickProject(data.projects, selectedProjectId, nearestDistrict(cachedLocation));
       if (chosen === undefined) return;                        // closed without choosing
       selectedProjectId = chosen;
@@ -204,12 +336,11 @@
     };
 
     const cardBox = h('div', {});
-    const historyList = h('ul', { class: 'rows att-history' });
+    const historyBox = h('div', {});
+    const barBox = h('div', {});
 
     function renderHistory() {
-      clear(historyList).append(...(data.history.length
-        ? data.history.map((a) => historyRow(a, data.can_see_team ? reload : null))
-        : [h('li', { class: 'empty-state' }, 'No attendance recorded yet.')]));
+      clear(historyBox).append(...historyWeeks(data.history, data.can_see_team ? reload : null));
     }
 
     /* Check-in and check-out both change today's row and add (or change) it in the history right below it,
@@ -224,9 +355,19 @@
       }
     }
 
+    /* The sticky bottom bar; the body gets extra bottom padding while it is up so nothing hides behind it. */
+    function actionBar(...kids) {
+      document.body.classList.add('has-att-bar');
+      return h('div', { class: 'att-actionbar' }, h('div', { class: 'att-actionbar-inner' }, kids));
+    }
+
     function renderCard() {
-      let card;
-      if (!data.today) {
+      stopElapsedTimer();
+      document.body.classList.remove('has-att-bar');
+      const t = data.today;
+      let steps;
+      let bar = null;
+      if (!t) {
         const errBox = h('p', { class: 'err', role: 'alert' });
         const checkInBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check in');
         checkInBtn.onclick = async () => {
@@ -237,6 +378,7 @@
             checkInBtn.disabled = true;
             checkInBtn.textContent = 'Getting your location…';
             cachedLocation = await getLocation();
+            showDistrict();
           }
           const location = cachedLocation;
           if (!location) {
@@ -261,54 +403,78 @@
             checkInBtn.textContent = 'Check in';
           }
         };
-        card = h('div', { class: 'att-card' },
-          h('h3', {}, "You haven't checked in today"),
-          h('label', { for: 'att-project' }, 'Working on'),
-          projectBtn, errBox, checkInBtn,
-          h('p', { class: 'hint' }, 'Location is required to check in.'));
-      } else if (!data.today.check_out_at) {
-        const checkOutBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check out');
-        checkOutBtn.onclick = async () => {
-          checkOutBtn.disabled = true;
-          try {
-            await api('/api/attendance/check-out', { method: 'POST' });
-            toast('Checked out');
-            await reload();
-          } catch (err) {
-            toast(err.message, true);
-            checkOutBtn.disabled = false;
-          }
-        };
-        card = h('div', { class: 'att-card' },
-          h('h3', {}, 'Checked in'),
-          h('p', { class: 'hint' }, [data.today.project_title, `since ${fmtTime(data.today.check_in_at)}`].filter(Boolean).join(' · ')),
-          mapLink(data.today), data.can_see_team ? deleteLink(data.today, reload) : null,
-          checkOutBtn);
+        steps = [
+          step('current', 'Check in', null,
+            h('label', { for: 'att-project', class: 'att-step-sub' }, 'Working on'), projectBtn, districtHint),
+          step('pending', 'Working', null),
+          step('pending', 'Check out', null),
+        ];
+        bar = actionBar(errBox, checkInBtn, h('p', { class: 'att-caption' }, 'Uses your location once'));
       } else {
-        card = h('div', { class: 'att-card' },
-          h('h3', {}, 'Done for today'),
-          h('p', { class: 'hint' }, [data.today.project_title, `${fmtTime(data.today.check_in_at)} – ${fmtTime(data.today.check_out_at)}`, `${data.today.hours} h`].filter(Boolean).join(' · ')),
-          mapLink(data.today), data.can_see_team ? deleteLink(data.today, reload) : null);
+        const links = [mapLink(t), data.can_see_team ? deleteLink(t, reload) : null].filter(Boolean);
+        const checkedIn = step('done', 'Checked in', h('span', { class: 'att-step-time' }, fmtTime(t.check_in_at)),
+          h('span', { class: 'att-step-sub' }, t.project_title || 'No project (office work)'),
+          links.length ? h('div', { class: 'att-day-links' }, links) : null);
+
+        if (!t.check_out_at) {
+          // TODO: "Switch project" mid-day - needs a new endpoint that changes today's project_id.
+          const elapsed = h('span', { class: 'att-elapsed' }, elapsedSince(t.check_in_at));
+          elapsedTimer = setInterval(() => { elapsed.textContent = elapsedSince(t.check_in_at); }, 30000);
+          const finish = usualFinish(data.history);
+          steps = [
+            checkedIn,
+            step('active', 'Working', elapsed, finish ? h('span', { class: 'att-step-note' }, 'Usual finish around ', h('span', { class: 'att-num' }, finish)) : null),
+            step('pending', 'Check out', null),
+          ];
+
+          const checkOutBtn = h('button', { class: 'btn ink', type: 'button' }, 'Check out');
+          checkOutBtn.onclick = async () => {
+            checkOutBtn.disabled = true;
+            try {
+              await api('/api/attendance/check-out', { method: 'POST' });
+              toast('Checked out');
+              await reload();
+            } catch (err) {
+              toast(err.message, true);
+              checkOutBtn.disabled = false;
+            }
+          };
+          bar = actionBar(checkOutBtn);
+        } else {
+          steps = [
+            checkedIn,
+            step('done', 'Working', null),
+            step('done', 'Checked out', h('span', { class: 'att-step-time' }, fmtTime(t.check_out_at)),
+              h('span', { class: 'att-step-sub' }, h('span', { class: 'att-num' }, `${t.hours} h`), ' total')),
+          ];
+        }
       }
-      clear(cardBox).append(card);
+      clear(cardBox).append(h('div', { class: 'att-today' }, h('ol', { class: 'att-steps' }, steps)));
+      clear(barBox);
+      if (bar) barBox.append(bar);
     }
     renderCard();
     renderHistory();
 
     clear(view).append(h('div', {},
-      h('div', { class: 'list-head' }, h('h2', {}, 'Attendance')),
+      h('div', { class: 'att-head' },
+        h('h2', {}, 'Today'),
+        h('span', { class: 'att-head-date' }, shortDate(new Date()))),
       cardBox,
-      h('h3', { class: 'att-sub-head' }, 'Your history'),
-      historyList));
+      historyBox,
+      barBox));
   }
 
   /* ---------- team register (admin, accounts) ---------- */
 
   async function showTeam() {
+    stopElapsedTimer();
+    setTeamLink(false);
+    document.body.classList.remove('has-att-bar');
     clear(view).append(h('p', { class: 'loading' }, 'Loading team attendance…'));
     const dateInput = dateField(today(), { clearable: false });
     dateInput.setAttribute('aria-label', 'Date');
-    const list = h('ul', { class: 'rows att-history' });
+    const list = h('ul', { class: 'att-week-card att-team-list' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
 
     async function refresh() {
@@ -318,12 +484,7 @@
         count.textContent = plural(data.records.length, 'person', 'people') + ' checked in';
         clear(list);
         if (!data.records.length) { list.append(h('li', { class: 'empty-state' }, 'Nobody checked in on this day.')); return; }
-        data.records.forEach((a) => list.append(h('li', { class: 'att-row' },
-          h('span', { class: 'att-main' },
-            h('span', { class: 'row-title' }, a.user_name),
-            h('span', { class: 'row-sub' }, [a.project_title, a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in`].filter(Boolean).join(' · ')),
-            mapLink(a), deleteLink(a, refresh)),
-          h('span', { class: 'row-value' }, a.hours != null ? `${a.hours} h` : ''))));
+        data.records.forEach((a) => list.append(recordRow(a.user_name, a, refresh)));
       } catch (err) {
         clear(list).append(h('li', { class: 'empty-state' }, err.message));
       }

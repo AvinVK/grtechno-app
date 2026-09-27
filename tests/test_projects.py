@@ -201,6 +201,7 @@ def test_clients_list_and_edit(client, admin_client, manager_client, manager, ac
 
     detail = manager_client.get(f"/api/clients/{cid}").get_json()
     assert detail["projects"][0]["code"] == "PRJ-0001"
+    assert detail["client"]["created_at"].endswith("Z")                                      # "Client for ..." on the summary
     edited = manager_client.patch(f"/api/clients/{cid}", json={"phone": "9811111111", "notes": "Pays on time"})
     assert edited.status_code == 200 and edited.get_json()["client"]["phone"] == "9811111111"
 

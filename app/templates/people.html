@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1" data-mode="{{ mode }}"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/people.js') }}" defer></script>
+{% endblock %}

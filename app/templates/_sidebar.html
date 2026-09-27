@@ -15,7 +15,7 @@
   <nav class="sb-nav" aria-label="Services">
     <p class="sb-label">Services</p>
     {% for m in nav_modules if m.key != 'projects' %}
-    <a class="sb-link" href="{{ m.path }}"{% if current_module and current_module.key == m.key %} aria-current="page"{% endif %}>{{ icon(m.icon) }}<span>{{ 'Clients & Projects' if m.key == 'clients' else m.name }}</span></a>
+    <a class="sb-link" href="{{ m.path }}"{% if current_module and current_module.key == m.key %} aria-current="page"{% endif %}>{{ icon(m.icon) }}<span>{{ 'Clients & Projects' if m.key == 'clients' else 'Your attendance' if m.key == 'attendance' else m.name }}</span></a>
     {% else %}
     <p class="sb-empty">No services are turned on yet.</p>
     {% endfor %}
@@ -23,8 +23,8 @@
     {% if current_user.is_admin %}
     <p class="sb-label">Manage</p>
     <a class="sb-link" href="{{ url_for('users_page.page') }}"{% if request.endpoint == 'users_page.page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Users &amp; roles</span></a>
-    <a class="sb-link" href="{{ url_for('workers_page.page') }}"{% if request.endpoint == 'workers_page.page' %} aria-current="page"{% endif %}>{{ icon('manpower') }}<span>Manpower list</span></a>
-    <a class="sb-link" href="{{ url_for('staff_page.staff_page') }}"{% if request.endpoint == 'staff_page.staff_page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Staff list</span></a>
+    <a class="sb-link" href="{{ url_for('workers_page.workforce_page') }}"{% if request.endpoint == 'workers_page.workforce_page' %} aria-current="page"{% endif %}>{{ icon('manpower') }}<span>Manpower &amp; staff</span></a>
+    <a class="sb-link" href="{{ url_for('workers_page.sheet_page') }}"{% if request.endpoint == 'workers_page.sheet_page' %} aria-current="page"{% endif %}>{{ icon('attendance') }}<span>Attendance sheet</span></a>
     {% endif %}
   </nav>
 

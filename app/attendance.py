@@ -50,7 +50,7 @@ def _coord(payload, name, low, high, errors):
 
 @bp.get("/attendance")
 def page():
-    return render_template("attendance.html")
+    return render_template("attendance.html", heading="Your attendance")
 
 
 @bp.get("/api/attendance/state")

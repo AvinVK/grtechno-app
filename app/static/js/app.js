@@ -510,7 +510,7 @@
       h('div', { class: 'field wide' },
         wrapField('follow_up_date', 'Follow-up date', dateInput, '', true),
         quick),
-      wrapField('notes', 'Notes', area(4, L.notes), 'wide', true),
+      wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
     ];
 
     const stageField = lead
@@ -744,7 +744,7 @@
       const isNew = !lead;
       if (isNew) body.stage = S.open_stages[0];
       try {
-        // Every field is required except email - on Add lead and when editing - checked here, in-app,
+        // Every field is required except email and notes - on Add lead and when editing - checked here, in-app,
         // rather than leaning on the browser's own native "required" popups, which would look and behave
         // unlike the rest of this form's validation.
         {
@@ -754,7 +754,7 @@
             if (!body.contact_name.trim()) missing.contact_name = 'This field is required';
           }
           ['phone', 'site_category', 'site_pincode', 'site_state', 'site_district', 'site_city',
-            'site_address', 'source', 'notes'].forEach((name) => {
+            'site_address', 'source'].forEach((name) => {
             if (!body[name].trim()) missing[name] = 'This field is required';
           });
           if (!body.service_ids.length) missing.service_ids = 'Choose at least one service';

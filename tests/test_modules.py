@@ -42,7 +42,7 @@ def test_menu_needs_sign_in(anon):
 def test_page_has_the_menu_button_and_panel(client, user):
     html = client.get("/").get_data(as_text=True)
     assert 'id="menu-btn"' in html and 'aria-expanded="false"' in html
-    assert 'id="sidebar"' in html and "Attendance" in html and "Sign out" in html
+    assert 'id="sidebar"' in html and "Your attendance" in html and "Sign out" in html
     assert user.userid in html                                                   # who is signed in
     assert 'href="/attendance"' in html
     # the service you are on is marked

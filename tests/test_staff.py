@@ -21,7 +21,7 @@ def test_staff_page_and_api_are_admin_only(client, manager_client, accounts_clie
     for who in (client, manager_client, accounts_client):
         assert who.get("/staff").status_code == 403
         assert who.get("/api/staff").status_code == 403
-    assert admin_client.get("/staff").status_code == 200
+    assert admin_client.get("/staff").status_code == 302                      # folded into Manpower & staff
     assert admin_client.get("/api/staff").status_code == 200
 
 
@@ -30,16 +30,8 @@ def test_staff_needs_sign_in(anon):
     assert anon.get("/api/staff").status_code == 401
 
 
-def test_staff_page_is_titled_and_not_part_of_leads(admin_client):
-    html = admin_client.get("/staff").get_data(as_text=True)
-    assert "staff.js" in html
-    assert '>Staff list</a>' in html
-    assert "app.js" not in html and "bottom-nav" not in html
-
-
-def test_staff_list_is_only_in_the_admin_menu(client, admin_client):
-    assert "Staff list" not in client.get("/").get_data(as_text=True)
-    assert "Staff list" in admin_client.get("/").get_data(as_text=True)
+def test_the_old_staff_page_lands_on_manpower_and_staff(admin_client):
+    assert admin_client.get("/staff").headers["Location"].endswith("/workforce#staff")
 
 
 # ---------- listing and detail ----------
