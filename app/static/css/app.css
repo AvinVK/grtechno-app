@@ -248,7 +248,7 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.3fr) 130px 110px 120px 110px;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) 130px 190px 120px 110px;
   align-items: center;
   gap: 4px 16px;
   width: 100%;
@@ -266,7 +266,7 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .row-head {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.3fr) 130px 110px 120px 110px;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) 130px 190px 120px 110px;
   gap: 4px 16px;
   max-width: 1100px;
   margin: 0 auto;
@@ -285,7 +285,14 @@ a.stat:hover { border-color: var(--line-strong); }
 .row-main > span { display: block; }
 .row-title { font: 600 16px/1.2 var(--font-display); overflow-wrap: anywhere; }
 .row-sub, .row-service { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
-.row-value { font: 600 15px/1 var(--font-display); text-align: right; }
+.row-value {
+  font: 600 15px/1 var(--font-display);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-round { font: 400 12px/1 var(--font-body); color: var(--muted); margin-left: 6px; }
 .row-created { color: var(--muted); font-size: 13px; text-align: right; }
 
 .stage-tag {
@@ -837,7 +844,8 @@ a.p-client-name { color: var(--accent-dark); }
   .row > .row-main { grid-area: main; }
   .row-service { grid-area: service; }
   .row-stage { grid-area: stage; }
-  .row-value { grid-area: value; }
+  .row-value { grid-area: value; white-space: normal; overflow: visible; text-overflow: clip; }
+  .row-round { display: block; margin-left: 0; }
   .row-chip { grid-area: chip; justify-self: end; }
   .row-created { grid-area: created; text-align: left; }
 }

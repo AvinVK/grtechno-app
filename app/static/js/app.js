@@ -318,7 +318,7 @@
     // row's pieces instead, where a header naming six "columns" wouldn't line up with anything.
     const rowHead = h('div', { class: 'row-head', 'aria-hidden': 'true' },
       h('span', {}, 'Lead'), h('span', {}, 'Service'), h('span', {}, 'Stage'),
-      h('span', {}, 'Value'), h('span', {}, 'Follow-up'), isActive ? h('span', {}, 'Added') : null);
+      h('span', {}, 'Value / round'), h('span', {}, 'Follow-up'), isActive ? h('span', {}, 'Added') : null);
 
     wrap.append(h('div', { class: 'filters' }, search, chips, filterButton), count, rowHead, list);
     if (!isActive) {
@@ -331,13 +331,21 @@
 
   function leadRow(l, showCreated) {
     const sub = [subtitle(l), S.me.is_admin && l.owner_name ? `Owner: ${l.owner_name}` : ''].filter(Boolean).join(' · ');
+    // The latest negotiation round's own figure is shown right next to the original estimate - not
+    // below it - so a lead being negotiated down (or up) is visible without opening it, in the same
+    // single-line cell rather than growing the row onto a second line.
+    const rounds = l.negotiations || [];
+    const lastRound = rounds.length ? rounds[rounds.length - 1] : null;
+    const roundText = lastRound && lastRound.estimate != null ? `R${lastRound.round_no} ${fmtMoney(lastRound.estimate)}` : null;
     return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
       h('span', { class: 'row-main' },
         h('span', { class: 'row-title' }, title(l)),
         sub ? h('span', { class: 'row-sub' }, sub) : null),
       h('span', { class: 'row-service' }, serviceLabel(l)),
       h('span', { class: 'row-stage stage-tag', 'data-stage': l.stage }, l.stage),
-      h('span', { class: 'row-value' }, l.est_value !== null ? fmtMoney(l.est_value) : ''),
+      h('span', { class: 'row-value' },
+        l.est_value !== null ? fmtMoney(l.est_value) : '',
+        roundText ? h('span', { class: 'row-round' }, roundText) : null),
       h('span', { class: 'row-chip' }, followChip(l)),
       showCreated ? h('span', { class: 'row-created' }, fmtDateTime(l.created_at)) : null,
     );
