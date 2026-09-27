@@ -8,6 +8,7 @@ from werkzeug.exceptions import abort
 from .auth import visible_clients, visible_projects
 from .extensions import db
 from .models import Client, Project, settings_for_client
+from .projects import brought_by
 from .modules import check_module
 from .validation import Fields, api_errors
 
@@ -82,9 +83,12 @@ def list_clients():
 def get_client(client_id):
     client = _client_or_404(client_id)
     settings = settings_for_client()
+    # Who brought the client in: whoever brought their first project from a lead, else whoever added them.
+    first_from_lead = min((p for p in client.projects if p.lead is not None), key=lambda p: p.id, default=None)
     return jsonify(
         client=client.to_dict(), projects=_project_rows(client),
         site_categories=settings["site_categories"], currency=settings["currency"],
+        brought_by=brought_by(first_from_lead.lead if first_from_lead else None, client.owner),
     )
 
 

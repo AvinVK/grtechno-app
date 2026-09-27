@@ -1,8 +1,10 @@
-/* Projects: a list, and one screen per project for the work order, amounts, terms and payment schedule. */
+/* Projects: a list, and one screen per project - a dashboard (how long it has been running, who brought it,
+   who has worked on it, and Close project for the admin), with the work order, amounts, terms and payment
+   schedule one tap further, behind Edit details. */
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, selectField, dateField } = window.LD;
+  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, selectField, dateField, confirm } = window.LD;
 
   const STATUS = {
     planned: ['Planned', 'planned'],
@@ -124,7 +126,7 @@
             work_category: category.value, status: statusSel.value,
           } });
           toast('Project added');
-          window.location.hash = `#p${saved.project.id}`;
+          window.location.hash = `#p${saved.project.id}/edit`;       // straight on to the work order and amounts
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
@@ -148,9 +150,137 @@
       form));
   }
 
-  /* ---------- one project ---------- */
+  /* ---------- one project: dashboard ---------- */
 
-  async function showDetail(id) {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const parseDay = (iso) => { const [y, m, d] = iso.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
+  const longDate = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  const shortDate = (d) => `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const startOfToday = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+
+  /* "2 yrs 3 mos", "5 months", "12 days" - the time from `from` to `to`, in the largest units that read well. */
+  function duration(from, to) {
+    let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
+    if (to.getDate() < from.getDate()) months -= 1;
+    if (months < 1) {
+      const days = Math.max(0, Math.round((to - from) / 86400000));
+      return days === 0 ? 'Under a day' : plural(days, 'day', 'days');
+    }
+    if (months < 12) return plural(months, 'month', 'months');
+    const years = Math.floor(months / 12);
+    const rest = months % 12;
+    return rest ? `${plural(years, 'yr', 'yrs')} ${plural(rest, 'mo', 'mos')}` : plural(years, 'year', 'years');
+  }
+
+  /* The first box: how long it has been running - or how long it ran, once closed; or, before it starts,
+     when it will. Counts from the start date when there is one, else from when the project was added. */
+  function timeTile(P, D) {
+    const today = startOfToday();
+    const started = parseDay(D.started);
+    const from = D.start_date_set ? `Since ${longDate(started)}` : `Since ${longDate(started)}, when it was added`;
+    let label;
+    let value;
+    let note;
+    if (P.status === 'completed') {
+      const closed = D.completed_at ? new Date(D.completed_at) : today;
+      label = 'Ran for';
+      value = duration(started, closed);
+      note = D.completed_at ? `${longDate(started)} – ${longDate(closed)}` : from;
+    } else if (started > today) {
+      label = 'Starts in';
+      value = duration(today, started);
+      note = `On ${longDate(started)}`;
+    } else if (P.status === 'planned') {
+      label = 'Waiting to start';
+      value = duration(started, today);
+      note = from;
+    } else {
+      label = P.status === 'on_hold' ? 'Running for (on hold)' : 'Running for';
+      value = duration(started, today);
+      note = from;
+    }
+    return h('div', { class: 'stat' },
+      h('span', { class: 'stat-label' }, label),
+      h('span', { class: 'stat-value is-text' }, value),
+      h('span', { class: 'stat-note' }, note));
+  }
+
+  function renderDashboard(data) {
+    const P = data.project;
+    const D = data.dashboard;
+    const c = data.client;
+    const cur = data.currency;
+
+    const valueNote = P.estimated_amount == null ? 'No estimate yet'
+      : P.discount_amount ? `${money(P.estimated_amount, cur)} less ${money(P.discount_amount, cur)} discount`
+        : 'Estimated amount';
+
+    const info = (label, value, sub) => h('div', { class: 'dash-info-row' },
+      h('span', { class: 'stat-label' }, label),
+      h('span', { class: 'dash-info-value' }, value),
+      sub ? h('span', { class: 'dash-info-sub' }, sub) : null);
+
+    const team = D.team.length
+      ? h('ul', { class: 'att-week-card' }, D.team.map((m) => h('li', { class: 'att-day' },
+        h('div', { class: 'att-day-top' },
+          h('span', { class: 'att-day-date' }, m.name),
+          h('span', { class: 'dash-days' }, h('span', { class: 'att-num' }, m.days), m.days === 1 ? ' day' : ' days')),
+        h('span', { class: 'att-day-sub' }, `${m.kind} · last on ${shortDate(parseDay(m.last_day))}`))))
+      : h('p', { class: 'hint' }, 'No attendance has been recorded against this project yet.');
+
+    let closeArea = null;
+    if (P.status === 'completed') {
+      closeArea = h('p', { class: 'hint' }, D.completed_at ? `Closed on ${longDate(new Date(D.completed_at))}.` : 'This project is closed.');
+    } else if (D.can_close) {
+      const closeBtn = h('button', { class: 'btn danger dash-close', type: 'button' }, 'Close project');
+      closeBtn.onclick = async () => {
+        const sure = await confirm(`Close ${P.code}? It will be marked completed.`, { ok: 'Close project', danger: true, title: 'Close project' });
+        if (!sure) return;
+        closeBtn.disabled = true;
+        try {
+          const saved = await api(`/api/projects/${P.id}/close`, { method: 'POST' });
+          toast('Project closed');
+          renderDashboard(saved);
+        } catch (err) {
+          toast(err.message, true);
+          closeBtn.disabled = false;
+        }
+      };
+      closeArea = closeBtn;
+    }
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : h('a', { class: 'back-link', href: '#' }, '← Projects'),
+      h('div', { class: 'client-head' },
+        h('div', {},
+          h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
+          h('p', { class: 'hint' }, P.title)),
+        h('a', { class: 'btn small', href: `#p${P.id}/edit` }, 'Edit details')),
+      h('div', { class: 'client-stats' },
+        timeTile(P, D),
+        h('div', { class: 'stat' },
+          h('span', { class: 'stat-label' }, 'Value'),
+          h('span', { class: 'stat-value' }, P.net_amount != null ? money(P.net_amount, cur) : '—'),
+          h('span', { class: 'stat-note' }, valueNote))),
+      h('div', { class: 'dash-info' },
+        info('Brought by', D.brought_by ? D.brought_by.name : 'Not recorded', D.brought_by ? D.brought_by.how : null),
+        info('Project manager', P.manager_name || 'Not assigned'),
+        info('Client',
+          canOpenClients ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
+          [c.contact_name, c.phone].filter(Boolean).join(' · ') || null)),
+      h('section', { class: 'p-section' },
+        h('div', { class: 'p-section-head' },
+          h('h3', {}, 'Who has worked on it'),
+          D.team.length ? h('span', { class: 'p-code' }, plural(D.team.length, 'person', 'people')) : null),
+        team),
+      closeArea));
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- one project: edit details ---------- */
+
+  async function showDetail(id, editing) {
     clear(view).append(h('p', { class: 'loading' }, 'Loading project…'));
     let data;
     try { data = await api(`/api/projects/${id}`); }
@@ -158,7 +288,8 @@
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to projects')));
       return;
     }
-    renderDetail(data);
+    if (editing) renderDetail(data);
+    else renderDashboard(data);
   }
 
   function renderDetail(data) {
@@ -250,7 +381,7 @@
         try {
           const saved = await api(`/api/projects/${P.id}`, { method: 'PATCH', body });
           toast('Project saved');
-          renderDetail(saved);
+          window.location.hash = `#p${P.id}`;
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
@@ -303,9 +434,9 @@
     const site = [P.site_address, P.site_city, P.site_district, P.site_state].filter(Boolean).join(', ');
     const c = data.client;
     clear(view).append(h('div', { class: 'project-detail' },
-      canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : null,
+      h('a', { class: 'back-link', href: `#p${P.id}` }, `← ${P.code}`),
       h('div', { class: 'p-head' },
-        h('h2', {}, P.code), statusChip(P.status)),
+        h('h2', {}, 'Edit project'), statusChip(P.status)),
       h('section', { class: 'p-client' },
         h('div', {},
           h('span', { class: 'p-label' }, 'Client'),
@@ -318,8 +449,8 @@
   }
 
   function route() {
-    const m = /^#p(\d+)$/.exec(window.location.hash);
-    if (m) return showDetail(Number(m[1]));
+    const m = /^#p(\d+)(\/edit)?$/.exec(window.location.hash);
+    if (m) return showDetail(Number(m[1]), !!m[2]);
     return window.location.hash === '#new' ? showNew() : showList();
   }
 

@@ -11,7 +11,7 @@ from werkzeug.exceptions import abort
 
 from .auth import visible_clients, visible_projects
 from .extensions import db
-from .models import Activity, Client, Project, ProjectPayment, User, settings_for_client
+from .models import Activity, Attendance, Client, Project, ProjectPayment, User, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .validation import Fields, api_errors, parse_money
@@ -74,6 +74,37 @@ def create_project_from_lead(lead, user):
     db.session.flush()
     lead.activities.insert(0, Activity(kind="project", text=f"Project {project.code} created"))
     return project, reused
+
+
+def brought_by(lead, added_by=None):
+    """Who brought the work in: the staff member who took the enquiry ("Enquired by" on the lead), else
+    whoever entered the lead, else whoever added it by hand (added_by). None when nobody is recorded."""
+    if lead is not None and lead.enquired_by is not None:
+        return {"name": lead.enquired_by.name, "how": "Took the enquiry"}
+    if lead is not None and lead.owner is not None:
+        return {"name": lead.owner.name, "how": "Entered the lead"}
+    if added_by is not None:
+        return {"name": added_by.name, "how": "Added it"}
+    return None
+
+
+def _team(project):
+    """Everyone whose attendance was recorded against this project - app users checking in to it, and
+    manpower/staff whose WhatsApp attendance matched it - with how many days and their latest one, most
+    days first."""
+    people = {}
+
+    def add(key, name, kind, day):
+        row = people.setdefault(key, {"name": name, "kind": kind, "days": 0, "last_day": None})
+        row["days"] += 1
+        row["last_day"] = max(row["last_day"] or day, day)
+
+    for a in Attendance.query.filter_by(project_id=project.id):
+        add(("user", a.user_code), a.user.name, "App user", a.work_date)
+    for a in WorkerAttendance.query.filter_by(project_id=project.id, status="present"):
+        add(("worker", a.worker_id), a.worker.name, a.worker.category.capitalize(), a.work_date)
+    rows = sorted(people.values(), key=lambda r: (-r["days"], r["name"].lower()))
+    return [{**r, "last_day": r["last_day"].isoformat()} for r in rows]
 
 
 def _project_or_404(project_id: int) -> Project:
@@ -175,6 +206,15 @@ def _detail(project):
         "statuses": PROJECT_STATUSES,
         "currency": settings_for_client()["currency"],
         "can_assign_manager": can_assign,
+        "dashboard": {
+            # "Running for" counts from the start date when one is set, else from when the project was added.
+            "started": (project.start_date or project.created_at.date()).isoformat(),
+            "start_date_set": project.start_date is not None,
+            "completed_at": project.completed_at.isoformat() + "Z" if project.completed_at else None,
+            "brought_by": brought_by(project.lead, project.owner),
+            "team": _team(project),
+            "can_close": g.user.is_admin,
+        },
     }
     if can_assign:
         managers = User.query.filter_by(role_key="project_manager", is_active=True).order_by(User.name).all()
@@ -245,10 +285,29 @@ def update_project(project_id):
 
     for key, value in data.items():
         setattr(project, key, value)
+    if project.status == "completed" and project.completed_at is None:
+        project.completed_at = utcnow()
+    elif project.status != "completed":
+        project.completed_at = None
     if payments is not None:
         project.payments = [
             ProjectPayment(label=p["label"], amount=p["amount"], due_date=p["due_date"], position=i)
             for i, p in enumerate(payments, start=1)
         ]
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.post("/api/projects/<int:project_id>/close")
+def close_project(project_id):
+    """Close a project (mark it completed). Admin only - the project's own screen shows the button to the
+    admin alone, and this refuses everyone else too."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can close a project.")
+    project = _project_or_404(project_id)
+    if project.status == "completed":
+        return jsonify(error="This project is already closed."), 409
+    project.status = "completed"
+    project.completed_at = utcnow()
     db.session.commit()
     return jsonify(_detail(project))

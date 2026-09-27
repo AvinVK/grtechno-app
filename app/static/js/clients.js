@@ -128,14 +128,14 @@
     try {
       const data = await api(`/api/clients/${id}`);
       if (editing) renderForm(data.client, data.site_categories);
-      else renderSummary(data.client, data.projects, data.currency);
+      else renderSummary(data.client, data.projects, data.currency, data.brought_by);
     } catch (err) {
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to clients')));
     }
     window.scrollTo(0, 0);
   }
 
-  function renderSummary(client, projects, currency) {
+  function renderSummary(client, projects, currency, broughtBy) {
     const since = new Date(client.created_at);
     const sinceText = `Since ${since.getDate()} ${MONTHS[since.getMonth()]} ${since.getFullYear()}`;
 
@@ -168,7 +168,9 @@
       h('div', { class: 'client-head' },
         h('div', {},
           h('h2', {}, client.name),
-          contact ? h('p', { class: 'hint' }, contact) : null),
+          contact ? h('p', { class: 'hint' }, contact) : null,
+          h('p', { class: 'hint client-brought' }, 'Brought by ',
+            broughtBy ? [h('strong', {}, broughtBy.name), ` · ${broughtBy.how.toLowerCase()}`] : 'not recorded')),
         h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details')),
       h('div', { class: 'client-stats' },
         h('div', { class: 'stat' },

@@ -354,6 +354,7 @@ class Project(db.Model):
     special_terms = db.Column(db.Text, nullable=False, default="", server_default="")
     manager_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
+    completed_at = db.Column(db.DateTime, nullable=True)          # set when it is closed (status completed)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
 

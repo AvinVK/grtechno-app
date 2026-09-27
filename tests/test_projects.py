@@ -281,3 +281,64 @@ def test_accounts_can_add_a_project_and_sales_cannot(accounts_client, client):
     res = accounts_client.post("/api/projects", json={"new_client_name": "Walk-in Traders"})
     assert res.status_code == 201 and res.get_json()["project"]["manager_code"] is None        # assigned later by admin/accounts
     assert client.post("/api/projects", json={"new_client_name": "Nope"}).status_code == 403
+
+
+# ---------- project dashboard ----------
+
+def test_dashboard_shows_start_brought_by_and_who_worked_on_it(app, client, admin_client, admin):
+    from datetime import date, timedelta
+    from app.models import Attendance, Worker, WorkerAttendance
+    with app.app_context():
+        staff = Worker(name="Priya Frontdesk", category="staff")
+        db.session.add(staff)
+        db.session.commit()
+        staff_id = staff.id
+    pid = make_project(client, admin_client, enquired_by_id=staff_id)
+    with app.app_context():
+        welder = Worker(name="Sunny Welder", category="manpower")
+        db.session.add(welder)
+        db.session.flush()
+        today = date.today()
+        for back in (0, 1, 2):
+            db.session.add(WorkerAttendance(worker=welder, work_date=today - timedelta(days=back), project_id=pid))
+        db.session.add(WorkerAttendance(worker=welder, work_date=today - timedelta(days=3), project_id=pid, status="absent"))
+        db.session.add(Attendance(user_code=admin.code, work_date=today, project_id=pid, check_in_at=db.func.now()))
+        db.session.commit()
+
+    dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
+    assert dash["started"] == date.today().isoformat() and dash["start_date_set"] is False     # from when it was added
+    assert dash["brought_by"] == {"name": "Priya Frontdesk", "how": "Took the enquiry"}
+    assert [(m["name"], m["kind"], m["days"]) for m in dash["team"]] == [("Sunny Welder", "Manpower", 3), (admin.name, "App user", 1)]
+    assert dash["can_close"] is True and dash["completed_at"] is None
+
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "start_date": "2026-01-05"})
+    dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
+    assert dash["started"] == "2026-01-05" and dash["start_date_set"] is True
+
+
+def test_brought_by_falls_back_to_whoever_entered_the_lead(client, admin_client, user):
+    pid = make_project(client, admin_client)
+    assert admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["brought_by"] == {"name": user.name, "how": "Entered the lead"}
+    cid = admin_client.get(f"/api/projects/{pid}").get_json()["client"]["id"]
+    assert admin_client.get(f"/api/clients/{cid}").get_json()["brought_by"]["name"] == user.name
+
+
+def test_only_the_admin_can_close_a_project(client, admin_client, accounts_client, manager_client, manager):
+    pid = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "manager_code": manager.code})
+    assert accounts_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["can_close"] is False
+    for who in (accounts_client, manager_client):
+        assert who.post(f"/api/projects/{pid}/close").status_code == 403
+
+    closed = admin_client.post(f"/api/projects/{pid}/close")
+    assert closed.status_code == 200
+    body = closed.get_json()
+    assert body["project"]["status"] == "completed" and body["dashboard"]["completed_at"].endswith("Z")
+    assert admin_client.post(f"/api/projects/{pid}/close").status_code == 409
+
+
+def test_completed_at_follows_the_status_when_edited(client, admin_client):
+    pid = make_project(client, admin_client)
+    url = f"/api/projects/{pid}"
+    assert admin_client.patch(url, json={"title": "T", "status": "completed"}).get_json()["dashboard"]["completed_at"]
+    assert admin_client.patch(url, json={"title": "T", "status": "running"}).get_json()["dashboard"]["completed_at"] is None
