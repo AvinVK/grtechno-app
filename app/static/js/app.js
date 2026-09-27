@@ -51,18 +51,13 @@
   const fmtMoney = (v) => (v === null || v === undefined ? '' :
     S.settings.currency + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v));
 
-  // Indian shorthand (K, L, Cr) when the country code is 91, otherwise K / M / B.
+  // Indian shorthand (₹85k, ₹12.4 L, ₹1.2 Cr) when the country code is 91, otherwise K / M / B.
   function fmtCompact(v) {
     const c = S.settings.currency;
-    if (S.settings.country_code === '91') {
-      const one = (n) => String(Math.round(n * 10) / 10);
-      if (v >= 1e7) return `${c}${one(v / 1e7)}Cr`;
-      if (v >= 1e5) return `${c}${one(v / 1e5)}L`;
-      if (v >= 1e3) return `${c}${one(v / 1e3)}K`;
-      return `${c}${Math.round(v)}`;
-    }
+    if (S.settings.country_code === '91') return LD.fmtShort(v, c);
     return c + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
   }
+  const fmtShortMoney = (v) => (v === null || v === undefined ? '' : fmtCompact(v));
 
   /* ---------- lead helpers ---------- */
 
@@ -92,10 +87,10 @@
   function followChip(l) {
     if (!l.follow_up_date || !isOpen(l)) return null;
     const d = diffDays(l.follow_up_date, S.today);
-    if (d < 0) return chip('overdue', `${plural(-d, 'day', 'days')} overdue`);
+    if (d < 0) return chip('overdue', `${plural(-d, 'day', 'days')} late`);
     if (d === 0) return chip('today', 'Today');
     if (d === 1) return chip('soon', 'Tomorrow');
-    return chip('later', fmtDate(l.follow_up_date));
+    return chip('later', `in ${d} days`);
   }
 
   /* ---------- feedback ---------- */
@@ -128,6 +123,11 @@
   }
 
   function renderNav() {
+    const searchBtn = $('#search-btn');
+    if (searchBtn) {
+      searchBtn.hidden = !(view in searchOpen);
+      searchBtn.setAttribute('aria-expanded', String(!!searchOpen[view]));
+    }
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
@@ -230,57 +230,149 @@
     });
   }
 
+  // Phone-width labels for the stage chips - display only, the filter values stay the full stage names.
+  const SHORT_STAGE = { 'New enquiry': 'New', 'Site survey': 'Survey', 'Quote sent': 'Quote', Negotiation: 'Negotiation' };
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  // A small line icon (24x24 viewBox, stroked in currentColor) - h() only makes HTML elements.
+  function icon(...paths) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    paths.forEach((d) => {
+      const path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', d);
+      svg.append(path);
+    });
+    return svg;
+  }
+  const FILTER_ICON = ['M4 5h16l-6 8v6l-4-2v-4z'];
+
+  // Follow-up urgency buckets - the same split followChip's colours use (overdue / today / tomorrow /
+  // later), plus leads with no follow-up date at all. The Active list is grouped by these, in this order.
+  const FOLLOW_GROUPS = [
+    { key: 'overdue', label: 'Overdue' },
+    { key: 'today', label: 'Today' },
+    { key: 'soon', label: 'Tomorrow' },
+    { key: 'later', label: 'Later' },
+    { key: 'none', label: 'No follow-up date' },
+  ];
+  function followBucket(l) {
+    if (!l.follow_up_date) return 'none';
+    const d = diffDays(l.follow_up_date, S.today);
+    if (d < 0) return 'overdue';
+    if (d === 0) return 'today';
+    if (d === 1) return 'soon';
+    return 'later';
+  }
+
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+    'October', 'November', 'December'];
+  const closedMonth = (l) => (l.closed_at ? l.closed_at.slice(0, 7) : '');
+  const monthLabel = (ym) => (ym ? `${MONTH_NAMES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}` : 'No closing date');
+
+  // One search row per list, opened from the top bar's search button (or already open while a search is set).
+  const searchOpen = { active: false, closed: false };
+
   function listView(kind) {
     const isActive = kind === 'active';
     const stages = isActive ? S.open_stages : CLOSED_STAGES;
     const f = filters[kind];
     const pool = S.leads.filter((l) => stages.includes(l.stage));
 
-    const wrap = h('div', {});
+    const wrap = h('div', { class: 'lead-list' });
     const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter by stage' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
-    const list = h('ul', { class: 'rows' });
+    const activeFilters = h('div', { class: 'active-filters' });
+    const results = h('div', { class: 'lead-groups' });
 
-    const search = h('input', {
-      type: 'search', placeholder: 'Search name, phone, site, notes', 'aria-label': 'Search leads',
-      value: f.q,
-      oninput: (e) => { f.q = e.target.value; refresh(); },
-    });
+    let searchRow = null;
+    if (searchOpen[kind] || f.q) {
+      searchOpen[kind] = true;
+      const search = h('input', {
+        type: 'search', placeholder: 'Search name, phone, site, notes', 'aria-label': 'Search leads',
+        value: f.q,
+        oninput: (e) => { f.q = e.target.value; refresh(); },
+        onkeydown: (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); } },
+        onblur: (e) => { if (!e.target.value.trim()) setTimeout(closeSearch, 0); },
+      });
+      searchRow = h('div', { class: 'search-row' }, search);
+      setTimeout(() => { if (search.isConnected && !f.q) search.focus(); }, 0);
+    }
+    function closeSearch() {
+      if (!searchOpen[kind]) return;
+      searchOpen[kind] = false;
+      f.q = '';
+      renderMain();
+    }
 
     // Area/service/source/date filters - mainly useful for triaging fresh New enquiry leads, but they
-    // apply across whichever stage chip is selected on the Active tab. Picked in a popup (filterButton
-    // below) rather than shown inline, since four controls at once crowded the list above.
+    // apply across whichever stage chip is selected on the Active tab. Picked in a popup (openFilterPicker)
+    // rather than shown inline; the ones in use show as removable chips under the count.
     let filterButton = null;
+    let areas = [];
+    const filterCount = () => [f.area, f.service, f.source, f.from || f.to].filter(Boolean).length;
+    function renderFilterButton() {
+      if (!filterButton) return;
+      const n = filterCount();
+      clear(filterButton).append(...[icon(...FILTER_ICON), 'Filters', n ? h('span', { class: 'filter-count' }, n) : null].filter(Boolean));
+    }
     if (isActive) {
-      const areas = [...new Set(pool.map((l) => l.site_district).filter(Boolean))].sort();
+      areas = [...new Set(pool.map((l) => l.site_district).filter(Boolean))].sort();
       // A filter left over from an earlier visit (this view's state persists across tab switches) can
       // point at a value that no longer applies here - drop it instead of silently hiding everything.
       if (f.area && !areas.includes(f.area)) f.area = '';
       if (f.service && !S.settings.services.includes(f.service)) f.service = '';
       if (f.source && !S.settings.sources.includes(f.source)) f.source = '';
 
-      const activeCount = [f.area, f.service, f.source, f.from, f.to].filter(Boolean).length;
-      filterButton = h('button', { type: 'button', class: 'btn filter-btn' }, 'Filters',
-        activeCount ? h('span', { class: 'chip chip-today' }, activeCount) : null);
+      filterButton = h('button', { type: 'button', class: 'link-btn filter-btn' });
       filterButton.onclick = async () => {
         await openFilterPicker(f, { areas });
-        filterButton.textContent = '';
-        filterButton.append('Filters');
-        const n = [f.area, f.service, f.source, f.from, f.to].filter(Boolean).length;
-        if (n) filterButton.append(h('span', { class: 'chip chip-today' }, n));
+        renderFilterButton();
         refresh();
       };
+      renderFilterButton();
+    }
+
+    function renderActiveFilters() {
+      clear(activeFilters);
+      if (!isActive) return;
+      const range = (f.from || f.to) ? `${f.from ? fmtDate(f.from) : '…'} – ${f.to ? fmtDate(f.to) : '…'}` : '';
+      [['area', f.area], ['service', f.service], ['source', f.source], ['date', range]].forEach(([key, text]) => {
+        if (!text) return;
+        activeFilters.append(h('button', {
+          type: 'button', class: 'active-filter', 'aria-label': `Remove filter ${text}`,
+          onclick: () => {
+            if (key === 'date') { f.from = ''; f.to = ''; } else f[key] = '';
+            renderFilterButton();
+            refresh();
+          },
+        }, text, h('span', { class: 'active-filter-x', 'aria-hidden': 'true' }, '×')));
+      });
     }
 
     function renderChips() {
       clear(chips);
       const options = [['', 'All', pool.length], ...stages.map((s) => [s, s, pool.filter((l) => l.stage === s).length])];
       for (const [value, label, n] of options) {
+        const short = SHORT_STAGE[label];
         chips.append(h('button', {
           class: 'filter-chip', type: 'button', 'aria-pressed': String(f.stage === value),
           onclick: () => { f.stage = value; renderChips(); refresh(); },
-        }, label, h('span', { class: 'n' }, n)));
+        }, short && short !== label
+          ? [h('span', { class: 'lbl-full' }, label), h('span', { class: 'lbl-short', 'aria-hidden': 'true' }, short)]
+          : label,
+        h('span', { class: 'n' }, n)));
       }
+    }
+
+    function emptyState(message, action) {
+      return h('div', { class: 'empty-state' }, h('p', {}, message), action);
     }
 
     function refresh() {
@@ -302,16 +394,25 @@
       });
       items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
 
-      count.textContent = plural(items.length, 'lead', 'leads');
-      clear(list);
+      count.textContent = `${plural(items.length, 'lead', 'leads')} · ${isActive ? 'by follow-up' : 'by closing date'}`;
+      renderActiveFilters();
+      clear(results);
       if (!items.length) {
-        list.append(h('li', { class: 'empty-state' }, pool.length
-          ? 'No leads match this search.'
-          : isActive ? 'No active leads. Tap Add lead to enter a new enquiry.'
-            : 'Nothing won or lost yet. Open a lead and tap Mark won or Mark lost.'));
+        results.append(pool.length
+          ? emptyState('No leads match this search.')
+          : isActive
+            ? emptyState('No active leads yet.', h('a', { class: 'btn primary', href: '#add' }, 'Add lead'))
+            : emptyState('Nothing won or lost yet. Open a lead and tap Mark won or Mark lost.'));
         return;
       }
-      items.forEach((l) => list.append(h('li', {}, leadRow(l, isActive))));
+
+      // Active: grouped by how urgent the follow-up is. Won / Lost: by the month it closed, newest first.
+      const groups = isActive
+        ? FOLLOW_GROUPS.map((g) => ({ ...g, items: items.filter((l) => followBucket(l) === g.key) }))
+        : [...new Set(items.map(closedMonth))].map((ym) => ({ key: 'month', label: monthLabel(ym), items: items.filter((l) => closedMonth(l) === ym) }));
+      groups.filter((g) => g.items.length).forEach((g) => results.append(h('section', { class: 'lead-group' },
+        h('h3', { class: `group-head group-${g.key}` }, g.label, h('span', { class: 'group-count' }, g.items.length)),
+        h('ul', { class: 'card-group rows' }, g.items.map((l) => h('li', {}, leadRow(l, isActive)))))));
     }
 
     // Column headers for the wide-screen row layout only - the phone layout below 820px stacks each
@@ -320,13 +421,27 @@
       h('span', {}, 'Lead'), h('span', {}, 'Service'), h('span', {}, 'Stage'),
       h('span', {}, 'Value / round'), h('span', {}, 'Follow-up'), isActive ? h('span', {}, 'Added') : null);
 
-    wrap.append(h('div', { class: 'filters' }, search, chips, filterButton), count, rowHead, list);
+    wrap.append(...[
+      searchRow,
+      chips,
+      h('div', { class: 'list-meta' }, count, filterButton),
+      activeFilters,
+      rowHead,
+      results].filter(Boolean));
     if (!isActive) {
       wrap.append(h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')));
     }
     renderChips();
     refresh();
     return wrap;
+  }
+
+  // How far along the pipeline a lead is, as filled segments of a 4-part bar: New enquiry 1 ... Negotiation 4.
+  // A closed lead fills all four in its Won / Lost colour.
+  function pipeBar(l) {
+    const filled = CLOSED_STAGES.includes(l.stage) ? 4 : STAGE_ORDER.indexOf(l.stage) + 1;
+    return h('span', { class: 'pipe', 'data-stage': l.stage, 'aria-hidden': 'true' },
+      [1, 2, 3, 4].map((i) => h('i', { class: i <= filled ? 'on' : null })));
   }
 
   function leadRow(l, showCreated) {
@@ -339,15 +454,21 @@
     const rounds = l.negotiations || [];
     const shownRound = [...rounds].reverse().find((r) => r.finalized) || (rounds.length ? rounds[rounds.length - 1] : null);
     const roundText = shownRound && shownRound.estimate != null
-      ? `R${shownRound.round_no}${shownRound.finalized ? ' ✓' : ''} ${fmtMoney(shownRound.estimate)}` : null;
+      ? `R${shownRound.round_no}${shownRound.finalized ? ' ✓' : ''} ${fmtShortMoney(shownRound.estimate)}` : null;
+    const latestRound = rounds.length ? rounds[rounds.length - 1].round_no : null;
+    const area = l.site_city || l.site_district;
     return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
       h('span', { class: 'row-main' },
         h('span', { class: 'row-title' }, title(l)),
         sub ? h('span', { class: 'row-sub' }, sub) : null),
-      h('span', { class: 'row-service' }, serviceLabel(l)),
-      h('span', { class: 'row-stage stage-tag', 'data-stage': l.stage }, l.stage),
+      h('span', { class: 'row-service' }, serviceLabel(l),
+        area ? h('span', { class: 'row-area' }, ` · ${area}`) : null),
+      h('span', { class: 'row-stage' },
+        pipeBar(l),
+        h('span', { class: 'stage-tag', 'data-stage': l.stage }, l.stage,
+          l.stage === 'Negotiation' && latestRound ? h('span', { class: 'stage-round' }, ` · R${latestRound}`) : null)),
       h('span', { class: 'row-value' },
-        l.est_value !== null ? fmtMoney(l.est_value) : '',
+        l.est_value !== null ? fmtShortMoney(l.est_value) : '',
         roundText ? h('span', { class: `row-round${shownRound.finalized ? ' finalized' : ''}` }, roundText) : null),
       h('span', { class: 'row-chip' }, followChip(l)),
       showCreated ? h('span', { class: 'row-created' }, fmtDateTime(l.created_at)) : null,
@@ -1149,6 +1270,19 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && S && openId === undefined) load().catch(() => {});
   });
+
+  // The top bar's search button opens (or closes, clearing it) the search row at the top of the list.
+  const searchBtn = $('#search-btn');
+  if (searchBtn) {
+    searchBtn.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the search box's focus (no blur-close first)
+    searchBtn.addEventListener('click', () => {
+      if (!(view in searchOpen) || !S) return;
+      searchOpen[view] = !searchOpen[view];
+      if (!searchOpen[view]) filters[view].q = '';
+      renderNav();
+      renderMain();
+    });
+  }
 
   function start() {
     syncView();

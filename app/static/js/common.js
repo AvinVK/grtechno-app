@@ -245,6 +245,18 @@ window.LD = (() => {
   const money = (v, currency) => (v === null || v === undefined ? '' :
     currency + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v));
 
+  /* Indian short form for lists and summaries: ₹1.2 Cr, ₹12.4 L, ₹85k, ₹900. Full figures elsewhere use money(). */
+  function fmtShort(v, currency = '\u20b9') {
+    if (v === null || v === undefined || Number.isNaN(Number(v))) return '';
+    const n = Number(v);
+    const one = (x) => String(Math.round(x * 10) / 10);
+    const abs = Math.abs(n);
+    if (abs >= 1e7) return `${currency}${one(n / 1e7)} Cr`;
+    if (abs >= 1e5) return `${currency}${one(n / 1e5)} L`;
+    if (abs >= 1e3) return `${currency}${one(n / 1e3)}k`;
+    return `${currency}${Math.round(n)}`;
+  }
+
   /* A labelled form control with a slot for its error message. `name` becomes the id (f-name) and the key
      used to show a server-side error next to the right field. */
   function field(name, label, control, { wide = false, hint = null } = {}) {
@@ -295,7 +307,7 @@ window.LD = (() => {
   }
 
   return {
-    $, h, clear, api, toast, confirm: confirmBox, plural, money, field, showFieldErrors, pincodeLookup,
+    $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
     pickList, selectField, pickDate, dateField,
   };
 })();
