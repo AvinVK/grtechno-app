@@ -522,6 +522,17 @@
         h('summary', { class: 'stage-section-title' }, 'Quote sent'),
         h('div', { class: 'stage-section-body' }, quoteFields));
 
+      // Sending the quote for the first time is what completes Site survey's own step - make that
+      // outcome visible on the button itself, before it's clicked, instead of only in the toast after.
+      if (lead.stage === 'Site survey' && !lead.quote_sent_date) {
+        const quoteDateInput = inputs.quote_sent_date;
+        const updateSaveLabel = () => {
+          saveBtn.textContent = quoteDateInput.value ? 'Save & move to Quote sent' : 'Save changes';
+        };
+        quoteDateInput.addEventListener('input', updateSaveLabel);
+        updateSaveLabel();
+      }
+
       form = h('form', { novalidate: true, id: 'lead-form' },
         errorBox,
         stageField,
@@ -674,6 +685,13 @@
     const err = h('p', { class: 'err', role: 'alert' });
 
     const saveBtn = h('button', { class: 'btn', type: 'button' }, 'Save survey');
+    if (lead.stage === 'New enquiry' && !sv.survey_date) {
+      const updateSaveLabel = () => {
+        saveBtn.textContent = dateInput.value ? 'Save & move to Site survey' : 'Save survey';
+      };
+      dateInput.addEventListener('input', updateSaveLabel);
+      updateSaveLabel();
+    }
     saveBtn.onclick = async () => {
       err.textContent = '';
       try {
@@ -751,7 +769,9 @@
       const estimate = h('input', { type: 'number', min: '0', step: 'any', value: round && round.estimate != null ? round.estimate : '' });
       const finalized = h('input', { type: 'checkbox' });
       finalized.checked = !!(round && round.finalized);
-      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Add round');
+      // Logging the first round is what completes Quote sent's own step - say so on the button itself.
+      const addLabel = lead.stage === 'Quote sent' ? 'Save & move to Negotiation' : 'Add round';
+      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : addLabel);
       saveBtn.onclick = async () => {
         err.textContent = '';
         const body = {
