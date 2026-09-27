@@ -753,10 +753,20 @@ a.p-client-name { color: var(--accent-dark); }
 
 .negotiation-rows { display: grid; gap: 10px; }
 .negotiation-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.negotiation-row > input, .negotiation-row > .field-picker { flex: 1 1 110px; min-width: 90px; }
+.negotiation-row > .check-row { flex: none; }
+.negotiation-row > .btn { flex: none; }
+.negotiation-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+@media (min-width: 560px) {
+  .negotiation-row { flex-wrap: nowrap; }
 }
 
 .photo-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
@@ -938,6 +948,7 @@ a.p-client-name { color: var(--accent-dark); }
    phone's own native <select> popup for a long, phone-unfriendly list like Attendance's project choice. */
 .field-picker {
   width: 100%;
+  min-width: 0;
   padding: 9px 10px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
@@ -946,8 +957,29 @@ a.p-client-name { color: var(--accent-dark); }
   font: 400 16px/1.3 var(--font-body);
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   text-align: left; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.field-picker::after { content: '\2304'; color: var(--muted); font-size: 18px; line-height: 1; }
+.field-picker::after { content: '\2304'; flex: none; color: var(--muted); font-size: 18px; line-height: 1; }
+.field-picker.placeholder { color: var(--muted); }
+.field-picker:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* In-app calendar (replaces the phone's own native date popup). */
+.cal-card { max-width: 340px; padding: 16px; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cal-month-label { font: 600 15px/1.2 var(--font-display); }
+.cal-nav { border: none; background: none; font-size: 22px; line-height: 1; padding: 4px 12px; cursor: pointer; color: var(--accent-dark); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-weekday { text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 0; }
+.cal-cell {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  border: none; background: none; border-radius: 50%; font: 400 14px/1 var(--font-body); cursor: pointer; color: var(--ink);
+}
+.cal-cell.empty { cursor: default; }
+.cal-cell:not(.empty):hover { background: var(--paper); }
+.cal-cell.today { font-weight: 700; color: var(--accent-dark); }
+.cal-cell.selected { background: var(--accent); color: #fff; }
+.cal-actions { display: flex; gap: 8px; margin-top: 14px; }
+.cal-actions .btn { flex: 1; }
 
 .picker-card { max-width: 420px; max-height: 80vh; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .picker-toggle {

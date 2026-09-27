@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField } = window.LD;
   const view = $('#view');
 
   function fmtTime(iso) {
@@ -306,7 +306,8 @@
 
   async function showTeam() {
     clear(view).append(h('p', { class: 'loading' }, 'Loading team attendance…'));
-    const dateInput = h('input', { type: 'date', value: today(), 'aria-label': 'Date' });
+    const dateInput = dateField(today(), { clearable: false });
+    dateInput.setAttribute('aria-label', 'Date');
     const list = h('ul', { class: 'rows att-history' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
 

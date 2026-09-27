@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, selectField } = window.LD;
 
   const chip = (tone, text) => h('span', { class: `chip chip-${tone}` }, text);
 
@@ -21,7 +21,9 @@
     const listBox = h('div', { class: 'user-list' }, h('p', { class: 'loading' }, 'Loading users…'));
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
     let roles = [];
-    const roleSelect = h('select', { id: 'u-role', 'aria-label': 'Role' });
+    const roleSelect = selectField([], '', { title: 'Role' });
+    roleSelect.id = 'u-role';
+    roleSelect.setAttribute('aria-label', 'Role');
 
     function showCode(data, heading) {
       const u = data.user;
@@ -51,7 +53,7 @@
         const data = await api('/api/users');
         roles = data.roles;
         const chosen = roleSelect.value || 'sales_field';
-        clear(roleSelect).append(...roles.map((r) => h('option', { value: r.key }, r.name)));
+        roleSelect.setOptions(roles.map((r) => ({ value: r.key, label: r.name })));
         roleSelect.value = chosen;
         clear(listBox).append(...data.users.map(userRow));
       } catch (err) {
@@ -71,19 +73,20 @@
     }
 
     function roleControl(u) {
-      return h('select', {
-        class: 'role-select', 'aria-label': `Role for ${u.name}`,
-        onchange: async (e) => {
-          const select = e.target;
-          const next = roles.find((r) => r.key === select.value);
-          const sure = await confirm(
-            `Change ${u.name}'s role from ${u.role_name} to ${next.name}? What they can open and see changes straight away.`,
-            { title: 'Change role', ok: 'Yes, change' });
-          if (!sure) { select.value = u.role; return; }                   // cancelled: put the old role back
-          act(`/api/users/${u.code}/role`, { role: next.key }, null,
-            (data) => toast(`${u.name} is now ${data.user.role_name}`));
-        },
-      }, roles.map((r) => h('option', { value: r.key, selected: r.key === u.role }, r.name)));
+      const select = selectField(roles.map((r) => ({ value: r.key, label: r.name })), u.role,
+        { title: `Role for ${u.name}` });
+      select.classList.add('role-select');
+      select.setAttribute('aria-label', `Role for ${u.name}`);
+      select.addEventListener('change', async () => {
+        const next = roles.find((r) => r.key === select.value);
+        const sure = await confirm(
+          `Change ${u.name}'s role from ${u.role_name} to ${next.name}? What they can open and see changes straight away.`,
+          { title: 'Change role', ok: 'Yes, change' });
+        if (!sure) { select.value = u.role; return; }                   // cancelled: put the old role back
+        act(`/api/users/${u.code}/role`, { role: next.key }, null,
+          (data) => toast(`${u.name} is now ${data.user.role_name}`));
+      });
+      return select;
     }
 
     function userRow(u) {

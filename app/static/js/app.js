@@ -26,7 +26,7 @@
     closed: { q: '', stage: '' },
   };
 
-  const { $, h, clear, api, toast, plural } = window.LD;
+  const { $, h, clear, api, toast, plural, selectField, dateField } = window.LD;
 
   async function load() {
     S = await api('/api/state');
@@ -193,8 +193,10 @@
         clear(optionsPane);
         const cat = CATS.find((c) => c.key === active);
         if (cat.key === 'date') {
-          const fromInput = h('input', { type: 'date', value: f.from, 'aria-label': 'From date' });
-          const toInput = h('input', { type: 'date', value: f.to, 'aria-label': 'To date' });
+          const fromInput = dateField(f.from, { placeholder: 'Any date' });
+          const toInput = dateField(f.to, { placeholder: 'Any date' });
+          fromInput.setAttribute('aria-label', 'From date');
+          toInput.setAttribute('aria-label', 'To date');
           fromInput.onchange = () => { f.from = fromInput.value; renderCats(); };
           toInput.onchange = () => { f.to = toInput.value; renderCats(); };
           optionsPane.append(h('label', { class: 'filter-date-field' }, 'From', fromInput),
@@ -402,12 +404,11 @@
     const choice = (options, value, blank) => {
       const list = [...options];
       if (value && !list.includes(value)) list.push(value);   // keep a value that was removed from Settings
-      const s = h('select', {}, blank ? h('option', { value: '' }, blank) : null, list.map((o) => h('option', { value: o }, o)));
-      s.value = value || '';
-      return s;
+      const items = blank ? [{ value: '', label: blank }, ...list] : list;
+      return selectField(items, value || '', { title: blank || 'Choose an option', placeholder: blank || '' });
     };
 
-    const dateInput = text('date', L.follow_up_date);
+    const dateInput = dateField(L.follow_up_date);
     const quick = h('div', { class: 'quick-dates' },
       SNOOZE.map(([label, days]) => h('button', {
         class: 'btn small', type: 'button',
@@ -444,8 +445,9 @@
     // rather than a second client.
     let clientField = null;
     let companyFields = null;
-    const clientSel = h('select', {}, h('option', { value: '' }, 'A new company…'),
-      S.clients.map((c) => h('option', { value: c.id }, c.name)));
+    const clientSel = selectField(
+      [{ value: '', label: 'A new company…' }, ...S.clients.map((c) => ({ value: c.id, label: c.name }))],
+      '', { title: 'This enquiry is for', placeholder: 'A new company…' });
     if (!lead) {
       clientSel.onchange = () => { companyFields.hidden = clientSel.value !== ''; };
       clientField = h('div', { class: 'field wide' },
@@ -465,8 +467,9 @@
 
     // Who took the call - also the default pick for "surveyed by" below, since it's usually the same
     // person, though the survey can always be reassigned to whoever actually went out.
-    const enquiredBySel = h('select', {}, h('option', { value: '' }, 'Not set'),
-      S.staff.map((w) => h('option', { value: w.id, selected: w.id === L.enquired_by_id }, w.name)));
+    const enquiredBySel = selectField(
+      [{ value: '', label: 'Not set' }, ...S.staff.map((w) => ({ value: w.id, label: w.name }))],
+      L.enquired_by_id ?? '', { title: 'Enquired by', placeholder: 'Not set' });
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
@@ -521,9 +524,10 @@
       // Site survey - always editable, since it's either already done or is exactly what's next.
       const sv = lead.survey || {};
       const defaultSurveyor = sv.surveyor_id ?? lead.enquired_by_id;
-      const surveyDateInput = h('input', { type: 'date', value: sv.survey_date || '' });
-      const surveyorSel = h('select', {}, h('option', { value: '' }, 'Not set'),
-        S.staff.map((w) => h('option', { value: w.id, selected: w.id === defaultSurveyor }, w.name)));
+      const surveyDateInput = dateField(sv.survey_date || '');
+      const surveyorSel = selectField(
+        [{ value: '', label: 'Not set' }, ...S.staff.map((w) => ({ value: w.id, label: w.name }))],
+        defaultSurveyor ?? '', { title: 'Surveyed by', placeholder: 'Not set' });
       const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
       const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
       const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
@@ -587,7 +591,7 @@
           h('label', { class: 'btn small' }, 'Add photos', fileInput)));
 
       const quoteFields = h('div', { class: 'form-grid' },
-        wrapField('quote_sent_date', 'Quote sent', text('date', L.quote_sent_date)),
+        wrapField('quote_sent_date', 'Quote sent', dateField(L.quote_sent_date)),
         wrapField('est_value', `Estimated value (${S.settings.currency})`,
           text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })));
       quoteSection = h('details', { class: `stage-section${surveyDone ? '' : ' locked'}`, open: surveyDone && expand === 2 },
@@ -631,7 +635,7 @@
         { title: `Mark ${result.toLowerCase()}`, ok: `Yes, mark ${result.toLowerCase()}`, danger: result === 'Lost' });
       if (!sure) return;
       outcome = result;
-      inputs.stage.append(h('option', { value: result }, result));
+      inputs.stage.addOption(result, result);
       inputs.stage.value = result;
       saveBtn.click();
     };
@@ -676,7 +680,7 @@
         await load();
       } catch (err) {
         if (outcome) {
-          inputs.stage.querySelector(`option[value="${outcome}"]`)?.remove();
+          inputs.stage.removeOption(outcome);
           inputs.stage.value = lead.stage;
           outcome = null;
         }
@@ -762,7 +766,7 @@
     const err = h('p', { class: 'err', role: 'alert' });
 
     function buildRow(round) {
-      const dateInput = h('input', { type: 'date', value: round ? round.date || '' : '' });
+      const dateInput = dateField(round ? round.date || '' : '');
       const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120, placeholder: 'Authorized person' });
       const estimate = h('input', { type: 'number', min: '0', step: 'any', value: round && round.estimate != null ? round.estimate : '' });
       const finalized = h('input', { type: 'checkbox' });

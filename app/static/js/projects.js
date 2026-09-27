@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, field, showFieldErrors } = window.LD;
+  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, selectField, dateField } = window.LD;
 
   const STATUS = {
     planned: ['Planned', 'planned'],
@@ -94,14 +94,17 @@
     let data;
     try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
-    const clientSel = h('select', {},
-      h('option', { value: '' }, 'A new client\u2026'),
-      data.clients.map((c) => h('option', { value: c.id }, c.name)));
+    const clientSel = selectField(
+      [{ value: '', label: 'A new client\u2026' }, ...data.clients.map((c) => ({ value: c.id, label: c.name }))],
+      '', { title: 'Client', placeholder: 'A new client\u2026' });
     const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
     const newNameField = field('new_client_name', 'New client name', newName);
     const titleInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Optional (defaults to client and work)' });
-    const category = h('select', {}, h('option', { value: '' }, 'Not set'), data.services.map((s) => h('option', { value: s }, s)));
-    const statusSel = h('select', {}, data.statuses.map((s) => h('option', { value: s, selected: s === 'running' }, STATUS[s][0])));
+    const category = selectField(
+      [{ value: '', label: 'Not set' }, ...data.services.map((s) => ({ value: s, label: s }))],
+      '', { title: 'Work category', placeholder: 'Not set' });
+    const statusSel = selectField(
+      data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), 'running', { title: 'Status' });
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add project');
 
@@ -165,18 +168,20 @@
     const area = (rows, value) => { const t = h('textarea', { rows }); t.value = value ?? ''; return t; };
 
     const title = text('text', P.title, { maxlength: 160, autocomplete: 'off' });
-    const statusSel = h('select', {}, data.statuses.map((s) => h('option', { value: s, selected: s === P.status }, STATUS[s][0])));
+    const statusSel = selectField(
+      data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), P.status, { title: 'Status' });
     const woNo = text('text', P.work_order_no, { maxlength: 60, autocomplete: 'off' });
-    const woDate = text('date', P.work_order_date);
-    const startDate = text('date', P.start_date);
+    const woDate = dateField(P.work_order_date);
+    const startDate = dateField(P.start_date);
     const days = text('number', P.completion_days, { min: '0', step: '1', inputmode: 'numeric' });
     const estimated = text('number', P.estimated_amount, { min: '0', step: 'any', inputmode: 'decimal' });
     const discount = text('number', P.discount_amount || '', { min: '0', step: 'any', inputmode: 'decimal' });
     const payTerms = area(3, P.payment_terms);
     const specialTerms = area(3, P.special_terms);
     const managerSel = data.can_assign_manager
-      ? h('select', {}, h('option', { value: '' }, 'Not assigned'),
-        data.managers.map((m) => h('option', { value: m.code, selected: m.code === P.manager_code }, m.name)))
+      ? selectField(
+        [{ value: '', label: 'Not assigned' }, ...data.managers.map((m) => ({ value: m.code, label: m.name }))],
+        P.manager_code || '', { title: 'Manager', placeholder: 'Not assigned' })
       : null;
 
     const finish = h('p', { class: 'hint', 'aria-live': 'polite' });
@@ -188,10 +193,13 @@
     const payErr = h('p', { class: 'err', id: 'err-payments', role: 'alert' });
 
     function addPayRow(p = { label: '', amount: '', due_date: '' }) {
+      const dueDate = dateField(p.due_date || '', { placeholder: 'Due date' });
+      dueDate.classList.add('pay-date');
+      dueDate.setAttribute('aria-label', 'Due date');
       const row = h('div', { class: 'pay-row' },
         h('input', { type: 'text', class: 'pay-label', maxlength: 120, placeholder: 'For example: Advance', 'aria-label': 'Payment step name', value: p.label }),
         h('input', { type: 'number', class: 'pay-amount', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${cur})`, 'aria-label': 'Amount', value: p.amount ?? '' }),
-        h('input', { type: 'date', class: 'pay-date', 'aria-label': 'Due date', value: p.due_date || '' }),
+        dueDate,
         h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Remove this payment step', onclick: () => { row.remove(); payErr.textContent = ''; recalc(); } }, '×'));
       payRows.append(row);
     }

@@ -6,7 +6,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, pincodeLookup } = window.LD;
+  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, pincodeLookup, selectField } = window.LD;
 
   const view = $('#view');
   const canOpenProjects = view.dataset.projects === '1';
@@ -48,9 +48,10 @@
       type: 'search', placeholder: 'Search name, contact, phone, city', 'aria-label': 'Search clients',
       oninput: (e) => { filter.q = e.target.value; refresh(); },
     });
-    const serviceSel = h('select', { 'aria-label': 'Filter by service' },
-      h('option', { value: '' }, 'All services'),
-      allServices.map((s) => h('option', { value: s }, s)));
+    const serviceSel = selectField(
+      [{ value: '', label: 'All services' }, ...allServices.map((s) => ({ value: s, label: s }))],
+      '', { title: 'Filter by service', placeholder: 'All services' });
+    serviceSel.setAttribute('aria-label', 'Filter by service');
     serviceSel.onchange = () => { filter.service = serviceSel.value; refresh(); };
 
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
@@ -113,8 +114,9 @@
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
     const area = (rows, value) => { const t = h('textarea', { rows }); t.value = value ?? ''; return t; };
 
-    const category = h('select', {}, h('option', { value: '' }, 'Not set'),
-      [...new Set([...categories, C.site_category].filter(Boolean))].map((n) => h('option', { value: n, selected: n === C.site_category }, n)));
+    const category = selectField(
+      [{ value: '', label: 'Not set' }, ...[...new Set([...categories, C.site_category].filter(Boolean))].map((n) => ({ value: n, label: n }))],
+      C.site_category || '', { title: 'Site category', placeholder: 'Not set' });
     const pin = text('text', C.pincode, { maxlength: 6, inputmode: 'numeric', autocomplete: 'off' });
     const state = text('text', C.state, { maxlength: 80, autocomplete: 'off' });
     const district = text('text', C.district, { maxlength: 80, autocomplete: 'off' });
