@@ -280,6 +280,18 @@ def test_negotiation_rounds_added_edited_and_used_as_the_project_estimate(admin_
     assert float(db.session.get(Project, project_id).estimated_amount) == 455000        # latest round wins, not est_value
 
 
+def test_no_new_round_while_one_is_finalized(admin_client):
+    lead = _quoted_lead(admin_client)
+    url = f"/api/leads/{lead['id']}/negotiations"
+    body = {"date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 480000}
+    round_id = admin_client.post(url, json={**body, "finalized": True}).get_json()["negotiations"][0]["id"]
+
+    assert admin_client.post(url, json=body).status_code == 422
+
+    admin_client.patch(f"{url}/{round_id}", json={**body, "finalized": False})
+    assert admin_client.post(url, json=body).status_code == 201
+
+
 def test_negotiation_needs_a_quote_first(admin_client):
     lead = make_lead(admin_client)
     res = admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={"estimate": 100})

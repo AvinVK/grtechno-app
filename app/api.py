@@ -504,6 +504,9 @@ def add_negotiation(lead_id):
     lead = _own_lead_or_404(lead_id)
     if not lead.quote_sent_date:
         abort(422, "Send a quote first")
+    # A finalized round settles the deal - it has to be unticked before negotiation can reopen.
+    if any(n.finalized for n in lead.negotiations):
+        abort(422, "A round is already finalized - untick it to add another round")
     errors = {}
     date_val, authorized_person, estimate, finalized = _negotiation_fields(_payload(), errors)
     if errors:

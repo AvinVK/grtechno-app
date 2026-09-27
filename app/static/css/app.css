@@ -783,6 +783,8 @@ a.p-client-name { color: var(--accent-dark); }
 .negotiation-round:last-child { border-bottom: none; padding-bottom: 0; }
 .negotiation-round-label { margin: 0; font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
 .negotiation-round .btn { justify-self: start; }
+.round-actions { display: flex; gap: 8px; }
+.negotiation-rows > .add-round { justify-self: start; }
 
 .photo-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
 .photo-thumb { position: relative; width: 88px; height: 88px; }

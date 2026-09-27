@@ -918,6 +918,7 @@
             ? await api(`/api/leads/${lead.id}/negotiations/${round.id}`, { method: 'PATCH', body })
             : await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body });
           lead.negotiations = res.negotiations;
+          adding = false;
           renderRows();
           toast('Saved');
           // The leads list behind the drawer shows each lead's finalized (or latest) round - refresh it so
@@ -933,13 +934,30 @@
           reqField('Round date', dateInput), reqField('Authorized person', person),
           reqField(`Estimate (${S.settings.currency})`, estimate)),
         h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')),
-        saveBtn);
+        h('div', { class: 'round-actions' }, saveBtn));
     }
 
+    // A blank new round only appears after tapping "+ Add new round", and never while a round is ticked
+    // Finalized - the deal is settled, so untick (and save) that round first to reopen negotiation.
+    let adding = false;
     function renderRows() {
       clear(list);
       lead.negotiations.forEach((r, i) => list.append(buildRow(r, i + 1)));
-      list.append(buildRow(null, lead.negotiations.length + 1));
+      const done = lead.negotiations.find((r) => r.finalized);
+      if (done) {
+        list.append(h('p', { class: 'hint' },
+          `Round ${lead.negotiations.indexOf(done) + 1} is finalized. Untick Finalized on it and save to add another round.`));
+      } else if (adding) {
+        const row = buildRow(null, lead.negotiations.length + 1);
+        row.querySelector('.round-actions').append(h('button', {
+          class: 'btn small', type: 'button', onclick: () => { adding = false; renderRows(); },
+        }, 'Cancel'));
+        list.append(row);
+      } else {
+        list.append(h('button', {
+          class: 'btn small add-round', type: 'button', onclick: () => { adding = true; renderRows(); },
+        }, '+ Add new round'));
+      }
     }
     renderRows();
 
