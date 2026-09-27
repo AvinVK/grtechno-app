@@ -414,6 +414,13 @@ def upsert_survey(lead_id):
     survey.rep_role = str(payload.get("rep_role") or "").strip()[:60]
     survey.rep_phone = str(payload.get("rep_phone") or "").strip()[:40]
     db.session.add(survey)
+
+    # A completed survey while the lead is still sitting at New enquiry moves it along automatically -
+    # never backwards, so editing survey details again later doesn't undo later stage progress.
+    if survey_date and lead.stage == "New enquiry":
+        _log(lead, "stage", f"Stage changed: {lead.stage} → Site survey")
+        lead.stage = "Site survey"
+
     lead.updated_at = utcnow()
     db.session.commit()
     return jsonify(lead.to_dict(with_activities=True))

@@ -678,8 +678,16 @@
           survey_date: dateInput.value || null, surveyor_id: surveyorSel.value || null,
           rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
         } });
-        lead.survey = res.survey;
-        toast('Survey saved');
+        const advanced = res.stage !== lead.stage;
+        toast(advanced ? `Survey saved – moved to ${res.stage}` : 'Survey saved');
+        if (advanced) {
+          // The stage dropdown, and which section opens by default, were built for the old stage -
+          // reload the lead's own data and rebuild the drawer instead of patching those in place.
+          await load();
+          openDrawer(lead.id);
+        } else {
+          lead.survey = res.survey;
+        }
       } catch (e) { err.textContent = e.message; }
     };
 

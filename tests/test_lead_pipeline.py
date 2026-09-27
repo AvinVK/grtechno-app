@@ -149,6 +149,28 @@ def test_survey_upsert_and_surveyor_must_be_staff(admin_client):
     assert admin_client.get(f"/api/leads/{lead['id']}").get_json()["survey"]["survey_date"] == "2026-09-21"
 
 
+def test_saving_a_completed_survey_advances_a_new_enquiry_to_site_survey(admin_client):
+    lead = make_lead(admin_client)
+    assert lead["stage"] == "New enquiry"
+
+    # No date yet - just rep details - doesn't count as "completed", so the stage stays put.
+    partial = admin_client.put(f"/api/leads/{lead['id']}/survey", json={"rep_name": "Site Manager"})
+    assert partial.get_json()["stage"] == "New enquiry"
+
+    advanced = admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    assert advanced.get_json()["stage"] == "Site survey"
+    assert any("Site survey" in a["text"] for a in advanced.get_json()["activities"])
+
+
+def test_editing_a_survey_later_does_not_move_the_stage_backwards(admin_client):
+    lead = make_lead(admin_client)
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Quote sent", "quote_sent_date": "2026-09-22"})
+
+    edited = admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-21", "rep_name": "New rep"})
+    assert edited.get_json()["stage"] == "Quote sent"
+
+
 def test_survey_photos_upload_and_delete(admin_client):
     lead = make_lead(admin_client)
     no_survey = admin_client.post(f"/api/leads/{lead['id']}/survey/photos", data={}, content_type="multipart/form-data")
