@@ -826,10 +826,10 @@
 
     function buildRow(round, roundNo) {
       const dateInput = dateField(round ? round.date || '' : '', { placeholder: 'Round date' });
-      const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120, placeholder: 'Authorized person' });
+      const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120 });
       const estimate = h('input', {
         type: 'number', min: '0', step: 'any', inputmode: 'decimal',
-        value: round && round.estimate != null ? round.estimate : '', placeholder: `Estimate (${S.settings.currency})`,
+        value: round && round.estimate != null ? round.estimate : '', placeholder: `Amount (${S.settings.currency})`,
       });
       const finalized = h('input', { type: 'checkbox' });
       finalized.checked = !!(round && round.finalized);
@@ -849,10 +849,15 @@
           toast('Saved');
         } catch (e) { err.textContent = e.message; }
       };
-      return h('div', { class: 'negotiation-row-block' },
+      // Same one-per-line labeled layout as every other stage's fields, in place of the old cramped
+      // single row - five fields side by side never had room to also show which was which.
+      return h('div', { class: 'negotiation-round' },
         h('p', { class: 'negotiation-round-label' }, round ? `Round ${roundNo}` : `Round ${roundNo} (new)`),
-        h('div', { class: 'negotiation-row' }, dateInput, person, estimate,
-          h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')), saveBtn));
+        h('div', { class: 'form-grid' },
+          plainField('Round date', dateInput), plainField('Authorized person', person),
+          plainField(`Estimate (${S.settings.currency})`, estimate)),
+        h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')),
+        saveBtn);
     }
 
     function renderRows() {

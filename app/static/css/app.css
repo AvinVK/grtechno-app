@@ -769,24 +769,11 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-date { grid-area: date; }
 .pay-row .icon-x { grid-area: x; }
 
-.negotiation-rows { display: grid; gap: 16px; }
-.negotiation-round-label { margin: 0 0 6px; font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
-.negotiation-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-}
-.negotiation-row > input, .negotiation-row > .field-picker { flex: 1 1 110px; min-width: 90px; }
-.negotiation-row > .check-row { flex: none; }
-.negotiation-row > .btn { flex: none; }
-.negotiation-row:last-child { border-bottom: none; padding-bottom: 0; }
-
-@media (min-width: 560px) {
-  .negotiation-row { flex-wrap: nowrap; }
-}
+.negotiation-rows { display: grid; gap: 8px; }
+.negotiation-round { padding-bottom: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.negotiation-round:last-child { border-bottom: none; padding-bottom: 0; }
+.negotiation-round-label { margin: 0; font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.negotiation-round .btn { justify-self: start; }
 
 .photo-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
 .photo-thumb { position: relative; width: 88px; height: 88px; }
