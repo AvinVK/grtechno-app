@@ -11,14 +11,15 @@
   <link rel="stylesheet" href="{{ asset('css/app.css') }}">
   {% if current_user %}<script src="{{ asset('js/common.js') }}" defer></script>{% endif %}
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}{% if bottom_nav %} has-bottom-nav{% endif %}">
 {% block header %}
   <header class="topbar">
     {% if current_user %}
-    {# Phones have no side menu: every page but the hub (and Leads, which has the bottom nav) gets a way back to it. #}
-    {% block hub_back %}<a class="icon-btn hub-back" href="{{ url_for('me.page') }}" aria-label="Back to Me">
+    {# Phones have no side menu: the bottom tabs' Me leads to the hub; without them (no Leads service) every
+       page but the hub gets this back arrow to it instead. #}
+    {% block hub_back %}{% if not bottom_nav %}<a class="icon-btn hub-back" href="{{ url_for('me.page') }}" aria-label="Back to Me">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
-    </a>{% endblock %}
+    </a>{% endif %}{% endblock %}
     <button class="icon-btn" id="menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
@@ -32,6 +33,7 @@
 {% endblock %}
 {% block content %}{% endblock %}
 {% if current_user %}
+  {% if bottom_nav %}{% include "_bottom_nav.html" %}{% endif %}
   {% include "_sidebar.html" %}
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="{{ asset('js/shell.js') }}" defer></script>

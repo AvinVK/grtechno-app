@@ -1,6 +1,6 @@
 import secrets
 
-from flask import Flask, g
+from flask import Flask, g, request
 
 from .config import BASE_DIR, DEFAULT_SECRET, Config
 from .extensions import db, migrate
@@ -70,10 +70,25 @@ def create_app(config_object=Config):
             return {"current_user": None, "nav_modules": [], "current_module": None}
         modules = modules_for(user)
         key = g.get("module_key")
+        on_leads = request.endpoint == "views.index"
+        # The bottom tabs show on every signed-in page for people with the Leads service. On the Leads page
+        # they switch views in place and app.js keeps them current; elsewhere they lead back into Leads and
+        # the Active tab's due count is counted here.
+        bottom_nav = any(m.key == "leads" for m in modules)
+        due_count = 0
+        if bottom_nav and not on_leads:
+            from .auth import visible_leads
+            from .constants import OPEN_STAGES
+            from .models import Lead
+            from .timeutil import today_local
+            due_count = visible_leads().filter(Lead.stage.in_(OPEN_STAGES), Lead.follow_up_date <= today_local()).count()
         return {
             "current_user": user,
             "nav_modules": modules,
             "current_module": next((m for m in modules if m.key == key), None),
+            "bottom_nav": bottom_nav,
+            "leads_url": "" if on_leads else "/",
+            "due_count": due_count,
         }
 
     return app

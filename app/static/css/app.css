@@ -71,7 +71,7 @@ body {
 
 body.locked { overflow: hidden; }
 
-.page-app { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }   /* clears the bottom nav and its raised Add button */
+.page-app, .has-bottom-nav { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }   /* clears the bottom nav and its raised Add button */
 
 h1, h2, h3, p { margin: 0; }
 
@@ -1327,6 +1327,9 @@ a.p-client-name { color: var(--accent-dark); }
 .att-actionbar .btn.ink:hover { background: #2c3540; border-color: #2c3540; }
 .att-caption { color: var(--muted); font-size: 12px; text-align: center; }
 body.has-att-bar { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
+/* With the bottom tabs showing, the Check in bar sits on top of them, its content lifted clear of the raised Add button. */
+.has-bottom-nav .att-actionbar { bottom: calc(69px + env(safe-area-inset-bottom)); padding-bottom: 34px; border-top: 1px solid var(--line); }
+body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-inset-bottom)); }
 
 .att-week { max-width: 480px; margin: 0 auto 20px; }
 .att-week-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 2px 8px; }

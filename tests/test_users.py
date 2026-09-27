@@ -125,7 +125,8 @@ def test_users_page_is_admin_only_and_titled_users(admin_client, client, anon):
     assert page.status_code == 200 and "users.js" in html
     assert '>Users &amp; roles</a>' in html                                            # top bar names the page, not Leads
     assert 'href="/users" aria-current="page"' in html                                  # marked in the menu
-    assert "app.js" not in html and "bottom-nav" not in html                            # none of the Leads screen
+    assert "app.js" not in html                                                         # none of the Leads screen...
+    assert 'href="/#active"' in html                                                    # ...but its tabs lead back to it
     assert client.get("/users").status_code == 403
     assert anon.get("/users").status_code == 302
 

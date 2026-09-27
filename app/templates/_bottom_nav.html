@@ -1,7 +1,7 @@
-{# The bottom tabs. On the Leads page (leads_url '') they switch views in place and app.js keeps the
-   current tab and the due badge up to date; on the Me hub (leads_url '/') they lead back into Leads and
-   the badge comes from the server (due_count). Only for people who have the Leads service. #}
-{% set leads_url = leads_url|default('') %}
+{# The bottom tabs, on every signed-in page for people with the Leads service (base.html). On the Leads
+   page (leads_url '') they switch views in place and app.js keeps the current tab and the due badge up to
+   date; on any other page they lead back into Leads, the badge comes from the server (due_count), and Me
+   shows as the current tab - those pages are all reached from the hub. #}
 <nav class="bottom-nav" aria-label="Main">
   <a class="bottom-nav-item" href="{{ leads_url }}#active" data-view="active" aria-label="Active leads">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -20,7 +20,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
     <span aria-hidden="true">Status</span>
   </a>
-  <a class="bottom-nav-item" href="{{ url_for('me.page') }}"{% if request.endpoint == 'me.page' %} aria-current="page"{% endif %}>
+  <a class="bottom-nav-item" href="{{ url_for('me.page') }}"{% if request.endpoint != 'views.index' %} aria-current="page"{% endif %}>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
     <span>Me</span>
   </a>

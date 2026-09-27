@@ -1,7 +1,7 @@
 """The Me hub (/me): the phone's home for everything that isn't the Leads list - who you are, today's
 check-in, a tile per service you can open, the admin's Manage links, and Sign out. It replaces the side
-menu on phones; on wider screens the menu stays and /me is just another page. For people with Leads it
-keeps the bottom tabs, so moving between Leads and Me never loses them."""
+menu on phones; on wider screens the menu stays and /me is just another page. The bottom tabs come from
+base.html, like on every other page."""
 
 from datetime import timedelta
 
@@ -37,16 +37,8 @@ def _summaries(keys) -> dict:
     return out
 
 
-def _due_count() -> int:
-    """Open leads whose follow-up is today or overdue - the number on the bottom nav's Active tab (the
-    Leads page works it out itself from its own data)."""
-    return visible_leads().filter(Lead.stage.in_(OPEN_STAGES), Lead.follow_up_date <= today_local()).count()
-
-
 @bp.get("/me")
 def page():
     keys = {m.key for m in modules_for(g.user)}
-    has_leads = "leads" in keys
     return render_template("me.html", heading="Me", heading_href="/me", summaries=_summaries(keys),
-                           has_attendance="attendance" in keys, has_leads=has_leads,
-                           due_count=_due_count() if has_leads else 0)
+                           has_attendance="attendance" in keys)

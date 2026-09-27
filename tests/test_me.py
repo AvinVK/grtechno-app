@@ -58,17 +58,26 @@ def test_bottom_nav_me_goes_to_the_hub(client):
     assert "hub-back" not in html                                  # Leads has the bottom nav instead
 
 
-def test_other_pages_get_a_way_back_to_the_hub(client, admin_client):
-    assert 'class="icon-btn hub-back" href="/me"' in client.get("/attendance").get_data(as_text=True)
-    assert 'class="icon-btn hub-back" href="/me"' in admin_client.get("/users").get_data(as_text=True)
-    assert "hub-back" not in client.get("/me").get_data(as_text=True)
+def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
+    for who, url in ((client, "/attendance"), (admin_client, "/users"), (admin_client, "/workforce"),
+                     (admin_client, "/attendance-sheet"), (admin_client, "/clients"), (admin_client, "/projects")):
+        html = who.get(url).get_data(as_text=True)
+        assert 'class="bottom-nav"' in html and 'href="/me" aria-current="page"' in html, url
+        assert 'href="/#active"' in html and "has-bottom-nav" in html, url
+        assert "hub-back" not in html, url                         # Me in the tabs is the way back
+
+
+def test_without_leads_other_pages_get_a_back_arrow_instead(manager_client):
+    html = manager_client.get("/clients").get_data(as_text=True)
+    assert 'class="icon-btn hub-back" href="/me"' in html and 'class="bottom-nav"' not in html
+    assert "hub-back" not in manager_client.get("/me").get_data(as_text=True)
 
 
 def test_hub_keeps_the_bottom_tabs_leading_back_into_leads(client):
     html = client.get("/me").get_data(as_text=True)
     for view in ("active", "closed", "add", "status"):
         assert f'href="/#{view}"' in html
-    assert 'href="/me" aria-current="page"' in html and "page-app" in html
+    assert 'href="/me" aria-current="page"' in html and "has-bottom-nav" in html
 
 
 def test_leads_page_tabs_still_switch_in_place(client):
