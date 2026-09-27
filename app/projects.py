@@ -14,6 +14,7 @@ from .extensions import db
 from .models import Activity, Attendance, Client, Project, ProjectPayment, User, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
+from .timeutil import to_local
 from .validation import Fields, api_errors, parse_money
 
 bp = Blueprint("projects", __name__)
@@ -208,7 +209,7 @@ def _detail(project):
         "can_assign_manager": can_assign,
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
-            "started": (project.start_date or project.created_at.date()).isoformat(),
+            "started": (project.start_date or to_local(project.created_at).date()).isoformat(),   # local day, not UTC
             "start_date_set": project.start_date is not None,
             "completed_at": project.completed_at.isoformat() + "Z" if project.completed_at else None,
             "brought_by": brought_by(project.lead, project.owner),

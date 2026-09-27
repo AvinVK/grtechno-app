@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_me_links.html" import services, manage with context %}
+{% block title %}Me - Leads{% endblock %}
+{% block body_class %}page-plain page-me{% endblock %}
+{% block hub_back %}{% endblock %}
+
+{% block content %}
+<main id="view" class="view me" tabindex="-1">
+  <section class="me-head">
+    <span class="me-avatar" aria-hidden="true">{{ current_user.name[:1]|upper }}</span>
+    <div class="me-who">
+      <h1>{{ current_user.name }}</h1>
+      <span><span class="me-userid">{{ current_user.userid }}</span>{% if current_user.is_admin %} · Admin{% endif %}</span>
+    </div>
+  </section>
+
+  {% if has_attendance %}
+  {# Filled in by me.js from /api/attendance/state, with check-in / check-out from attendance-core.js. #}
+  <section class="me-today" id="me-today" aria-live="polite" aria-label="Today">
+    <p class="me-today-status">Loading today…</p>
+  </section>
+  {% endif %}
+
+  <section class="me-section" aria-labelledby="me-services">
+    <div class="me-section-head"><h2 id="me-services">Services</h2></div>
+    {{ services(nav_modules, current_module, 'hub', summaries) }}
+  </section>
+
+  {{ manage('hub') }}
+
+  <form class="card-group me-rows me-signout" method="post" action="{{ url_for('auth.logout') }}">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <button class="me-row" type="submit">Sign out</button>
+  </form>
+</main>
+{% if has_attendance %}
+<script src="{{ asset('js/attendance-core.js') }}" defer></script>
+<script src="{{ asset('js/me.js') }}" defer></script>
+{% endif %}
+{% endblock %}

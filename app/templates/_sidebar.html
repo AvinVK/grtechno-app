@@ -1,4 +1,4 @@
-{% from "_icons.html" import icon %}
+{% from "_me_links.html" import services, manage with context %}
 <div class="menu-overlay" id="menu-overlay"></div>
 <aside class="sidebar" id="sidebar" aria-label="Menu">
   <div class="sb-head">
@@ -14,18 +14,8 @@
 
   <nav class="sb-nav" aria-label="Services">
     <p class="sb-label">Services</p>
-    {% for m in nav_modules if m.key != 'projects' %}
-    <a class="sb-link" href="{{ m.path }}"{% if current_module and current_module.key == m.key %} aria-current="page"{% endif %}>{{ icon(m.icon) }}<span>{{ 'Clients & Projects' if m.key == 'clients' else 'Your attendance' if m.key == 'attendance' else m.name }}</span></a>
-    {% else %}
-    <p class="sb-empty">No services are turned on yet.</p>
-    {% endfor %}
-
-    {% if current_user.is_admin %}
-    <p class="sb-label">Manage</p>
-    <a class="sb-link" href="{{ url_for('users_page.page') }}"{% if request.endpoint == 'users_page.page' %} aria-current="page"{% endif %}>{{ icon('user') }}<span>Users &amp; roles</span></a>
-    <a class="sb-link" href="{{ url_for('workers_page.workforce_page') }}"{% if request.endpoint == 'workers_page.workforce_page' %} aria-current="page"{% endif %}>{{ icon('manpower') }}<span>Manpower &amp; staff</span></a>
-    <a class="sb-link" href="{{ url_for('workers_page.sheet_page') }}"{% if request.endpoint == 'workers_page.sheet_page' %} aria-current="page"{% endif %}>{{ icon('attendance') }}<span>Attendance sheet</span></a>
-    {% endif %}
+    {{ services(nav_modules, current_module) }}
+    {{ manage() }}
   </nav>
 
   <form class="sb-foot" method="post" action="{{ url_for('auth.logout') }}">

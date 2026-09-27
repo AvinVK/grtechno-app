@@ -15,6 +15,10 @@
 {% block header %}
   <header class="topbar">
     {% if current_user %}
+    {# Phones have no side menu: every page but the hub (and Leads, which has the bottom nav) gets a way back to it. #}
+    {% block hub_back %}<a class="icon-btn hub-back" href="{{ url_for('me.page') }}" aria-label="Back to Me">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </a>{% endblock %}
     <button class="icon-btn" id="menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>

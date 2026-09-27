@@ -306,7 +306,8 @@ def test_dashboard_shows_start_brought_by_and_who_worked_on_it(app, client, admi
         db.session.commit()
 
     dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
-    assert dash["started"] == date.today().isoformat() and dash["start_date_set"] is False     # from when it was added
+    from app.timeutil import today_local
+    assert dash["started"] == today_local().isoformat() and dash["start_date_set"] is False    # the local day it was added
     assert dash["brought_by"] == {"name": "Priya Frontdesk", "how": "Took the enquiry"}
     assert [(m["name"], m["kind"], m["days"]) for m in dash["team"]] == [("Sunny Welder", "Manpower", 3), (admin.name, "App user", 1)]
     assert dash["can_close"] is True and dash["completed_at"] is None

@@ -1,5 +1,6 @@
 /* The left menu. Shared by every service page: the top-left button opens it, and it closes on the
-   dark backdrop, the X, Escape, or choosing an item. */
+   dark backdrop, the X, Escape, or choosing an item. Phones (under 640px) have no side menu - the Me hub
+   replaces it and app.css hides the button and panel - so there it never opens. */
 (() => {
   'use strict';
 
@@ -10,8 +11,10 @@
   if (!button || !panel || !overlay) return;
 
   const isOpen = () => document.body.classList.contains('menu-open');
+  const phone = window.matchMedia('(max-width: 639.98px)');
 
   function open() {
+    if (phone.matches) return;
     document.body.classList.add('menu-open');
     button.setAttribute('aria-expanded', 'true');
     closeButton.focus();
@@ -25,8 +28,6 @@
   }
 
   button.addEventListener('click', () => (isOpen() ? close() : open()));
-  // Other controls that open the same menu (the bottom nav's "Me" when there is no attendance to show).
-  document.querySelectorAll('[data-open-menu]').forEach((b) => b.addEventListener('click', open));
   closeButton.addEventListener('click', () => close());
   overlay.addEventListener('click', () => close());
   // Choosing an item on the page you are already on (for example Users) changes only the hash, so close here.

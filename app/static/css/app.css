@@ -113,6 +113,8 @@ a { color: var(--accent-dark); }
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
+  min-width: 44px;
   font: 600 20px/1 var(--font-display);
   letter-spacing: 0;
   color: var(--ink);
@@ -286,6 +288,7 @@ a.stat:hover { border-color: var(--line-strong); }
 .stage-filter::-webkit-scrollbar { display: none; }
 
 .filter-chip {
+  position: relative;
   flex: none;
   scroll-snap-align: start;
   display: inline-flex;
@@ -305,6 +308,9 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .filter-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
 .lbl-short { display: none; }
+/* Drawn 36px tall, but tappable across 44px: an invisible strip above and below. */
+.filter-chip::after { content: ""; position: absolute; inset: -4px 0; }
+.stage-filter { padding-top: 4px; padding-bottom: 4px; }
 .filter-chip[aria-pressed="true"] .n { color: rgba(255, 255, 255, 0.85); }
 
 .export-note { max-width: 1100px; margin: 18px auto 0; padding: 0 10px; font-size: 14px; }
@@ -317,7 +323,7 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .list-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 1100px; margin: 8px auto 4px; }
 .list-meta .result-count { margin: 0; }
-.link-btn.filter-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; font-size: 14px; }
+.link-btn.filter-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 14px; }
 .filter-btn svg { width: 17px; height: 17px; }
 .filter-count { padding: 1px 7px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-dark); font: 600 12px/1.4 var(--font-num); }
 
@@ -1076,7 +1082,7 @@ a.p-client-name { color: var(--accent-dark); }
   .top-actions { gap: 4px 10px; }
   .hide-narrow { display: none; }
   .view { padding: 14px; }
-  .stage-filter { margin: 0 -14px; padding: 0 14px; }
+  .stage-filter { margin: 0 -14px; padding: 4px 14px; }
   .lbl-full { display: none; }
   .lbl-short { display: inline; }
   .form-grid { grid-template-columns: 1fr; }
@@ -1267,7 +1273,7 @@ a.p-client-name { color: var(--accent-dark); }
 .att-head h2 { font: 600 24px/1.1 var(--font-display); }
 .att-head-date { color: var(--muted); font-size: 14px; }
 
-.topbar .att-team-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
+.topbar .att-team-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; justify-content: center; color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .topbar .att-team-link:hover { text-decoration: underline; }
 
 .att-today {
@@ -1415,6 +1421,66 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-section .wk-legend { margin: 10px 0 0; }
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }
+
+/* ---------- Me hub (/me) ---------- */
+
+.hub-back { display: none; }
+
+/* Phones: no side menu at all - the Me hub takes its place, reached from the bottom nav (Leads) or the
+   back arrow every other page shows in the top bar. From 640px up the menu stays as it is. */
+@media (max-width: 639.98px) {
+  #menu-btn, #sidebar, #menu-overlay { display: none !important; }
+  .hub-back { display: inline-grid; }
+}
+
+.me { display: grid; gap: 18px; max-width: 560px; margin: 0 auto; }
+.me-head { display: flex; align-items: center; gap: 14px; }
+.me-avatar {
+  flex: none; display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%;
+  background: var(--accent-tint); color: var(--accent-dark); font: 600 22px/1 var(--font-display);
+}
+.me-who { display: grid; gap: 2px; min-width: 0; }
+.me-who h1 { font: 600 22px/1.15 var(--font-display); overflow-wrap: anywhere; }
+.me-who > span { color: var(--muted); font-size: 14px; }
+.me-userid { font: 500 13px/1.2 var(--font-num); }
+
+/* Today: a dark card with the check-in state and its one button. */
+.me-today { display: grid; gap: 6px; padding: 16px 18px 18px; border-radius: var(--r-card); background: #1b2128; color: #fff; }
+.me-today-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.me-today-label { font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; }
+.me-today-link {
+  display: inline-flex; align-items: center; min-height: 44px; margin: -12px -4px -12px 0; padding: 0 4px;
+  color: #fff; font-size: 14px; font-weight: 600; text-decoration: none; opacity: 0.85;
+}
+.me-today-status { font-size: 15px; font-weight: 600; }
+.me-today-big { font: 500 32px/1.15 var(--font-num); }
+.me-today-btn { width: 100%; min-height: 52px; margin-top: 8px; font-size: 16px; }
+.btn.me-out { background: #fff; border-color: #fff; color: var(--ink); }
+.btn.me-out:hover { background: var(--track); }
+
+.me-section-head { display: flex; align-items: center; gap: 8px; margin: 0 2px 8px; }
+.me-section-head h2 { font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+.me-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.me-tile {
+  display: grid; align-content: start; gap: 4px; min-height: 96px; padding: 14px;
+  border: 1px solid var(--line); border-radius: var(--r-card); background: var(--panel);
+  color: var(--ink); text-decoration: none;
+}
+.me-tile:hover { border-color: var(--line-strong); }
+.me-tile .sb-icon { width: 26px; height: 26px; margin-bottom: 6px; color: var(--accent-dark); }
+.me-tile-name { font: 600 15px/1.25 var(--font-display); overflow-wrap: anywhere; }
+.me-tile-sum { color: var(--muted); font-size: 13px; }
+
+.me-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 0 16px;
+  border: 0; background: none; color: var(--ink); font: 600 15px/1.2 var(--font-body);
+  text-align: left; text-decoration: none; cursor: pointer;
+}
+.me-row:hover { background: var(--hover); }
+.me-row .sb-icon { color: var(--muted); }
+.me-chevron { margin-left: auto; color: var(--muted); font-size: 22px; line-height: 1; }
+.me-signout > .me-row { border-top: 0; color: var(--signal); }
 
 /* ---------- Clients & Projects: switch, grouping by area, rows ---------- */
 
