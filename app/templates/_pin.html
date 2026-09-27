@@ -1,0 +1,22 @@
+{# A PIN field shown as one box per digit. The real <input> stays in the form (same name, pattern, length,
+   autocomplete) and sits invisibly over the boxes, so typing, tapping and pasting all go to it; pin.js
+   copies what's typed into the boxes. Without JavaScript (no .js on <html>) the plain input just shows. #}
+{% macro pin_field(id, label, length, autocomplete, autosubmit=false, attrs='') -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <div class="pin-entry">
+    <input id="{{ id }}" name="{{ id }}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="{{ length }}"
+           class="pin-input" autocomplete="{{ autocomplete }}"{% if autosubmit %} data-autosubmit{% endif %} {{ attrs|safe }}>
+    <div class="pin-boxes" aria-hidden="true">{% for _ in range(length) %}<span></span>{% endfor %}</div>
+  </div>
+  {{ caller() if caller is defined else '' }}
+</div>
+{%- endmacro %}
+
+{% macro login_hero() -%}
+<div class="login-hero">
+  <span class="login-mark" aria-hidden="true">L</span>
+  <p class="login-title">Leads</p>
+  <p class="login-sub">GR Techno · fire protection</p>
+</div>
+{%- endmacro %}

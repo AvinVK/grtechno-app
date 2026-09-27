@@ -1,11 +1,13 @@
 {% extends "base.html" %}
+{% from "_pin.html" import pin_field, login_hero %}
 {% block title %}Sign in - Leads{% endblock %}
 {% block body_class %}page-login{% endblock %}
 {% block header %}{% endblock %}
 {% block content %}
+<script>document.documentElement.classList.add('js');</script>
+{{ login_hero() }}
 <main class="login">
   <form class="login-card" method="post" action="{{ url_for('auth.login') }}">
-    <p class="brand">Leads</p>
     <h1>Sign in</h1>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}<p class="notice {{ category }}" role="status">{{ message }}</p>{% endfor %}
@@ -16,15 +18,13 @@
       <input id="userid" name="userid" value="{{ userid }}" autocomplete="username" autocapitalize="none"
              spellcheck="false" placeholder="name-1234" {% if not userid %}autofocus{% endif %} required>
     </div>
-    <div class="field">
-      <label for="pin">PIN</label>
-      <input id="pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6"
-             autocomplete="current-password" {% if userid %}autofocus{% endif %} required
-             {% if error %}aria-invalid="true" aria-describedby="login-error"{% endif %}>
+    {% call pin_field('pin', 'PIN', 6, 'current-password', autosubmit=true,
+                      attrs=('autofocus ' if userid else '') ~ 'required' ~ (' aria-invalid="true" aria-describedby="login-error"' if error else '')) %}
       {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
-    </div>
+    {% endcall %}
     <button class="btn primary" type="submit">Sign in</button>
     <p class="hint">First time, or forgot your PIN? <a href="{{ url_for('auth.set_pin') }}">Set a new PIN</a> with the setup code from your admin.</p>
   </form>
 </main>
+<script src="{{ asset('js/pin.js') }}"></script>
 {% endblock %}
