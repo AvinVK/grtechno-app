@@ -94,18 +94,28 @@ a { color: var(--accent-dark); }
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 12px;
-  padding: calc(10px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
+  padding: calc(13px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
+  background: var(--panel);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The sunset gradient, kept as a thin stripe along the top edge of the white bar. */
+.topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
   background: var(--bar);
-  color: var(--bar-ink);
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font: 600 19px/1 var(--font-display);
+  font: 600 20px/1 var(--font-display);
   letter-spacing: 0;
-  color: var(--bar-ink);
+  color: var(--ink);
   text-decoration: none;
 }
 
@@ -118,8 +128,7 @@ a { color: var(--accent-dark); }
 
 .top-actions form { margin: 0; }
 
-.topbar .link-btn { color: rgba(255, 255, 255, 0.9); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
-.topbar .link-btn:hover { color: #fff; }
+.topbar .link-btn { color: var(--accent-dark); }
 
 /* ---------- Buttons ---------- */
 
@@ -631,7 +640,8 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 }
 
 .icon-btn svg { width: 26px; height: 26px; }
-.icon-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.icon-btn:hover { background: var(--hover); }
+.sb-head .icon-btn:hover { background: rgba(255, 255, 255, 0.16); }     /* on the gradient */
 
 .menu-overlay {
   position: fixed;
@@ -873,7 +883,7 @@ a.p-client-name { color: var(--accent-dark); }
 }
 
 @media (max-width: 640px) {
-  .topbar { padding: calc(8px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 8px calc(14px + env(safe-area-inset-left)); gap: 6px 12px; }
+  .topbar { padding: calc(11px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 8px calc(14px + env(safe-area-inset-left)); gap: 6px 12px; }
   .top-actions { gap: 4px 10px; }
   .hide-narrow { display: none; }
   .view { padding: 14px; }
@@ -1043,7 +1053,7 @@ a.p-client-name { color: var(--accent-dark); }
 .att-head h2 { font: 600 24px/1.1 var(--font-display); }
 .att-head-date { color: var(--muted); font-size: 14px; }
 
-.topbar .att-team-link { color: #fff; font-weight: 600; text-decoration: none; }
+.topbar .att-team-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .topbar .att-team-link:hover { text-decoration: underline; }
 
 .att-today {
