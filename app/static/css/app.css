@@ -388,6 +388,7 @@ a.stat:hover { border-color: var(--line-strong); }
 .field { display: grid; gap: 4px; align-content: start; }
 
 .field label { font-size: 14px; font-weight: 600; }
+.req-mark { color: var(--signal); font-weight: 700; }
 
 input, select, textarea {
   width: 100%;

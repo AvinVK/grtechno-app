@@ -404,13 +404,13 @@
     };
     const inputs = {};
 
-    const wrapField = (name, label, control, cls = '') => {
+    const wrapField = (name, label, control, cls = '', required = false) => {
       control.id = `f-${name}`;
       control.name = name;
       control.setAttribute('aria-describedby', `err-${name}`);
       inputs[name] = control;
       return h('div', { class: `field ${cls}` },
-        h('label', { for: `f-${name}` }, label),
+        h('label', { for: `f-${name}` }, label, required ? h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *') : null),
         control,
         h('p', { class: 'err', id: `err-${name}`, role: 'alert' }));
     };
@@ -452,7 +452,7 @@
         if (mine === pinSeq) pinHint.textContent = err.message;
       }
     });
-    const pinField = wrapField('site_pincode', 'Site pincode', pinInput);
+    const pinField = wrapField('site_pincode', 'Site pincode', pinInput, '', !lead);
     pinField.append(pinHint);
 
     // A brand-new lead is either for a company we've never worked with, or a new enquiry from someone
@@ -477,7 +477,7 @@
       return { id: opt.id, box: h('label', { class: 'check-row' }, cb, h('span', {}, opt.name)) };
     });
     const serviceField = h('div', { class: 'field wide' },
-      h('label', {}, 'Services'),
+      h('label', {}, 'Services', !lead ? h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *') : null),
       h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
       h('p', { class: 'err', id: 'err-service_ids', role: 'alert' }));
 
@@ -491,25 +491,25 @@
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
 
     companyFields = h('div', { class: 'form-grid', hidden: !!L.client_id },
-      wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' })),
-      wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' })));
+      wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' }), '', !lead),
+      wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' }), '', !lead));
 
     const enquiryFields = [
-      wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' })),
+      wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' }), '', !lead),
       wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
-      wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set')),
+      wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set'), '', !lead),
       pinField,
-      wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' })),
-      wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' })),
-      wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' })),
-      wrapField('site_address', 'Site address', area(2, L.site_address), 'wide'),
+      wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' }), '', !lead),
+      wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' }), '', !lead),
+      wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' }), '', !lead),
+      wrapField('site_address', 'Site address', area(2, L.site_address), 'wide', !lead),
       serviceField,
-      wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set')),
-      wrapField('enquired_by_id', 'Enquired by', enquiredBySel),
+      wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set'), '', !lead),
+      wrapField('enquired_by_id', 'Enquired by', enquiredBySel, '', !lead),
       h('div', { class: 'field wide' },
-        wrapField('follow_up_date', 'Follow-up date', dateInput),
+        wrapField('follow_up_date', 'Follow-up date', dateInput, '', !lead),
         quick),
-      wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
+      wrapField('notes', 'Notes', area(4, L.notes), 'wide', !lead),
     ];
 
     const stageField = lead
@@ -724,6 +724,25 @@
       const isNew = !lead;
       if (isNew) body.stage = S.open_stages[0];
       try {
+        // Every Add Lead field is required except email - checked here, in-app, rather than leaning on
+        // the browser's own native "required" popups, which would look and behave unlike the rest of
+        // this form's validation.
+        if (isNew) {
+          const missing = {};
+          if (!body.client_id) {
+            if (!body.company.trim()) missing.company = 'This field is required';
+            if (!body.contact_name.trim()) missing.contact_name = 'This field is required';
+          }
+          ['phone', 'site_category', 'site_pincode', 'site_state', 'site_district', 'site_city',
+            'site_address', 'source', 'notes'].forEach((name) => {
+            if (!body[name].trim()) missing[name] = 'This field is required';
+          });
+          if (!body.service_ids.length) missing.service_ids = 'Choose at least one service';
+          if (!body.enquired_by_id) missing.enquired_by_id = 'This field is required';
+          if (!body.follow_up_date) missing.follow_up_date = 'This field is required';
+          if (Object.keys(missing).length) throw { message: 'Check the highlighted fields', fields: missing };
+        }
+
         let res = isNew
           ? await api('/api/leads', { method: 'POST', body })
           : await api(`/api/leads/${lead.id}`, { method: 'PATCH', body });
