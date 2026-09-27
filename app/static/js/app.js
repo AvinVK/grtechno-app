@@ -500,13 +500,15 @@
               wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)))))
       : null;
 
-    // Quote sent's fields are built into this same <form> (so Save changes submits them together with
-    // everything else) but rendered as a separate DOM node, quoteSection, so the caller can place it in
-    // pipeline order - after Site survey - instead of stuck wherever it was built. Its inputs still land
-    // in `inputs`/get submitted normally: the submit handler reads them by JS reference, not by DOM
-    // position, so where the node ends up in the drawer doesn't matter to it.
+    // Quote sent's fields (and, below, Site survey's) are built into this same <form> so one Save
+    // changes button submits everything together - no separate per-stage save button. Each is rendered
+    // as a separate DOM node so the caller can place it in pipeline order; its inputs still land in
+    // `inputs`/get submitted normally since the submit handler reads them by JS reference, not by DOM
+    // position.
     let form;
     let quoteSection = null;
+    let surveySectionNode = null;
+    let surveyBody = null;      // set only when the survey section exists - read by the submit handler
     if (!lead) {
       // Creating: one flat form, same as always - the stage accordion only makes sense once a lead exists.
       form = h('form', { novalidate: true, id: 'lead-form' },
@@ -514,17 +516,96 @@
         h('div', { class: 'form-grid' }, enquiryFields));
     } else {
       const expand = nextStageIndex(lead);
+      const surveyDone = !!(lead.survey && lead.survey.survey_date);
+
+      // Site survey - always editable, since it's either already done or is exactly what's next.
+      const sv = lead.survey || {};
+      const defaultSurveyor = sv.surveyor_id ?? lead.enquired_by_id;
+      const surveyDateInput = h('input', { type: 'date', value: sv.survey_date || '' });
+      const surveyorSel = h('select', {}, h('option', { value: '' }, 'Not set'),
+        S.staff.map((w) => h('option', { value: w.id, selected: w.id === defaultSurveyor }, w.name)));
+      const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
+      const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
+      const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
+      const surveyErr = h('p', { class: 'err', role: 'alert' });
+      surveyBody = () => ({
+        survey_date: surveyDateInput.value || null, surveyor_id: surveyorSel.value || null,
+        rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
+      });
+
+      if (lead.stage === 'New enquiry' && !sv.survey_date) {
+        const updateSaveLabel = () => {
+          saveBtn.textContent = surveyDateInput.value ? 'Save & move to Site survey' : 'Save changes';
+        };
+        surveyDateInput.addEventListener('input', updateSaveLabel);
+        surveyDateInput.addEventListener('change', updateSaveLabel);
+        updateSaveLabel();
+      }
+
+      const photoGrid = h('div', { class: 'photo-grid' });
+      function renderPhotos() {
+        clear(photoGrid);
+        (lead.survey?.photos || []).forEach((p) => photoGrid.append(h('div', { class: 'photo-thumb' },
+          h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Site photo' })),
+          h('button', {
+            class: 'icon-x', type: 'button', 'aria-label': 'Remove photo',
+            onclick: async () => {
+              await api(`/api/leads/${lead.id}/survey/photos/${p.id}`, { method: 'DELETE' });
+              lead.survey.photos = lead.survey.photos.filter((x) => x.id !== p.id);
+              renderPhotos();
+            },
+          }, '×'))));
+      }
+      renderPhotos();
+
+      const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true });
+      fileInput.onchange = async () => {
+        if (!fileInput.files.length) return;
+        if (!lead.survey) { surveyErr.textContent = 'Save the survey details first'; fileInput.value = ''; return; }
+        const body = new FormData();
+        for (const f of fileInput.files) body.append('photos', f);
+        try {
+          const res = await fetch(`/api/leads/${lead.id}/survey/photos`, { method: 'POST', body, credentials: 'same-origin' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'Could not upload the photo');
+          lead.survey = data.survey;
+          renderPhotos();
+          toast('Photos added');
+        } catch (e) { surveyErr.textContent = e.message; }
+        fileInput.value = '';
+      };
+
+      surveySectionNode = h('details', { class: 'stage-section', open: expand === 1 },
+        h('summary', { class: 'stage-section-title' }, 'Site survey'),
+        h('div', { class: 'stage-section-body' },
+          h('div', { class: 'form-grid' },
+            plainField('Survey date', surveyDateInput), plainField('Surveyed by', surveyorSel),
+            plainField('Site representative', repName), plainField('Role (manager, guard, ...)', repRole),
+            plainField('Representative phone', repPhone)),
+          surveyErr,
+          h('p', { class: 'hint' }, 'Site photos'), photoGrid,
+          h('label', { class: 'btn small' }, 'Add photos', fileInput)));
+
       const quoteFields = h('div', { class: 'form-grid' },
         wrapField('quote_sent_date', 'Quote sent', text('date', L.quote_sent_date)),
         wrapField('est_value', `Estimated value (${S.settings.currency})`,
           text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })));
-      quoteSection = h('details', { class: 'stage-section', open: expand === 2 },
+      quoteSection = h('details', { class: `stage-section${surveyDone ? '' : ' locked'}`, open: surveyDone && expand === 2 },
         h('summary', { class: 'stage-section-title' }, 'Quote sent'),
         h('div', { class: 'stage-section-body' }, quoteFields));
 
-      // Sending the quote for the first time is what completes Site survey's own step - make that
-      // outcome visible on the button itself, before it's clicked, instead of only in the toast after.
-      if (lead.stage === 'Site survey' && !lead.quote_sent_date) {
+      if (!surveyDone) {
+        // Nothing about a quote can be entered before the survey it depends on exists - lock the fields
+        // and explain why, rather than letting someone type into a section that will just be rejected.
+        inputs.quote_sent_date.disabled = true;
+        inputs.est_value.disabled = true;
+        quoteSection.querySelector('summary').addEventListener('click', (e) => {
+          e.preventDefault();
+          toast('Complete the site survey first', true);
+        });
+      } else if (lead.stage === 'Site survey' && !lead.quote_sent_date) {
+        // Sending the quote for the first time is what completes Site survey's own step - make that
+        // outcome visible on the button itself, before it's clicked, instead of only in the toast after.
         const quoteDateInput = inputs.quote_sent_date;
         const updateSaveLabel = () => {
           saveBtn.textContent = quoteDateInput.value ? 'Save & move to Quote sent' : 'Save changes';
@@ -560,7 +641,7 @@
 
     // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
     // display has to check both roots instead of just `form`.
-    const formRoots = quoteSection ? [form, quoteSection] : [form];
+    const formRoots = [form, quoteSection, surveySectionNode].filter(Boolean);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -581,9 +662,12 @@
       const isNew = !lead;
       if (isNew) body.stage = S.open_stages[0];
       try {
-        const res = isNew
+        let res = isNew
           ? await api('/api/leads', { method: 'POST', body })
           : await api(`/api/leads/${lead.id}`, { method: 'PATCH', body });
+        // Site survey has no save button of its own - whatever's in its fields rides along with the
+        // same Save changes click, right after the lead's own fields land.
+        if (surveyBody) res = await api(`/api/leads/${lead.id}/survey`, { method: 'PUT', body: surveyBody() });
         onSaved();
         const autoAdvanced = !isNew && !outcome && res.stage !== lead.stage;
         toast(isNew ? 'Lead added' : outcome ? `Marked ${outcome.toLowerCase()}`
@@ -612,11 +696,11 @@
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
-    return { form, saveBtn, outcomeButtons, quoteSection };
+    return { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode };
   }
 
   function buildDrawer(lead) {
-    const { form, saveBtn, outcomeButtons, quoteSection } = buildLeadForm(lead, closeDrawer);
+    const { form, saveBtn, outcomeButtons, quoteSection, surveySectionNode } = buildLeadForm(lead, closeDrawer);
 
     const remove = lead ? h('button', {
       class: 'btn danger', type: 'button',
@@ -643,7 +727,7 @@
         outcomeButtons,
         projectBox(lead),
         form,
-        lead ? surveySection(lead) : null,
+        surveySectionNode,
         quoteSection,
         lead ? negotiationSection(lead) : null,
         checklistSection(lead.id),
@@ -668,100 +752,12 @@
   }
 
 
-  /* ---------- site survey ---------- */
-
   const plainField = (label, control) => h('div', { class: 'field' }, h('label', {}, label), control);
-
-  function surveySection(lead) {
-    const sv = lead.survey || {};
-    // No surveyor picked yet: default to whoever took the enquiry, since that's usually the same person -
-    // still just a starting guess, changeable here before Save survey commits it.
-    const defaultSurveyor = sv.surveyor_id ?? lead.enquired_by_id;
-    const dateInput = h('input', { type: 'date', value: sv.survey_date || '' });
-    const surveyorSel = h('select', {}, h('option', { value: '' }, 'Not set'),
-      S.staff.map((w) => h('option', { value: w.id, selected: w.id === defaultSurveyor }, w.name)));
-    const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
-    const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
-    const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
-    const err = h('p', { class: 'err', role: 'alert' });
-
-    const saveBtn = h('button', { class: 'btn', type: 'button' }, 'Save survey');
-    if (lead.stage === 'New enquiry' && !sv.survey_date) {
-      const updateSaveLabel = () => {
-        saveBtn.textContent = dateInput.value ? 'Save & move to Site survey' : 'Save survey';
-      };
-      dateInput.addEventListener('input', updateSaveLabel);
-      dateInput.addEventListener('change', updateSaveLabel);
-      updateSaveLabel();
-    }
-    saveBtn.onclick = async () => {
-      err.textContent = '';
-      try {
-        const res = await api(`/api/leads/${lead.id}/survey`, { method: 'PUT', body: {
-          survey_date: dateInput.value || null, surveyor_id: surveyorSel.value || null,
-          rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
-        } });
-        const advanced = res.stage !== lead.stage;
-        toast(advanced ? `Survey saved – moved to ${res.stage}` : 'Survey saved');
-        if (advanced) {
-          // The stage dropdown, and which section opens by default, were built for the old stage -
-          // reload the lead's own data and rebuild the drawer instead of patching those in place.
-          await load();
-          openDrawer(lead.id);
-        } else {
-          lead.survey = res.survey;
-        }
-      } catch (e) { err.textContent = e.message; }
-    };
-
-    const photoGrid = h('div', { class: 'photo-grid' });
-    function renderPhotos() {
-      clear(photoGrid);
-      (lead.survey?.photos || []).forEach((p) => photoGrid.append(h('div', { class: 'photo-thumb' },
-        h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Site photo' })),
-        h('button', {
-          class: 'icon-x', type: 'button', 'aria-label': 'Remove photo',
-          onclick: async () => {
-            await api(`/api/leads/${lead.id}/survey/photos/${p.id}`, { method: 'DELETE' });
-            lead.survey.photos = lead.survey.photos.filter((x) => x.id !== p.id);
-            renderPhotos();
-          },
-        }, '×'))));
-    }
-    renderPhotos();
-
-    const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true });
-    fileInput.onchange = async () => {
-      if (!fileInput.files.length) return;
-      if (!lead.survey) { err.textContent = 'Save the survey details first'; fileInput.value = ''; return; }
-      const body = new FormData();
-      for (const f of fileInput.files) body.append('photos', f);
-      try {
-        const res = await fetch(`/api/leads/${lead.id}/survey/photos`, { method: 'POST', body, credentials: 'same-origin' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Could not upload the photo');
-        lead.survey = data.survey;
-        renderPhotos();
-        toast('Photos added');
-      } catch (e) { err.textContent = e.message; }
-      fileInput.value = '';
-    };
-
-    return h('details', { class: 'stage-section', open: nextStageIndex(lead) === 1 },
-      h('summary', { class: 'stage-section-title' }, 'Site survey'),
-      h('div', { class: 'stage-section-body' },
-        h('div', { class: 'form-grid' },
-          plainField('Survey date', dateInput), plainField('Surveyed by', surveyorSel),
-          plainField('Site representative', repName), plainField('Role (manager, guard, ...)', repRole),
-          plainField('Representative phone', repPhone)),
-        err, saveBtn,
-        h('p', { class: 'hint' }, 'Site photos'), photoGrid,
-        h('label', { class: 'btn small' }, 'Add photos', fileInput)));
-  }
 
   /* ---------- negotiation rounds ---------- */
 
   function negotiationSection(lead) {
+    const quoteSent = !!lead.quote_sent_date;
     const list = h('div', { class: 'negotiation-rows' });
     const err = h('p', { class: 'err', role: 'alert' });
 
@@ -774,6 +770,11 @@
       // Logging the first round is what completes Quote sent's own step - say so on the button itself.
       const addLabel = lead.stage === 'Quote sent' ? 'Save & move to Negotiation' : 'Add round';
       const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : addLabel);
+      if (!round && !quoteSent) {
+        // A round can't exist before a quote does - lock the blank "add a round" row rather than let
+        // someone fill it in only to have the save rejected.
+        [dateInput, person, estimate, finalized, saveBtn].forEach((el) => { el.disabled = true; });
+      }
       saveBtn.onclick = async () => {
         err.textContent = '';
         const body = {
@@ -809,9 +810,16 @@
     }
     renderRows();
 
-    return h('details', { class: 'stage-section', open: nextStageIndex(lead) === 3 },
+    const section = h('details', { class: `stage-section${quoteSent ? '' : ' locked'}`, open: quoteSent && nextStageIndex(lead) === 3 },
       h('summary', { class: 'stage-section-title' }, 'Negotiation'),
       h('div', { class: 'stage-section-body' }, list, err));
+    if (!quoteSent) {
+      section.querySelector('summary').addEventListener('click', (e) => {
+        e.preventDefault();
+        toast('Send a quote first', true);
+      });
+    }
+    return section;
   }
 
   /* ---------- work checklist ---------- */

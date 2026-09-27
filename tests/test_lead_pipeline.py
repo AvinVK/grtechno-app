@@ -109,6 +109,19 @@ def test_quote_sent_requires_a_completed_survey(admin_client):
     assert ok.status_code == 200
 
 
+def test_quote_details_cannot_be_entered_before_the_survey_is_done(admin_client):
+    # Setting quote_sent_date is itself a stage-advancing action, so it needs the gate even when no
+    # explicit "stage" field rides along with it - a lead sitting at New enquiry shouldn't be able to
+    # pick up a quote just by filling in that one field.
+    lead = make_lead(admin_client)
+    blocked = admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-22", "est_value": 50000})
+    assert blocked.status_code == 422 and "survey" in blocked.get_json()["error"]
+
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    ok = admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-22", "est_value": 50000})
+    assert ok.status_code == 200 and ok.get_json()["stage"] == "Quote sent"
+
+
 def test_negotiation_requires_a_sent_quote(admin_client):
     lead = make_lead(admin_client)
     admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Site survey"})

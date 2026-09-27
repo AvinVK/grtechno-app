@@ -1105,3 +1105,9 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 }
 details[open] > summary.stage-section-title::before { transform: rotate(-135deg); margin-top: -3px; }
 .stage-section-body { padding: 16px; }
+
+/* A stage that can't be entered yet - the section before it isn't done. Still shows what's coming,
+   just greyed out and non-expanding until it unlocks. */
+.stage-section.locked { opacity: 0.55; }
+.stage-section.locked > summary.stage-section-title { cursor: not-allowed; }
+.stage-section.locked > summary.stage-section-title::before { display: none; }

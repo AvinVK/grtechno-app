@@ -205,6 +205,12 @@ def _apply(lead: Lead, data: dict) -> None:
         if gate_error:
             abort(422, gate_error)
 
+    # Entering quote details is itself a stage-advancing action, so it needs the same gate as an
+    # explicit stage jump would - otherwise a lead could pick up a quote while still sitting at New
+    # enquiry, before its site survey exists.
+    if data.get("quote_sent_date") and not (lead.survey and lead.survey.survey_date):
+        abort(422, "Complete the site survey first")
+
     if "follow_up_date" in data and data["follow_up_date"] != lead.follow_up_date:
         new_date = data["follow_up_date"]
         _log(lead, "followup", f"Follow-up set for {_fmt_date(new_date)}" if new_date else "Follow-up cleared")
