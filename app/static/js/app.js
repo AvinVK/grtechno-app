@@ -531,6 +531,7 @@
     let surveyBody = null;              // set only when the survey section exists - read by the submit handler
     let surveyCheck = () => [];         // the survey controls that must be filled before saving
     let negotiationCheck = () => [];    // same, for the first negotiation round
+    let roundRequested = false;         // Save round was tapped - the first round's fields are then required
     let negotiationSectionNode = null;
     let negotiationBody = null;         // set only when this is the lead's first (stage-advancing) round
     if (!lead) {
@@ -655,7 +656,8 @@
         const negPerson = h('input', { type: 'text', maxlength: 120 });
         const negEstimate = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${S.settings.currency})` });
         const negFinalized = h('input', { type: 'checkbox' });
-        const negStarted = () => negFinalized.checked || [negDateInput, negPerson, negEstimate].some((c) => c.value.trim());
+        const negStarted = () => roundRequested || negFinalized.checked
+          || [negDateInput, negPerson, negEstimate].some((c) => c.value.trim());
         negotiationCheck = () => (negStarted() ? [negDateInput, negPerson, negEstimate] : []);
         negotiationBody = () => (negStarted() ? {
           date: negDateInput.value, authorized_person: negPerson.value,
@@ -667,9 +669,18 @@
           reqField('Authorized person', negPerson),
           reqField(`Estimate (${S.settings.currency})`, negEstimate),
           h('label', { class: 'check-row wide' }, negFinalized, h('span', {}, 'Finalized')));
+        // Its own Save round button, same as later rounds have - it still goes through the one Save changes
+        // submit (so the lead's other edits and the move to Negotiation land together), just with the
+        // round's fields required even if all of them were left empty.
+        const saveRoundBtn = h('button', {
+          class: 'btn small', type: 'button', onclick: () => { roundRequested = true; saveBtn.click(); },
+        }, 'Save round');
         negotiationSectionNode = h('details', { class: `stage-section${quoteSent ? '' : ' locked'}`, open: quoteSent && expand === 3 },
           h('summary', { class: 'stage-section-title' }, 'Negotiation'),
-          h('div', { class: 'stage-section-body' }, negFields));
+          h('div', { class: 'stage-section-body' },
+            h('div', { class: 'negotiation-round' },
+              h('p', { class: 'negotiation-round-label' }, 'Round 1 (new)'),
+              negFields, h('div', { class: 'round-actions' }, saveRoundBtn))));
 
         if (!quoteSent) {
           negotiationSectionNode.querySelector('summary').addEventListener('click', (e) => {
@@ -797,6 +808,7 @@
         (first || errorBox).focus?.();
       } finally {
         saveBtn.disabled = false;
+        roundRequested = false;
       }
     });
 
