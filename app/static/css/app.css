@@ -1474,13 +1474,13 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 
 .me-row {
   display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 0 16px;
-  border: 0; background: none; color: var(--ink); font: 600 15px/1.2 var(--font-body);
+  background: none; color: var(--ink); font: 600 15px/1.2 var(--font-body);
   text-align: left; text-decoration: none; cursor: pointer;
 }
 .me-row:hover { background: var(--hover); }
 .me-row .sb-icon { color: var(--muted); }
 .me-chevron { margin-left: auto; color: var(--muted); font-size: 22px; line-height: 1; }
-.me-signout > .me-row { border-top: 0; color: var(--signal); }
+.me-signout > .me-row { border: 0; color: var(--signal); }            /* a <button>: no border of its own */
 
 /* ---------- Clients & Projects: switch, grouping by area, rows ---------- */
 
