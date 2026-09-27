@@ -334,9 +334,10 @@
     // The figure to show next to the original estimate - not below it - so a lead being negotiated
     // down (or up) is visible without opening it, in the same single-line cell rather than growing the
     // row onto a second line. Once a round is marked Finalized that's the number that matters, even if
-    // a later (still-open) round exists after it - otherwise it stays the most recent round.
+    // a later (still-open) round exists after it - otherwise it stays the most recent round. If more than
+    // one round is ticked Finalized, the latest one is the deal that stands.
     const rounds = l.negotiations || [];
-    const shownRound = rounds.find((r) => r.finalized) || (rounds.length ? rounds[rounds.length - 1] : null);
+    const shownRound = [...rounds].reverse().find((r) => r.finalized) || (rounds.length ? rounds[rounds.length - 1] : null);
     const roundText = shownRound && shownRound.estimate != null
       ? `R${shownRound.round_no}${shownRound.finalized ? ' ✓' : ''} ${fmtMoney(shownRound.estimate)}` : null;
     return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
@@ -452,7 +453,7 @@
         if (mine === pinSeq) pinHint.textContent = err.message;
       }
     });
-    const pinField = wrapField('site_pincode', 'Site pincode', pinInput, '', !lead);
+    const pinField = wrapField('site_pincode', 'Site pincode', pinInput, '', true);
     pinField.append(pinHint);
 
     // A brand-new lead is either for a company we've never worked with, or a new enquiry from someone
@@ -477,7 +478,7 @@
       return { id: opt.id, box: h('label', { class: 'check-row' }, cb, h('span', {}, opt.name)) };
     });
     const serviceField = h('div', { class: 'field wide' },
-      h('label', {}, 'Services', !lead ? h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *') : null),
+      h('label', {}, 'Services', h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')),
       h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
       h('p', { class: 'err', id: 'err-service_ids', role: 'alert' }));
 
@@ -491,25 +492,25 @@
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
 
     companyFields = h('div', { class: 'form-grid', hidden: !!L.client_id },
-      wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' }), '', !lead),
-      wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' }), '', !lead));
+      wrapField('company', 'Company', text('text', L.company, { maxlength: 160, autocomplete: 'off' }), '', true),
+      wrapField('contact_name', 'Contact person', text('text', L.contact_name, { maxlength: 120, autocomplete: 'off' }), '', true));
 
     const enquiryFields = [
-      wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' }), '', !lead),
+      wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' }), '', true),
       wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
-      wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set'), '', !lead),
+      wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set'), '', true),
       pinField,
-      wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' }), '', !lead),
-      wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' }), '', !lead),
-      wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' }), '', !lead),
-      wrapField('site_address', 'Site address', area(2, L.site_address), 'wide', !lead),
+      wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' }), '', true),
+      wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' }), '', true),
+      wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' }), '', true),
+      wrapField('site_address', 'Site address', area(2, L.site_address), 'wide', true),
       serviceField,
-      wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set'), '', !lead),
-      wrapField('enquired_by_id', 'Enquired by', enquiredBySel, '', !lead),
+      wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set'), '', true),
+      wrapField('enquired_by_id', 'Enquired by', enquiredBySel, '', true),
       h('div', { class: 'field wide' },
-        wrapField('follow_up_date', 'Follow-up date', dateInput, '', !lead),
+        wrapField('follow_up_date', 'Follow-up date', dateInput, '', true),
         quick),
-      wrapField('notes', 'Notes', area(4, L.notes), 'wide', !lead),
+      wrapField('notes', 'Notes', area(4, L.notes), 'wide', true),
     ];
 
     const stageField = lead
@@ -528,6 +529,8 @@
     let quoteSection = null;
     let surveySectionNode = null;
     let surveyBody = null;              // set only when the survey section exists - read by the submit handler
+    let surveyCheck = () => [];         // the survey controls that must be filled before saving
+    let negotiationCheck = () => [];    // same, for the first negotiation round
     let negotiationSectionNode = null;
     let negotiationBody = null;         // set only when this is the lead's first (stage-advancing) round
     if (!lead) {
@@ -551,6 +554,10 @@
       const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
       const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
       const surveyErr = h('p', { class: 'err', role: 'alert' });
+      // Once any part of the survey is entered (or it was already saved), every survey box must be filled.
+      // Surveyed by is left out of "started" since it's prefilled with whoever took the enquiry.
+      surveyCheck = () => (sv.survey_date || [surveyDateInput, repName, repRole, repPhone].some((c) => c.value.trim())
+        ? [surveyDateInput, surveyorSel, repName, repRole, repPhone] : []);
       surveyBody = () => ({
         survey_date: surveyDateInput.value || null, surveyor_id: surveyorSel.value || null,
         rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
@@ -602,17 +609,17 @@
         h('summary', { class: 'stage-section-title' }, 'Site survey'),
         h('div', { class: 'stage-section-body' },
           h('div', { class: 'form-grid' },
-            plainField('Survey date', surveyDateInput), plainField('Surveyed by', surveyorSel),
-            plainField('Site representative', repName), plainField('Role (manager, guard, ...)', repRole),
-            plainField('Representative phone', repPhone)),
+            reqField('Survey date', surveyDateInput), reqField('Surveyed by', surveyorSel),
+            reqField('Site representative', repName), reqField('Role (manager, guard, ...)', repRole),
+            reqField('Representative phone', repPhone)),
           surveyErr,
           h('p', { class: 'hint' }, 'Site photos'), photoGrid,
           h('label', { class: 'btn small' }, 'Add photos', fileInput)));
 
       const quoteFields = h('div', { class: 'form-grid' },
-        wrapField('quote_sent_date', 'Quote sent', dateField(L.quote_sent_date)),
+        wrapField('quote_sent_date', 'Quote sent', dateField(L.quote_sent_date), '', true),
         wrapField('est_value', `Estimated value (${S.settings.currency})`,
-          text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' })));
+          text('number', L.est_value, { min: '0', step: 'any', inputmode: 'decimal' }), '', true));
       quoteSection = h('details', { class: `stage-section${surveyDone ? '' : ' locked'}`, open: surveyDone && expand === 2 },
         h('summary', { class: 'stage-section-title' }, 'Quote sent'),
         h('div', { class: 'stage-section-body' }, quoteFields));
@@ -648,15 +655,17 @@
         const negPerson = h('input', { type: 'text', maxlength: 120 });
         const negEstimate = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${S.settings.currency})` });
         const negFinalized = h('input', { type: 'checkbox' });
-        negotiationBody = () => (negDateInput.value ? {
+        const negStarted = () => negFinalized.checked || [negDateInput, negPerson, negEstimate].some((c) => c.value.trim());
+        negotiationCheck = () => (negStarted() ? [negDateInput, negPerson, negEstimate] : []);
+        negotiationBody = () => (negStarted() ? {
           date: negDateInput.value, authorized_person: negPerson.value,
           estimate: negEstimate.value === '' ? null : negEstimate.value, finalized: negFinalized.checked,
         } : null);
 
         const negFields = h('div', { class: 'form-grid' },
-          plainField('Round date', negDateInput),
-          plainField('Authorized person', negPerson),
-          plainField(`Estimate (${S.settings.currency})`, negEstimate),
+          reqField('Round date', negDateInput),
+          reqField('Authorized person', negPerson),
+          reqField(`Estimate (${S.settings.currency})`, negEstimate),
           h('label', { class: 'check-row wide' }, negFinalized, h('span', {}, 'Finalized')));
         negotiationSectionNode = h('details', { class: `stage-section${quoteSent ? '' : ' locked'}`, open: quoteSent && expand === 3 },
           h('summary', { class: 'stage-section-title' }, 'Negotiation'),
@@ -724,12 +733,12 @@
       const isNew = !lead;
       if (isNew) body.stage = S.open_stages[0];
       try {
-        // Every Add Lead field is required except email - checked here, in-app, rather than leaning on
-        // the browser's own native "required" popups, which would look and behave unlike the rest of
-        // this form's validation.
-        if (isNew) {
+        // Every field is required except email - on Add lead and when editing - checked here, in-app,
+        // rather than leaning on the browser's own native "required" popups, which would look and behave
+        // unlike the rest of this form's validation.
+        {
           const missing = {};
-          if (!body.client_id) {
+          if (!(isNew ? body.client_id : L.client_id)) {
             if (!body.company.trim()) missing.company = 'This field is required';
             if (!body.contact_name.trim()) missing.contact_name = 'This field is required';
           }
@@ -740,7 +749,16 @@
           if (!body.service_ids.length) missing.service_ids = 'Choose at least one service';
           if (!body.enquired_by_id) missing.enquired_by_id = 'This field is required';
           if (!body.follow_up_date) missing.follow_up_date = 'This field is required';
-          if (Object.keys(missing).length) throw { message: 'Check the highlighted fields', fields: missing };
+          // Quote sent: once either box is filled (or the quote was already sent), both are required.
+          if (!isNew && !inputs.quote_sent_date.disabled && (body.quote_sent_date || body.est_value !== null || lead.quote_sent_date)) {
+            if (!body.quote_sent_date) missing.quote_sent_date = 'This field is required';
+            if (body.est_value === null) missing.est_value = 'This field is required';
+          }
+          const stageOk = requireFilled([...surveyCheck(), ...negotiationCheck()]);
+          if (Object.keys(missing).length || !stageOk) {
+            Object.keys(missing).forEach((name) => inputs[name]?.closest('details')?.setAttribute('open', ''));
+            throw { message: 'Check the highlighted fields', fields: missing };
+          }
         }
 
         let res = isNew
@@ -843,6 +861,31 @@
 
   const plainField = (label, control) => h('div', { class: 'field' }, h('label', {}, label), control);
 
+  // A labeled field marked required (red asterisk) with its own inline error line, for the stage fields
+  // that aren't part of buildLeadForm's `inputs` - checked with requireFilled below.
+  const reqField = (label, control) => {
+    control._err = h('p', { class: 'err', role: 'alert' });
+    return h('div', { class: 'field' },
+      h('label', {}, label, h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')),
+      control, control._err);
+  };
+
+  // Flags every empty reqField control (opening its section, focusing the first); true when all are filled.
+  function requireFilled(controls) {
+    let first = null;
+    for (const c of controls) {
+      const empty = !String(c.value ?? '').trim();
+      c._err.textContent = empty ? 'This field is required' : '';
+      if (empty) {
+        c.setAttribute('aria-invalid', 'true');
+        c.closest('details')?.setAttribute('open', '');
+        first = first || c;
+      } else c.removeAttribute('aria-invalid');
+    }
+    first?.focus?.();
+    return !first;
+  }
+
   /* ---------- negotiation rounds ---------- */
 
   /* Only called once at least one round already exists - a lead's very first round is what completes
@@ -865,6 +908,7 @@
       const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Add round');
       saveBtn.onclick = async () => {
         err.textContent = '';
+        if (!requireFilled([dateInput, person, estimate])) return;
         const body = {
           date: dateInput.value || null, authorized_person: person.value,
           estimate: estimate.value === '' ? null : estimate.value, finalized: finalized.checked,
@@ -876,6 +920,9 @@
           lead.negotiations = res.negotiations;
           renderRows();
           toast('Saved');
+          // The leads list behind the drawer shows each lead's finalized (or latest) round - refresh it so
+          // a round saved here shows up there straight away, not only after the next full reload.
+          await load();
         } catch (e) { err.textContent = e.message; }
       };
       // Same one-per-line labeled layout as every other stage's fields, in place of the old cramped
@@ -883,8 +930,8 @@
       return h('div', { class: 'negotiation-round' },
         h('p', { class: 'negotiation-round-label' }, round ? `Round ${roundNo}` : `Round ${roundNo} (new)`),
         h('div', { class: 'form-grid' },
-          plainField('Round date', dateInput), plainField('Authorized person', person),
-          plainField(`Estimate (${S.settings.currency})`, estimate)),
+          reqField('Round date', dateInput), reqField('Authorized person', person),
+          reqField(`Estimate (${S.settings.currency})`, estimate)),
         h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')),
         saveBtn);
     }
