@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, pincodeLookup, selectField } = window.LD;
+  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, pincodeLookup, selectField } = window.LD;
 
   const view = $('#view');
   const canOpenProjects = view.dataset.projects === '1';
@@ -26,21 +26,29 @@
 
   /* ---------- list, grouped by area, with a search and a service filter ---------- */
 
+  let listCurrency = '';
+  const initials = (name) => name.split(/\s+/).filter((w) => /\w/.test(w)).slice(0, 2).map((w) => w.match(/\w/)[0]).join('').toUpperCase();
+
+  // An initials tile, the name and project count, and what their projects are worth on the right. (The list
+  // API has no per-project statuses, so the tile is one neutral colour rather than coloured by status.)
   function clientRow(c) {
     return h('li', {}, h('a', { class: 'client-row', href: `#c${c.id}` },
-      h('span', { class: 'client-row-name' }, c.name),
-      h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))));
+      h('span', { class: 'client-tile', 'aria-hidden': 'true' }, initials(c.name) || '?'),
+      h('span', { class: 'client-row-main' },
+        h('span', { class: 'client-row-name' }, c.name),
+        h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))),
+      c.total_estimated_value != null ? h('span', { class: 'client-row-value' }, fmtShort(c.total_estimated_value, listCurrency)) : null));
   }
 
   function areaBlock(area, clients, expand) {
     return h('details', { class: 'area-block', open: expand || undefined },
-      h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code' }, plural(clients.length, 'client', 'clients'))),
-      h('ul', { class: 'client-list' }, clients.map(clientRow)));
+      h('summary', { class: 'area-title' }, area, h('span', { class: 'p-code', 'aria-label': plural(clients.length, 'client', 'clients') }, clients.length)),
+      h('ul', { class: 'card-group' }, clients.map(clientRow)));
   }
 
   function cityBox(city, areas, total, expand) {
     return h('details', { class: 'city-box', open: expand || undefined },
-      h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code' }, plural(total, 'client', 'clients'))),
+      h('summary', { class: 'city-box-title' }, city, h('span', { class: 'p-code', 'aria-label': plural(total, 'client', 'clients') }, total)),
       h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area], expand))));
   }
 
@@ -48,6 +56,7 @@
     clear(view).append(h('p', { class: 'loading' }, 'Loading clients…'));
     let data;
     try { data = await api('/api/clients'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    listCurrency = data.currency;
 
     const filter = { q: '', service: '' };
     const allServices = [...new Set(data.clients.flatMap((c) => c.services))].sort();

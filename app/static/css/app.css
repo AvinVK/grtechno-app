@@ -1363,21 +1363,21 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }
 
-/* ---------- All clients / All projects (grouped by area) ---------- */
+/* ---------- Clients & Projects: switch, grouping by area, rows ---------- */
 
-.city-box {
-  max-width: 1100px;
-  margin: 0 auto 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-card);
-  background: var(--panel);
-  overflow: hidden;
+.seg-wrap { padding: 16px 20px 0; }
+.seg { display: flex; max-width: 1100px; margin: 0 auto; padding: 3px; border-radius: var(--r-control); background: var(--track); }
+.seg a {
+  flex: 1; padding: 8px 12px; border-radius: calc(var(--r-control) - 3px);
+  color: var(--muted); font: 600 14px/1.2 var(--font-body); text-align: center; text-decoration: none;
 }
+.seg a[aria-current="page"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(27, 33, 40, 0.15); }
+.top-new { min-height: 36px; padding: 0 14px; font-size: 14px; }
+@media (max-width: 640px) { .seg-wrap { padding: 12px 14px 0; } }
 
-.city-box-body { padding-top: 4px; }
-
-/* Both levels collapse (native <details>/<summary>): a plain header row that toggles, with a chevron
-   that turns to show open/closed state instead of the browser's own disclosure triangle. */
+/* District, then area: both collapse (native <details>/<summary>), plain headings with a turning chevron
+   instead of the browser's own disclosure triangle. Each area's clients sit in one white card. */
+.city-box { max-width: 1100px; margin: 0 auto 4px; }
 .city-box-title,
 .area-title {
   display: flex;
@@ -1387,67 +1387,64 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
   cursor: pointer;
   list-style: none;
   user-select: none;
+  position: relative;
 }
 .city-box-title::-webkit-details-marker,
 .area-title::-webkit-details-marker { display: none; }
 
-.city-box-title {
-  margin: 0;
-  padding: 14px 40px 14px 16px;
-  background: var(--accent-tint);
-  font: 600 18px/1.2 var(--font-display);
-  position: relative;
-}
-
-.area-block { padding: 4px 16px 8px; }
-.area-block + .area-block { border-top: 1px dashed var(--line); }
+.city-box-title { margin: 0; padding: 12px 34px 12px 2px; font: 600 15px/1.2 var(--font-display); color: var(--ink); }
+.city-box-title .p-code, .area-title .p-code { margin-left: auto; color: var(--muted); font: 500 13px/1.2 var(--font-num); }
+.city-box-body { padding-bottom: 8px; }
 
 .area-title {
-  margin: 12px 0 2px;
+  margin: 6px 2px 6px;
   padding-right: 24px;
-  font: 600 15px/1.2 var(--font-body);
+  font: 600 12px/1.2 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--muted);
-  position: relative;
 }
 
 .city-box-title::before,
 .area-title::before {
   content: "";
   position: absolute;
-  right: 16px;
+  right: 10px;
   top: 50%;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   margin-top: -6px;
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: rotate(45deg);
   transition: transform 0.15s ease;
 }
-.area-title::before { right: 2px; width: 7px; height: 7px; margin-top: -5px; }
+.area-title::before { right: 4px; width: 6px; height: 6px; margin-top: -4px; }
 
 details[open] > summary.city-box-title::before,
 details[open] > summary.area-title::before { transform: rotate(-135deg); margin-top: -3px; }
+.area-block .card-group { margin-bottom: 8px; }
 
-.city-box .rows { max-width: none; margin: 0; }
-.city-box .client-list { border: 0; border-radius: 0; background: none; }
-.city-box .client-row { padding: 12px 0; }
+.card-group .p-row { border-bottom: 0; padding: 12px 14px; }
 
-/* ---------- Clients: list rows, and one client's summary ---------- */
-
-.client-list { max-width: 1100px; margin: 0 auto; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--panel); overflow: hidden; }
-.client-list > li + li { border-top: 1px solid var(--line); }
-.client-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 16px; color: inherit; text-decoration: none; }
+.client-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
 .client-row:hover { background: var(--hover); }
+.client-tile {
+  flex: none; display: grid; place-items: center; width: 40px; height: 40px;
+  border-radius: var(--r-control); background: var(--soon-tint); color: var(--soon); font: 600 14px/1 var(--font-body);
+}
+.client-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .client-row-name { font: 600 16px/1.25 var(--font-display); overflow-wrap: anywhere; }
-.client-row-count { flex: none; color: var(--muted); font-size: 14px; }
+.client-row-count { color: var(--muted); font-size: 13px; }
+.client-row-value { flex: none; font: 500 15px/1.2 var(--font-num); }
 
 .client-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .client-head h2 { font: 600 24px/1.1 var(--font-display); overflow-wrap: anywhere; }
 .client-head .hint { margin-top: 4px; }
 .client-head .btn { flex: none; text-decoration: none; }
 .client-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.client-stats .stat-note { font-size: 13px; }
+.client-stats .stat { padding: 14px; }
+.client-stats .stat-label, .client-stats .stat-note { font-size: 13px; }
 /* A duration ("1 yr 2 mos") is words, not a figure - the mono number font would space it out and wrap. */
 .client-stats .stat-value.is-text { font: 600 24px/1.15 var(--font-display); }
 .client-status-line { display: flex; flex-wrap: wrap; gap: 6px; }

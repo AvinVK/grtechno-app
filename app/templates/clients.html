@@ -3,6 +3,7 @@
 {% block body_class %}page-plain{% endblock %}
 
 {% block content %}
+{% with active = 'clients' %}{% include "_seg.html" %}{% endwith %}
 <main id="view" class="view" tabindex="-1" data-projects="{{ 1 if nav_modules|selectattr('key', 'equalto', 'projects')|list else 0 }}"><p class="loading">Loading clients…</p></main>
 <script src="{{ asset('js/clients.js') }}" defer></script>
 {% endblock %}

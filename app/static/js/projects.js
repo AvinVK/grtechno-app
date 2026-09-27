@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, field, showFieldErrors, selectField, dateField, confirm } = window.LD;
+  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, selectField, dateField, confirm } = window.LD;
 
   const STATUS = {
     planned: ['Planned', 'planned'],
@@ -39,7 +39,7 @@
     const wrap = h('div', {});
     const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter by status' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
-    const list = h('ul', { class: 'rows' });
+    const list = h('ul', { class: 'card-group rows' });
     const search = h('input', {
       type: 'search', placeholder: 'Search project, client, work order', 'aria-label': 'Search projects',
       value: filter.q, oninput: (e) => { filter.q = e.target.value; refresh(); },
@@ -75,14 +75,14 @@
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, p.title),
           h('span', { class: 'row-sub' }, [p.client_name, p.work_category].filter(Boolean).join(' · '))),
-        h('span', { class: 'row-value' }, money(p.net_amount, cur)),
+        h('span', { class: 'row-value' }, fmtShort(p.net_amount, cur)),
         h('span', { class: 'p-foot' }, statusChip(p.status),
           h('span', { class: 'p-code' }, p.code),
           p.manager_name ? h('span', { class: 'p-manager' }, `PM: ${p.manager_name}`) : h('span', { class: 'p-manager none' }, 'No manager yet'))))));
     }
 
     wrap.append(
-      h('div', { class: 'list-head' }, h('h2', {}, 'Projects'), h('a', { class: 'btn primary', href: '#new' }, 'Add project')),
+      h('div', { class: 'list-head' }, h('h2', {}, 'Projects')),                  // "+ New" is in the top bar
       h('div', { class: 'filters' }, search, chips), count, list);
     clear(view).append(wrap);
     renderChips();
