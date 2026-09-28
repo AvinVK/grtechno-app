@@ -173,3 +173,17 @@ def test_only_sees_all_roles_can_delete_a_record(client, manager_client, admin_c
 
 def test_deleting_an_unknown_record_is_a_404(admin_client):
     assert admin_client.delete("/api/attendance/999999").status_code == 404
+
+
+
+# ---------- the admin doesn't check in ----------
+
+def test_the_admin_cannot_check_in_or_out(admin_client):
+    assert admin_client.post("/api/attendance/check-in", json={"lat": 21.1, "lng": 79.0}).status_code == 403
+    assert admin_client.post("/api/attendance/check-out").status_code == 403
+
+
+def test_the_admins_attendance_page_is_the_team_register(admin_client, client):
+    html = admin_client.get("/attendance").get_data(as_text=True)
+    assert 'data-team-only="1"' in html and ">Team attendance</a>" in html
+    assert 'data-team-only="0"' in client.get("/attendance").get_data(as_text=True)

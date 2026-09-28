@@ -25,9 +25,13 @@ def _summaries(keys) -> dict:
         out["leads"] = f"{n} open"
     if "attendance" in keys:
         today = today_local()
-        monday = today - timedelta(days=today.weekday())
-        n = Attendance.query.filter(Attendance.user_code == g.user.code, Attendance.work_date >= monday).count()
-        out["attendance"] = f"{n} day{'' if n == 1 else 's'} this week"
+        if g.user.is_admin:                          # the admin doesn't check in; show the team instead
+            n = Attendance.query.filter(Attendance.work_date == today).count()
+            out["attendance"] = f"{n} checked in today"
+        else:
+            monday = today - timedelta(days=today.weekday())
+            n = Attendance.query.filter(Attendance.user_code == g.user.code, Attendance.work_date >= monday).count()
+            out["attendance"] = f"{n} day{'' if n == 1 else 's'} this week"
     if "clients" in keys:
         n = visible_clients().count()
         out["clients"] = f"{n} client{'' if n == 1 else 's'}"
@@ -41,4 +45,4 @@ def _summaries(keys) -> dict:
 def page():
     keys = {m.key for m in modules_for(g.user)}
     return render_template("me.html", heading="Me", heading_href="/me", summaries=_summaries(keys),
-                           has_attendance="attendance" in keys)
+                           has_attendance="attendance" in keys and not g.user.is_admin)   # no check-in card for the admin

@@ -50,7 +50,15 @@ def _coord(payload, name, low, high, errors):
 
 @bp.get("/attendance")
 def page():
-    return render_template("attendance.html", heading="Your attendance")
+    # The admin doesn't check in or out - their Attendance is the team register for a chosen day.
+    if g.user.is_admin:
+        return render_template("attendance.html", heading="Team attendance", team_only=True)
+    return render_template("attendance.html", heading="Your attendance", team_only=False)
+
+
+def _no_admin_check_ins():
+    if g.user.is_admin:
+        abort(403, "The admin doesn't check in or out.")
 
 
 @bp.get("/api/attendance/state")
@@ -72,6 +80,7 @@ def state():
 
 @bp.post("/api/attendance/check-in")
 def check_in():
+    _no_admin_check_ins()
     if _today_row() is not None:
         return jsonify(error="You have already checked in today."), 409
 
@@ -108,6 +117,7 @@ def check_in():
 
 @bp.post("/api/attendance/check-out")
 def check_out():
+    _no_admin_check_ins()
     row = _today_row()
     if row is None:
         return jsonify(error="You have not checked in today."), 409

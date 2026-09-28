@@ -3,7 +3,7 @@
 {% block body_class %}page-plain{% endblock %}
 
 {% block content %}
-<main id="view" class="view" tabindex="-1"><p class="loading">Loading attendance…</p></main>
+<main id="view" class="view" tabindex="-1" data-team-only="{{ 1 if team_only else 0 }}"><p class="loading">Loading attendance…</p></main>
 <script src="{{ asset('js/attendance-core.js') }}" defer></script>
 <script src="{{ asset('js/attendance.js') }}" defer></script>
 {% endblock %}

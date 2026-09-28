@@ -38,8 +38,19 @@ def test_a_tile_per_service_with_cheap_summaries(app, admin_client, admin):
     html = admin_client.get("/me").get_data(as_text=True)
     for path in ("/", "/clients", "/projects", "/attendance"):
         assert f'class="me-tile" href="{path}"' in html
-    assert "0 open" in html and "1 client<" in html and "1 running" in html and "1 day this week" in html
+    assert "0 open" in html and "1 client<" in html and "1 running" in html
+    assert "Team attendance" in html and "checked in today" in html        # the admin's tile: the team, not a week
+    assert 'id="me-today"' not in html                                     # and no check-in card
+
+
+def test_everyone_else_gets_the_today_card_and_their_week(app, client, user):
+    with app.app_context():
+        monday = today_local() - timedelta(days=today_local().weekday())
+        db.session.add(Attendance(user_code=user.code, work_date=monday, check_in_at=utcnow()))
+        db.session.commit()
+    html = client.get("/me").get_data(as_text=True)
     assert 'id="me-today"' in html and "attendance-core.js" in html and "me.js" in html
+    assert "Your attendance" in html and "1 day this week" in html
 
 
 def test_no_today_card_without_attendance(app, admin_client):

@@ -1,5 +1,6 @@
 /* Attendance: check yourself in and out once a day, optionally against a running project.
-   Admin and the Accountant also get a Team tab with everyone's register for a chosen day. */
+   Admin and the Accountant also get a Team tab with everyone's register for a chosen day. The admin doesn't
+   check in at all (data-team-only): their Attendance is just that register. */
 (() => {
   'use strict';
 
@@ -7,6 +8,7 @@
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
+  const teamOnly = view.dataset.teamOnly === '1';
 
   const today = () => new Date().toISOString().slice(0, 10);
 
@@ -296,14 +298,14 @@
     dateInput.onchange = refresh;
 
     clear(view).append(h('div', {},
-      h('a', { class: 'back-link', href: '#' }, '← Your attendance'),
+      teamOnly ? null : h('a', { class: 'back-link', href: '#' }, '← Your attendance'),
       h('div', { class: 'list-head' }, h('h2', {}, 'Team attendance')),
       h('div', { class: 'filters' }, dateInput), count, list));
     refresh();
   }
 
   function route() {
-    if (window.location.hash === '#team') return showTeam();
+    if (teamOnly || window.location.hash === '#team') return showTeam();
     return showMine();
   }
 

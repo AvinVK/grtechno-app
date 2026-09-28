@@ -4,7 +4,7 @@
 {% from "_icons.html" import icon %}
 
 {% macro label(m, variant) -%}
-{%- if m.key == 'attendance' -%}Your attendance
+{%- if m.key == 'attendance' -%}{{ 'Team attendance' if current_user.is_admin else 'Your attendance' }}
 {%- elif m.key == 'clients' and variant == 'sidebar' -%}Clients &amp; Projects
 {%- else -%}{{ m.name }}{%- endif -%}
 {%- endmacro %}
