@@ -1080,7 +1080,7 @@ a.p-client-name { color: var(--accent-dark); }
   .top-actions { gap: 4px 10px; }
   .hide-narrow { display: none; }
   .view { padding: 14px; }
-  .stage-filter { margin: 0 -14px; padding: 4px 14px; }
+  .stage-filter { margin: 0 -14px; padding: 4px 14px; scroll-padding-left: 14px; }
   .lbl-full { display: none; }
   .lbl-short { display: inline; }
   .form-grid { grid-template-columns: 1fr; }
