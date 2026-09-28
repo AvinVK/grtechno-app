@@ -270,7 +270,10 @@
   }
 
   // Phone-width labels for the stage chips - display only, the filter values stay the full stage names.
-  const SHORT_STAGE = { 'New enquiry': 'New', 'Site survey': 'Survey', 'Quote sent': 'Quote', Negotiation: 'Negotiation' };
+  const SHORT_STAGE = {
+    'New enquiry': 'New', 'Site survey': 'Survey', 'Quote sent': 'Quote', Negotiation: 'Negotiation',
+    'Work order & advance': 'W.O. & advance',
+  };
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
   // A small line icon (24x24 viewBox, stroked in currentColor) - h() only makes HTML elements.
@@ -475,12 +478,13 @@
     return wrap;
   }
 
-  // How far along the pipeline a lead is, as filled segments of a 4-part bar: New enquiry 1 ... Negotiation 4.
-  // A closed lead fills all four in its Won / Lost colour.
+  // How far along the pipeline a lead is, as filled segments of a bar with one segment per open stage
+  // (New enquiry ... Work order & advance). A closed lead fills every segment in its Won / Lost colour.
   function pipeBar(l) {
-    const filled = CLOSED_STAGES.includes(l.stage) ? 4 : STAGE_ORDER.indexOf(l.stage) + 1;
+    const total = STAGE_ORDER.length;
+    const filled = CLOSED_STAGES.includes(l.stage) ? total : STAGE_ORDER.indexOf(l.stage) + 1;
     return h('span', { class: 'pipe', 'data-stage': l.stage, 'aria-hidden': 'true' },
-      [1, 2, 3, 4].map((i) => h('i', { class: i <= filled ? 'on' : null })));
+      STAGE_ORDER.map((_, i) => h('i', { class: i < filled ? 'on' : null })));
   }
 
   function leadRow(l, showCreated) {

@@ -39,6 +39,7 @@
   --st-survey: #f0a020;
   --st-quote: #ef5a1a;
   --st-negotiation: #b3122b;
+  --st-work-order: #7a1f4a;
   --st-won: #1f7a5e;
   --st-lost: #8a939c;
 
@@ -197,6 +198,7 @@ a { color: var(--accent-dark); }
 [data-stage="Site survey"] { --seg: var(--st-survey); }
 [data-stage="Quote sent"] { --seg: var(--st-quote); }
 [data-stage="Negotiation"] { --seg: var(--st-negotiation); }
+[data-stage="Work order & advance"] { --seg: var(--st-work-order); }
 
 /* Overdue follow-ups: a white card with a red count, leading to the Overdue group on Active. */
 .status-alert {
@@ -359,6 +361,7 @@ a.stat:hover { border-color: var(--line-strong); }
 .pipe[data-stage="Site survey"] { --seg: var(--st-survey); }
 .pipe[data-stage="Quote sent"] { --seg: var(--st-quote); }
 .pipe[data-stage="Negotiation"] { --seg: var(--st-negotiation); }
+.pipe[data-stage="Work order & advance"] { --seg: var(--st-work-order); }
 .pipe[data-stage="Won"] { --seg: var(--st-won); }
 .pipe[data-stage="Lost"] { --seg: var(--st-lost); }
 .row-area { display: none; }
@@ -436,6 +439,7 @@ a.stat:hover { border-color: var(--line-strong); }
 .stage-tag[data-stage="Site survey"] { --dot: var(--st-survey); }
 .stage-tag[data-stage="Quote sent"] { --dot: var(--st-quote); }
 .stage-tag[data-stage="Negotiation"] { --dot: var(--st-negotiation); }
+.stage-tag[data-stage="Work order & advance"] { --dot: var(--st-work-order); }
 .stage-tag[data-stage="Won"] { --dot: var(--st-won); }
 .stage-tag[data-stage="Lost"] { --dot: var(--st-lost); }
 
