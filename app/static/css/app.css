@@ -670,9 +670,6 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 }
 
 
-.note-form { display: flex; gap: 8px; margin-bottom: 8px; }
-.note-form input { flex: 1; }
-
 .timeline { margin: 12px 0 0; padding: 0; list-style: none; }
 
 .timeline li {

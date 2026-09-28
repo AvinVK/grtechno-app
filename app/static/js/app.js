@@ -1176,7 +1176,7 @@
         quoteSection,
         negotiation,
         workOrderSectionNode,
-        activitySection(lead.id)),
+        activitySection()),
       h('div', { class: 'drawer-foot' }, saveBtn, moreBtn),
     );
   }
@@ -1341,29 +1341,12 @@
 
   /* ---------- activity log ---------- */
 
-  function activitySection(id) {
-    const input = h('input', { type: 'text', id: 'note-input', maxlength: '2000', placeholder: 'Add a call note or update', 'aria-label': 'New note' });
-    const error = h('p', { class: 'err', role: 'alert' });
-    const submit = async (e) => {
-      e.preventDefault();
-      error.textContent = '';
-      if (!input.value.trim()) { error.textContent = 'Write a note first'; input.focus(); return; }
-      try {
-        const lead = await api(`/api/leads/${id}/notes`, { method: 'POST', body: { text: input.value } });
-        input.value = '';
-        renderTimeline(lead.activities);
-        input.focus();
-      } catch (err) {
-        error.textContent = err.message;
-      }
-    };
+  function activitySection() {
     return h('details', { class: 'stage-section' },
       h('summary', { class: 'stage-section-title' },
         h('span', { id: 'activity-title' }, 'Activity'),
         h('span', { class: 'section-count', id: 'activity-count' })),
       h('div', { class: 'stage-section-body' },
-        h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add note')),
-        error,
         h('ul', { class: 'timeline', id: 'timeline' })));
   }
 
