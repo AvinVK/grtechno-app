@@ -123,7 +123,7 @@ def delete_record(record_id):
     """Admin and other sees_all roles can remove a wrong or test record. Nobody else - a person deleting
     their own attendance would defeat the point of keeping one."""
     if not g.user.sees_all:
-        abort(403, "Only the admin or accounts can delete an attendance record.")
+        abort(403, "Only the admin or the accountant can delete an attendance record.")
     row = db.session.get(Attendance, record_id)
     if row is None:
         abort(404, "Not found")
@@ -137,7 +137,7 @@ def team():
     """The full register, for admin and other sees_all roles. Filterable by date and, for a longer look,
     a date range; newest first."""
     if not g.user.sees_all:
-        abort(403, "Only the admin or accounts can see everyone's attendance.")
+        abort(403, "Only the admin or the accountant can see everyone's attendance.")
 
     day = request.args.get("date")
     query = visible_attendance()

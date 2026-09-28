@@ -1,5 +1,5 @@
 /* Attendance: check yourself in and out once a day, optionally against a running project.
-   Admin and Accounts also get a Team tab with everyone's register for a chosen day. */
+   Admin and the Accountant also get a Team tab with everyone's register for a chosen day. */
 (() => {
   'use strict';
 
@@ -14,7 +14,7 @@
     return a.check_in_map_url ? h('a', { class: 'att-map-link', href: a.check_in_map_url, target: '_blank', rel: 'noopener noreferrer' }, 'View location') : null;
   }
 
-  /* Admin/Accounts only (the backend enforces this too) - removes a wrong or test record. A regular
+  /* Admin/Accountant only (the backend enforces this too) - removes a wrong or test record. A regular
      person cannot delete their own attendance; that would defeat the point of keeping one. */
   function deleteLink(a, onDeleted) {
     const link = h('a', { href: '#', class: 'att-delete-link' }, 'Delete');

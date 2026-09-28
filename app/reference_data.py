@@ -8,7 +8,12 @@ ROLES = [
     ("sales_office", "Sales (office)", False),
     ("project_manager", "Project manager", False),
     ("supervisor", "Site supervisor", False),
-    ("accounts", "Accounts", True),
+    ("accounts", "Accountant", True),
+    # Site trades: they sign in only to check themselves in and out.
+    ("welder", "Welder", False),
+    ("fitter", "Fitter", False),
+    ("helper", "Helper", False),
+    ("alarm_technician", "Alarm technician", False),
 ]
 
 # Which services each role can open. The admin can open everything, so it has no rows.
@@ -20,6 +25,10 @@ ROLE_MODULES = {
     "project_manager": ["clients", "projects", "attendance"],
     "supervisor": ["attendance"],
     "accounts": ["clients", "projects", "attendance"],
+    "welder": ["attendance"],
+    "fitter": ["attendance"],
+    "helper": ["attendance"],
+    "alarm_technician": ["attendance"],
 }
 
 # key, name, icon, path, sort_order

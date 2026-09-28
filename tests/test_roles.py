@@ -92,3 +92,27 @@ def test_a_user_without_a_role_can_open_nothing(app, user):
     db.session.get(User, user.code).role_key = None
     db.session.commit()
     assert names(signed_in(app, user)) == []
+
+
+# ---------- site trades and Accountant ----------
+
+def test_trades_sign_in_to_attendance_only(app):
+    from conftest import make_user, signed_in
+    for role in ("welder", "fitter", "helper", "alarm_technician"):
+        worker = signed_in(app, make_user(f"Test {role}", role=role))
+        assert names(worker) == ["Attendance"], role
+        assert worker.get("/attendance").status_code == 200
+        for url in ("/api/state", "/api/clients", "/api/projects"):
+            assert worker.get(url).status_code == 403, (role, url)
+        assert worker.get("/api/attendance/team").status_code == 403          # only their own attendance
+
+
+def test_admin_can_give_the_new_roles_and_accounts_is_now_accountant(admin_client, app):
+    from conftest import make_user
+    roles = {r["key"]: r["name"] for r in admin_client.get("/api/users").get_json()["roles"]}
+    assert roles["accounts"] == "Accountant"
+    assert {"welder", "fitter", "helper", "alarm_technician"} <= roles.keys()
+    with app.app_context():
+        code = make_user("Sunny Welder").code
+    res = admin_client.post(f"/api/users/{code}/role", json={"role": "welder"})
+    assert res.status_code == 200 and res.get_json()["user"]["role_name"] == "Welder"
