@@ -13,7 +13,7 @@ from .projects import ProjectError, create_project_from_lead
 from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
 from .extensions import db
 from .models import (
-    Activity, ChecklistItem, Client, Lead, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
+    Activity, Client, Lead, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
     Worker, settings_for_client, utcnow,
 )
 from .timeutil import to_local, today_local
@@ -35,6 +35,7 @@ TEXT_LIMITS = {
     "service": 120,
     "source": 120,
     "notes": 5000,
+    "work_order_no": 60,
 }
 MAX_VALUE = Decimal("99999999999")
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
@@ -60,6 +61,35 @@ def _payload() -> dict:
     if not isinstance(data, dict):
         abort(400, "Send a JSON object")
     return data
+
+
+def _parse_date_field(payload, data, errors, field):
+    if field not in payload:
+        return
+    raw = payload[field]
+    if raw in (None, ""):
+        data[field] = None
+    else:
+        try:
+            data[field] = date.fromisoformat(str(raw))
+        except ValueError:
+            errors[field] = "Pick a valid date"
+
+
+def _parse_amount_field(payload, data, errors, field):
+    if field not in payload:
+        return
+    raw = payload[field]
+    if raw is None or raw == "":
+        data[field] = None
+    else:
+        try:
+            amount = Decimal(str(raw))
+            if not amount.is_finite() or amount < 0 or amount > MAX_VALUE:
+                raise InvalidOperation
+            data[field] = amount.quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            errors[field] = "Enter a number, 0 or more"
 
 
 def _validate(payload: dict) -> tuple[dict, dict]:
@@ -116,6 +146,10 @@ def _validate(payload: dict) -> tuple[dict, dict]:
                 data["quote_sent_date"] = date.fromisoformat(str(raw))
             except ValueError:
                 errors["quote_sent_date"] = "Pick a valid date"
+
+    _parse_date_field(payload, data, errors, "work_order_date")
+    _parse_date_field(payload, data, errors, "advance_date")
+    _parse_amount_field(payload, data, errors, "advance_amount")
 
     if "client_id" in payload:
         raw = payload["client_id"]
@@ -193,6 +227,10 @@ def _stage_gate_error(lead: Lead, new_stage: str):
         return "Complete the site survey first"
     if new_stage == "Negotiation" and not lead.quote_sent_date:
         return "Send a quote first"
+    if new_stage == "Work order & advance" and not any(n.finalized for n in lead.negotiations):
+        return "Finalize a negotiation round first"
+    if new_stage == WON and not (lead.work_order_no and lead.work_order_date and lead.advance_amount is not None and lead.advance_date):
+        return "Enter the work order and advance details first"
     return None
 
 
@@ -201,15 +239,21 @@ def _apply(lead: Lead, data: dict) -> None:
     service_ids = data.pop("service_ids", None)
 
     if new_stage and new_stage != lead.stage:
+        # Winning is the one stage move that maps the lead to a client - reused from an existing one, or
+        # a brand-new one created for it - so it's the admin's call, not whoever owns the lead.
+        if new_stage == WON and not g.user.is_admin:
+            abort(403, "Only the admin can mark a lead won.")
         gate_error = _stage_gate_error(lead, new_stage)
         if gate_error:
             abort(422, gate_error)
 
-    # Entering quote details is itself a stage-advancing action, so it needs the same gate as an
-    # explicit stage jump would - otherwise a lead could pick up a quote while still sitting at New
-    # enquiry, before its site survey exists.
+    # Entering quote details, or the work order and advance, is itself a stage-advancing action, so it
+    # needs the same gate as an explicit stage jump would - otherwise a lead could pick those up while
+    # still sitting at an earlier stage, before what they depend on exists.
     if data.get("quote_sent_date") and not (lead.survey and lead.survey.survey_date):
         abort(422, "Complete the site survey first")
+    if data.get("work_order_no") and not any(n.finalized for n in lead.negotiations):
+        abort(422, "Finalize a negotiation round first")
 
     if "follow_up_date" in data and data["follow_up_date"] != lead.follow_up_date:
         new_date = data["follow_up_date"]
@@ -217,8 +261,10 @@ def _apply(lead: Lead, data: dict) -> None:
 
     # A quote being sent for the first time, while sitting at Site survey, completes that stage's own
     # step - it moves the lead on to Quote sent, never further. Negotiation only starts once a round is
-    # actually logged (see add_negotiation below) - no stage gets skipped past.
+    # actually logged (see add_negotiation below), and Work order & advance only once its own fields are
+    # entered here - no stage gets skipped past.
     quote_just_sent = bool(data.get("quote_sent_date")) and not lead.quote_sent_date
+    wo_just_set = bool(data.get("work_order_no")) and not lead.work_order_no
 
     for field, value in data.items():
         setattr(lead, field, value)
@@ -238,6 +284,9 @@ def _apply(lead: Lead, data: dict) -> None:
     elif quote_just_sent and lead.stage == "Site survey":
         _log(lead, "stage", f"Stage changed: {lead.stage} \u2192 Quote sent")
         lead.stage = "Quote sent"
+    elif wo_just_set and lead.stage == "Negotiation":
+        _log(lead, "stage", f"Stage changed: {lead.stage} \u2192 Work order & advance")
+        lead.stage = "Work order & advance"
 
 
 def _needs_name(lead_values: dict, has_client: bool) -> dict:
@@ -331,7 +380,8 @@ def pincode_lookup(pin):
 @bp.post("/leads")
 def create_lead():
     data, errors = _validate(_payload())
-    errors.update(_needs_name(data, has_client=data.get("client_id") is not None))
+    data.pop("client_id", None)   # every new lead is unlinked to any client - mapped to one only at Won
+    errors.update(_needs_name(data, has_client=False))
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
@@ -537,56 +587,6 @@ def update_negotiation(lead_id, round_id):
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
     round_.date, round_.authorized_person, round_.estimate, round_.finalized = date_val, authorized_person, estimate, finalized
-    lead.updated_at = utcnow()
-    db.session.commit()
-    return jsonify(lead.to_dict(with_activities=True))
-
-
-def _checklist_text(value):
-    if not isinstance(value, str) or not value.strip():
-        abort(422, "Write the checklist item first")
-    if len(value.strip()) > 200:
-        abort(422, "Keep a checklist item under 200 characters")
-    return value.strip()
-
-
-def _checklist_item_or_404(lead, item_id):
-    item = next((c for c in lead.checklist if c.id == item_id), None)
-    if item is None:
-        abort(404)
-    return item
-
-
-@bp.post("/leads/<int:lead_id>/checklist")
-def add_checklist_item(lead_id):
-    lead = _own_lead_or_404(lead_id)
-    text = _checklist_text(_payload().get("text"))
-    lead.checklist.append(ChecklistItem(text=text, position=max((c.position for c in lead.checklist), default=0) + 1))
-    lead.updated_at = utcnow()
-    db.session.commit()
-    return jsonify(lead.to_dict(with_activities=True)), 201
-
-
-@bp.patch("/leads/<int:lead_id>/checklist/<int:item_id>")
-def update_checklist_item(lead_id, item_id):
-    lead = _own_lead_or_404(lead_id)
-    item = _checklist_item_or_404(lead, item_id)
-    payload = _payload()
-    if "done" in payload:
-        if not isinstance(payload["done"], bool):
-            abort(422, "Say whether the item is done")
-        item.done = payload["done"]
-    if "text" in payload:
-        item.text = _checklist_text(payload["text"])
-    lead.updated_at = utcnow()
-    db.session.commit()
-    return jsonify(lead.to_dict(with_activities=True))
-
-
-@bp.delete("/leads/<int:lead_id>/checklist/<int:item_id>")
-def delete_checklist_item(lead_id, item_id):
-    lead = _own_lead_or_404(lead_id)
-    lead.checklist.remove(_checklist_item_or_404(lead, item_id))
     lead.updated_at = utcnow()
     db.session.commit()
     return jsonify(lead.to_dict(with_activities=True))

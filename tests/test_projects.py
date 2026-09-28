@@ -2,7 +2,7 @@ from datetime import date
 
 from app.extensions import db
 from app.models import Attendance, Client, Lead, Project, ProjectPayment, Service, User
-from conftest import make_user, signed_in
+from conftest import make_user, signed_in, win_lead
 
 
 def make_lead(client, **fields):
@@ -15,19 +15,16 @@ def make_lead(client, **fields):
     return res.get_json()
 
 
-def won_lead(client, **fields):
-    """Winning a lead now creates its client/project automatically - returns the lead as it stood right
-    before winning it (fields like company/service), same as before, for callers that only need those."""
+def won_lead(client, admin_client, **fields):
+    """Create a lead and drive it all the way to Won (see conftest.win_lead) - returns the lead as it
+    stood right after winning."""
     lead = make_lead(client, **fields)
-    res = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
-    assert res.status_code == 200, res.get_json()
-    return lead
+    return win_lead(client, admin_client, lead["id"])
 
 
 def make_project(client, admin_client, **fields):
-    lead = won_lead(client, **fields)
-    detail = client.get(f"/api/leads/{lead['id']}").get_json()
-    return detail["project_id"]
+    lead = won_lead(client, admin_client, **fields)
+    return lead["project_id"]
 
 
 # ---------- Leads additions ----------
@@ -35,36 +32,6 @@ def make_project(client, admin_client, **fields):
 def test_site_category_list_and_field(client):
     assert client.get("/api/state").get_json()["settings"]["site_categories"][0] == "Hospital"
     assert make_lead(client)["site_category"] == "Commercial complex"
-
-
-def test_checklist_add_tick_edit_delete(client):
-    lead = make_lead(client)
-    url = f"/api/leads/{lead['id']}/checklist"
-    detail = client.post(url, json={"text": "Site survey done"}).get_json()
-    client.post(url, json={"text": "Drawings received"})
-    items = client.get(f"/api/leads/{lead['id']}").get_json()["checklist"]
-    assert [i["text"] for i in items] == ["Site survey done", "Drawings received"] and not any(i["done"] for i in items)
-    assert "checklist" not in client.get("/api/state").get_json()["leads"][0]          # only in the detail view
-
-    first = items[0]["id"]
-    assert client.patch(f"{url}/{first}", json={"done": True}).get_json()["checklist"][0]["done"] is True
-    assert client.patch(f"{url}/{first}", json={"text": "Survey completed"}).get_json()["checklist"][0]["text"] == "Survey completed"
-    left = client.delete(f"{url}/{first}").get_json()["checklist"]
-    assert [i["text"] for i in left] == ["Drawings received"]
-
-
-def test_checklist_rules(app, client):
-    lead = make_lead(client)
-    url = f"/api/leads/{lead['id']}/checklist"
-    assert client.post(url, json={"text": "   "}).status_code == 422
-    assert client.post(url, json={"text": "x" * 201}).status_code == 422
-    item = client.post(url, json={"text": "ok"}).get_json()["checklist"][0]["id"]
-    assert client.patch(f"{url}/{item}", json={"done": "yes"}).status_code == 422
-    assert client.patch(f"{url}/9999", json={"done": True}).status_code == 404
-    other = signed_in(app, make_user("Other"))                                          # someone else's lead
-    assert other.post(url, json={"text": "sneaky"}).status_code == 404
-    assert other.patch(f"{url}/{item}", json={"done": True}).status_code == 404
-    assert other.delete(f"{url}/{item}").status_code == 404
 
 
 # ---------- Won lead -> client + project ----------
@@ -75,8 +42,8 @@ def test_only_a_won_lead_becomes_a_project(client):
     assert res.status_code == 422 and "won" in res.get_json()["error"]
 
 
-def test_won_lead_creates_client_and_project_with_its_data(client, user):
-    lead = won_lead(client)
+def test_won_lead_creates_client_and_project_with_its_data(client, admin_client, user):
+    lead = won_lead(client, admin_client)
     detail = client.get(f"/api/leads/{lead['id']}").get_json()
     project = db.session.get(Project, detail["project_id"])
     assert project.code == "PRJ-0001"
@@ -94,26 +61,36 @@ def test_won_lead_creates_client_and_project_with_its_data(client, user):
     assert Project.query.count() == 1
 
 
-def test_repeat_client_is_reused(client):
-    first = won_lead(client, company="Orchid Heights CHS")
-    second = won_lead(client, company="orchid heights chs", service="AMC")
-    a = client.get(f"/api/leads/{first['id']}").get_json()
-    b = client.get(f"/api/leads/{second['id']}").get_json()
-    a_client = db.session.get(Project, a["project_id"]).client_id
-    b_client = db.session.get(Project, b["project_id"]).client_id
-    assert a_client == b_client
+def test_same_company_name_no_longer_auto_reuses_a_client(client, admin_client):
+    # Winning no longer guesses by matching names - two enquiries that happen to share a company name
+    # get two separate clients unless the admin explicitly maps the second one to the first.
+    first = won_lead(client, admin_client, company="Orchid Heights CHS")
+    second = won_lead(client, admin_client, company="orchid heights chs", service="AMC")
+    a_client = db.session.get(Project, first["project_id"]).client_id
+    b_client = db.session.get(Project, second["project_id"]).client_id
+    assert a_client != b_client
+    assert Client.query.count() == 2 and Project.query.count() == 2
+
+
+def test_admin_can_explicitly_map_a_won_lead_to_an_existing_client(client, admin_client):
+    first = won_lead(client, admin_client, company="Orchid Heights CHS")
+    first_client_id = db.session.get(Project, first["project_id"]).client_id
+
+    lead = make_lead(client, company="Orchid Heights CHS - phase 2")
+    second = win_lead(client, admin_client, lead["id"], client_id=first_client_id)
+    assert db.session.get(Project, second["project_id"]).client_id == first_client_id
     assert Client.query.count() == 1 and Project.query.count() == 2
 
 
-def test_person_without_a_company_uses_the_contact_name(client):
-    lead = won_lead(client, company="", contact_name="Mrs. Deshpande")
+def test_person_without_a_company_uses_the_contact_name(client, admin_client):
+    lead = won_lead(client, admin_client, company="", contact_name="Mrs. Deshpande")
     detail = client.get(f"/api/leads/{lead['id']}").get_json()
     project = db.session.get(Project, detail["project_id"])
     assert project.client.name == "Mrs. Deshpande"
 
 
-def test_someone_elses_lead_cannot_be_converted(app, client):
-    lead = won_lead(client)
+def test_someone_elses_lead_cannot_be_converted(app, client, admin_client):
+    lead = won_lead(client, admin_client)
     assert signed_in(app, make_user("Other")).post(f"/api/leads/{lead['id']}/project").status_code == 404
 
 
@@ -185,8 +162,8 @@ def test_project_details_validation_and_payment_schedule(client, admin_client):
     assert "site_pincode" in bad({"site_pincode": "4110"})
 
 
-def test_sales_person_sees_no_projects_module_but_conversion_still_works(client):
-    lead = won_lead(client)
+def test_sales_person_sees_no_projects_module_but_conversion_still_works(client, admin_client):
+    lead = won_lead(client, admin_client)
     assert client.get(f"/api/leads/{lead['id']}").get_json()["project_id"] is not None
     assert client.get("/api/projects").status_code == 403
 

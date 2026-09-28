@@ -7,6 +7,7 @@ import io
 
 from app.extensions import db
 from app.models import Client, Project, Service, Worker
+from conftest import advance_to_negotiation, win_lead
 
 
 def make_service(name, sort_order=1):
@@ -65,34 +66,50 @@ def test_enquired_by_must_be_staff_and_defaults_the_surveyor(admin_client):
     assert detail["survey"] is None
 
 
-# ---------- an enquiry for an existing client ----------
+# ---------- mapping a won lead to a client ----------
 
-def test_existing_client_lead_needs_no_company_name(admin_client):
+def test_new_leads_are_never_pre_linked_to_a_client(admin_client):
     won = admin_client.post("/api/projects", json={"new_client_name": "Orchid Heights CHS"}).get_json()
     cid = won["project"]["client_id"]
+    # client_id is ignored at creation now - a new lead always needs its own name, and stays unlinked
+    # from any client until it's won (see the client-mapping tests below).
     res = admin_client.post("/api/leads", json={"client_id": cid})
-    assert res.status_code == 201, res.get_json()
-    assert res.get_json()["client_id"] == cid
+    assert res.status_code == 422 and "company" in res.get_json()["fields"]
+
+    lead = make_lead(admin_client)
+    assert lead["client_id"] is None
 
 
-def test_existing_client_lead_must_be_a_client_you_can_see(admin_client, client):
+def test_existing_client_lead_must_be_a_client_you_can_see(client, admin_client):
     won = admin_client.post("/api/projects", json={"new_client_name": "Only Mine Ltd"}).get_json()
     cid = won["project"]["client_id"]
-    # "client" here is the plain sales_field fixture, which has leads but not clients/projects access -
-    # it can still raise a lead, just not for a client it can't see.
-    res = client.post("/api/leads", json={"client_id": cid})
+    # "client" is the plain sales_field fixture: it has leads but not clients/projects access, so it
+    # can't map one to a client it can't see (winning it is separately admin-only, tested below).
+    lead = make_lead(client)
+    res = client.patch(f"/api/leads/{lead['id']}", json={"client_id": cid})
     assert res.status_code == 422 and "client_id" in res.get_json()["fields"]
 
 
 def test_winning_an_existing_client_lead_adds_a_second_project_not_a_second_client(admin_client):
     first = admin_client.post("/api/projects", json={"new_client_name": "Orchid Heights CHS"}).get_json()["project"]
-    lead = admin_client.post("/api/leads", json={"client_id": first["client_id"]}).get_json()
-    assert admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).status_code == 200
+    lead = make_lead(admin_client)
+    win_lead(admin_client, admin_client, lead["id"], client_id=first["client_id"])
 
     detail = admin_client.get(f"/api/leads/{lead['id']}").get_json()
     second_project = db.session.get(Project, detail["project_id"])
     assert second_project.client_id == first["client_id"]
     assert Client.query.count() == 1 and Project.query.count() == 2
+
+
+def test_only_the_admin_can_mark_a_lead_won(client, admin_client):
+    lead = make_lead(client)
+    advance_to_negotiation(client, lead["id"])
+    client.patch(f"/api/leads/{lead['id']}", json={
+        "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23",
+    })
+    assert client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).status_code == 403
+    assert admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).status_code == 200
 
 
 # ---------- stage gates ----------
@@ -134,6 +151,59 @@ def test_negotiation_requires_a_sent_quote(admin_client):
     admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-22", "est_value": 500000})
     ok = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Negotiation"})
     assert ok.status_code == 200
+
+
+def test_work_order_and_advance_requires_a_finalized_negotiation(admin_client):
+    lead = make_lead(admin_client)
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-21", "est_value": 500000})
+
+    blocked = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Work order & advance"})
+    assert blocked.status_code == 422 and "negotiation" in blocked.get_json()["error"].lower()
+    blocked_field = admin_client.patch(f"/api/leads/{lead['id']}", json={"work_order_no": "WO-1"})
+    assert blocked_field.status_code == 422 and "negotiation" in blocked_field.get_json()["error"].lower()
+
+    admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 480000, "finalized": True,
+    })
+    ok = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Work order & advance"})
+    assert ok.status_code == 200
+
+
+def test_won_requires_the_work_order_and_advance(admin_client):
+    lead = make_lead(admin_client)
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-21", "est_value": 500000})
+    admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 480000, "finalized": True,
+    })
+
+    blocked = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
+    assert blocked.status_code == 422 and "work order" in blocked.get_json()["error"].lower()
+
+    admin_client.patch(f"/api/leads/{lead['id']}", json={
+        "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23",
+    })
+    ok = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
+    assert ok.status_code == 200
+
+
+def test_entering_the_work_order_advances_negotiation_to_work_order_stage(admin_client):
+    lead = make_lead(admin_client)
+    admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-21", "est_value": 500000})
+    admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 480000, "finalized": True,
+    })
+    assert admin_client.get(f"/api/leads/{lead['id']}").get_json()["stage"] == "Negotiation"
+
+    advanced = admin_client.patch(f"/api/leads/{lead['id']}", json={
+        "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23",
+    })
+    assert advanced.get_json()["stage"] == "Work order & advance"        # not skipped straight to Won
+    assert any("Work order & advance" in a["text"] for a in advanced.get_json()["activities"])
 
 
 # ---------- site survey ----------
@@ -275,9 +345,18 @@ def test_negotiation_rounds_added_edited_and_used_as_the_project_estimate(admin_
     })
     assert edited.get_json()["negotiations"][1]["estimate"] == 455000
 
+    admin_client.patch(f"/api/leads/{lead['id']}", json={
+        "work_order_no": "WO-1001", "work_order_date": "2026-09-25",
+        "advance_amount": 100000, "advance_date": "2026-09-25",
+    })
     admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
     project_id = admin_client.get(f"/api/leads/{lead['id']}").get_json()["project_id"]
-    assert float(db.session.get(Project, project_id).estimated_amount) == 455000        # latest round wins, not est_value
+    project = db.session.get(Project, project_id)
+    assert float(project.estimated_amount) == 455000        # latest round wins, not est_value
+    # The advance and work order that won the lead carry over onto the new project.
+    assert project.work_order_no == "WO-1001" and project.work_order_date.isoformat() == "2026-09-25"
+    assert [p.label for p in project.payments] == ["Advance"]
+    assert float(project.payments[0].amount) == 100000 and project.payments[0].due_date.isoformat() == "2026-09-25"
 
 
 def test_no_new_round_while_one_is_finalized(admin_client):
@@ -305,11 +384,17 @@ def test_client_total_estimated_value_across_projects(admin_client):
     admin_patch = admin_client.patch(f"/api/projects/{first['id']}", json={"title": first["title"], "estimated_amount": "200000"})
     assert admin_patch.status_code == 200, admin_patch.get_json()
 
-    lead = admin_client.post("/api/leads", json={"client_id": first["client_id"]}).get_json()
-    admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Site survey"})
+    lead = make_lead(admin_client)
     admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-20"})
-    admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Quote sent", "quote_sent_date": "2026-09-21", "est_value": 300000})
-    admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-21", "est_value": 300000})
+    admin_client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 300000, "finalized": True,
+    })
+    admin_client.patch(f"/api/leads/{lead['id']}", json={
+        "work_order_no": "WO-1002", "work_order_date": "2026-09-23",
+        "advance_amount": 50000, "advance_date": "2026-09-23",
+    })
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won", "client_id": first["client_id"]})
 
     detail = admin_client.get(f"/api/clients/{first['client_id']}").get_json()
     assert detail["client"]["total_estimated_value"] == 500000

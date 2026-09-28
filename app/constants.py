@@ -1,5 +1,5 @@
-STAGES = ["New enquiry", "Site survey", "Quote sent", "Negotiation", "Won", "Lost"]
-OPEN_STAGES = STAGES[:4]
+STAGES = ["New enquiry", "Site survey", "Quote sent", "Negotiation", "Work order & advance", "Won", "Lost"]
+OPEN_STAGES = STAGES[:5]
 WON = "Won"
 LOST = "Lost"
 CLOSED_STAGES = (WON, LOST)

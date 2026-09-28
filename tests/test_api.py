@@ -3,6 +3,7 @@ from datetime import timedelta
 from app.extensions import db
 from app.models import LeadSource, Service, Setting
 from app.timeutil import today_local
+from conftest import win_lead
 
 
 def make(client, **fields):
@@ -41,13 +42,13 @@ def test_new_lead_defaults_and_activity(client):
     assert [a["kind"] for a in lead["activities"]] == ["created"]
 
 
-def test_stage_change_logs_and_sets_closed_at(client):
+def test_stage_change_logs_and_sets_closed_at(client, admin_client):
     lead = make(client)
-    res = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).get_json()
+    res = win_lead(client, admin_client, lead["id"])
     assert res["stage"] == "Won" and res["closed_at"]
     # Winning also auto-creates the project, logged as its own activity ahead of the stage change.
     assert "Project" in res["activities"][0]["text"]
-    assert res["activities"][1]["text"] == "Stage changed: New enquiry \u2192 Won"
+    assert res["activities"][1]["text"] == "Stage changed: Work order & advance \u2192 Won"
 
     reopened = client.patch(f"/api/leads/{lead['id']}", json={"stage": "Site survey"}).get_json()
     assert reopened["closed_at"] is None
@@ -87,7 +88,7 @@ def test_notes_and_delete(client):
     assert client.get("/api/leads/999").get_json()["error"]
 
 
-def test_summary_numbers(client):
+def test_summary_numbers(client, admin_client):
     today = today_local()
     yesterday = (today - timedelta(days=1)).isoformat()
     make(client, est_value=100, follow_up_date=yesterday)                    # open, overdue
@@ -95,7 +96,7 @@ def test_summary_numbers(client):
     make(client, est_value=300, follow_up_date=(today + timedelta(days=3)).isoformat())  # open, later
     won = make(client, est_value=1000)
     lost = make(client, est_value=50)
-    client.patch(f"/api/leads/{won['id']}", json={"stage": "Won"})
+    win_lead(client, admin_client, won["id"])
     client.patch(f"/api/leads/{lost['id']}", json={"stage": "Lost"})
 
     s = client.get("/api/state").get_json()["summary"]

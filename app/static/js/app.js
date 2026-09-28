@@ -6,7 +6,7 @@
 
   const VIEWS = ['active', 'add', 'closed', 'status'];
   const CLOSED_STAGES = ['Won', 'Lost'];
-  const STAGE_ORDER = ['New enquiry', 'Site survey', 'Quote sent', 'Negotiation'];
+  const STAGE_ORDER = ['New enquiry', 'Site survey', 'Quote sent', 'Negotiation', 'Work order & advance'];
 
   // Which stage section should open by default: the one right after where the lead actually is, so
   // whatever's already done stays out of the way and what's next is one tap away. The last stage keeps
@@ -602,21 +602,11 @@
     const pinField = wrapField('site_pincode', 'Site pincode', pinInput, '', true);
     pinField.append(pinHint);
 
-    // A brand-new lead is either for a company we've never worked with, or a new enquiry from someone
-    // who is already a client - picking one hides the company/contact fields, since the client already
-    // has those on file, and sends client_id instead so winning this lead adds a second project to them
-    // rather than a second client.
-    let clientField = null;
+    // Every new lead is for a company we haven't worked with yet - it's only mapped to a client (an
+    // existing one, or a new one) once it's won; see markOutcome below. A lead already carrying a
+    // client_id here is a legacy one won before that change, or the record of an already-won lead -
+    // company/contact fields stay hidden for it since the client already has those on file.
     let companyFields = null;
-    const clientSel = selectField(
-      [{ value: '', label: 'A new company…' }, ...S.clients.map((c) => ({ value: c.id, label: c.name }))],
-      '', { title: 'This enquiry is for', placeholder: 'A new company…' });
-    if (!lead) {
-      clientSel.onchange = () => { companyFields.hidden = clientSel.value !== ''; };
-      clientField = h('div', { class: 'field wide' },
-        h('label', { for: 'f-client_pick' }, 'This enquiry is for'),
-        Object.assign(clientSel, { id: 'f-client_pick' }));
-    }
 
     const serviceBoxes = S.service_options.map((opt) => {
       const cb = h('input', { type: 'checkbox', value: String(opt.id) });
@@ -680,10 +670,11 @@
     let roundRequested = false;         // Save round was tapped - the first round's fields are then required
     let negotiationSectionNode = null;
     let negotiationBody = null;         // set only when this is the lead's first (stage-advancing) round
+    let workOrderSectionNode = null;
     if (!lead) {
       // Creating: one flat form, same as always - the stage accordion only makes sense once a lead exists.
       form = h('form', { novalidate: true, id: 'lead-form' },
-        errorBox, clientField, companyFields,
+        errorBox, companyFields,
         h('div', { class: 'form-grid' }, enquiryFields));
     } else {
       const expand = nextStageIndex(lead);
@@ -843,6 +834,37 @@
         }
       }
 
+      // Work order & advance: a single one-time set of fields, not a repeatable list like negotiation -
+      // entering them is what completes Negotiation's own step, once a round has been finalized.
+      const negotiationFinalized = (lead.negotiations || []).some((n) => n.finalized);
+      const workOrderFields = h('div', { class: 'form-grid' },
+        wrapField('work_order_no', 'Work order no.', text('text', L.work_order_no, { maxlength: 60, autocomplete: 'off' }), '', true),
+        wrapField('work_order_date', 'Work order date', dateField(L.work_order_date), '', true),
+        wrapField('advance_amount', `Advance received (${S.settings.currency})`,
+          text('number', L.advance_amount, { min: '0', step: 'any', inputmode: 'decimal' }), '', true),
+        wrapField('advance_date', 'Advance date', dateField(L.advance_date), '', true));
+      workOrderSectionNode = h('details', { class: `stage-section${negotiationFinalized ? '' : ' locked'}`, open: negotiationFinalized && expand === 4 },
+        h('summary', { class: 'stage-section-title' }, 'Work order & advance'),
+        h('div', { class: 'stage-section-body' }, workOrderFields));
+
+      if (!negotiationFinalized) {
+        // Nothing here can be entered before a negotiation round is finalized - lock the fields and
+        // explain why, same as the quote section does while the survey is still open.
+        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date'].forEach((name) => { inputs[name].disabled = true; });
+        workOrderSectionNode.querySelector('summary').addEventListener('click', (e) => {
+          e.preventDefault();
+          toast('Finalize a negotiation round first', true);
+        });
+      } else if (lead.stage === 'Negotiation' && !lead.work_order_no) {
+        const woInput = inputs.work_order_no;
+        const updateSaveLabel = () => {
+          saveBtn.textContent = woInput.value ? 'Save & move to Work order & advance' : 'Save changes';
+        };
+        woInput.addEventListener('input', updateSaveLabel);
+        woInput.addEventListener('change', updateSaveLabel);
+        updateSaveLabel();
+      }
+
       form = h('form', { novalidate: true, id: 'lead-form' },
         errorBox,
         stageField,
@@ -854,22 +876,36 @@
 
     // Won / Lost is only set by pressing Mark won / Mark lost, which saves the form with that outcome.
     let outcome = null;
+    let outcomeClientId = null;
     const markOutcome = async (result) => {
+      let clientId = null;
+      if (result === 'Won') {
+        // Winning is the moment this lead gets mapped to a client - an existing one, or a brand-new one
+        // named after it. No auto-matching by name, so the admin always makes this call on purpose.
+        const newLabel = `New client — ${L.company || L.contact_name}`;
+        const choice = await LD.pickList(
+          [{ value: '', label: newLabel }, ...S.clients.map((c) => ({ value: c.id, label: c.name }))],
+          '', { title: 'Map this lead to a client' });
+        if (choice === undefined) return;             // closed without choosing - don't mark it won
+        clientId = choice || null;
+      }
       const sure = await LD.confirm(`Mark ${title(lead)} as ${result.toLowerCase()}?`,
         { title: `Mark ${result.toLowerCase()}`, ok: `Yes, mark ${result.toLowerCase()}`, danger: result === 'Lost' });
       if (!sure) return;
       outcome = result;
+      outcomeClientId = clientId;
       inputs.stage.addOption(result, result);
       inputs.stage.value = result;
       saveBtn.click();
     };
-    // Mark won stays in view; Mark lost sits in the sheet's "More actions" menu with the other destructive ones.
-    const outcomeButtons = lead && isOpen(lead) ? h('div', { class: 'outcome' },
+    // Mark won stays in view, admin only - it's the step that maps the lead to a client. Mark lost sits
+    // in the sheet's "More actions" menu with the other destructive ones, open to whoever owns the lead.
+    const outcomeButtons = lead && isOpen(lead) && S.me.is_admin ? h('div', { class: 'outcome' },
       h('button', { class: 'btn', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won')) : null;
 
     // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
     // display has to check both roots instead of just `form`.
-    const formRoots = [form, quoteSection, surveySectionNode, negotiationSectionNode].filter(Boolean);
+    const formRoots = [form, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode].filter(Boolean);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -884,7 +920,10 @@
       if ('quote_sent_date' in body && !body.quote_sent_date) body.quote_sent_date = null;
       body.enquired_by_id = body.enquired_by_id || null;
       body.service_ids = serviceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.id);
-      if (!lead) body.client_id = clientSel.value || null;
+      if ('advance_amount' in body && body.advance_amount === '') body.advance_amount = null;
+      if ('work_order_date' in body && !body.work_order_date) body.work_order_date = null;
+      if ('advance_date' in body && !body.advance_date) body.advance_date = null;
+      if (outcome === 'Won') body.client_id = outcomeClientId;
 
       saveBtn.disabled = true;
       const isNew = !lead;
@@ -910,6 +949,14 @@
           if (!isNew && !inputs.quote_sent_date.disabled && (body.quote_sent_date || body.est_value !== null || lead.quote_sent_date)) {
             if (!body.quote_sent_date) missing.quote_sent_date = 'This field is required';
             if (body.est_value === null) missing.est_value = 'This field is required';
+          }
+          // Work order & advance: same all-or-nothing rule, once negotiation has been finalized.
+          if (!isNew && !inputs.work_order_no.disabled
+            && (body.work_order_no || body.work_order_date || body.advance_amount !== null || body.advance_date || lead.work_order_no)) {
+            if (!body.work_order_no) missing.work_order_no = 'This field is required';
+            if (!body.work_order_date) missing.work_order_date = 'This field is required';
+            if (body.advance_amount === null) missing.advance_amount = 'This field is required';
+            if (!body.advance_date) missing.advance_date = 'This field is required';
           }
           const stageOk = requireFilled([...surveyCheck(), ...negotiationCheck()]);
           if (Object.keys(missing).length || !stageOk) {
@@ -970,11 +1017,11 @@
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
-    return { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode };
+    return { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode };
   }
 
   // The pipeline as five steps across the top of the sheet: done ones green, the current one in the accent.
-  const STEP_STAGES = [['New enquiry', 'New'], ['Site survey', 'Survey'], ['Quote sent', 'Quote'], ['Negotiation', 'Negot.'], ['Won', 'Won']];
+  const STEP_STAGES = [['New enquiry', 'New'], ['Site survey', 'Survey'], ['Quote sent', 'Quote'], ['Negotiation', 'Negot.'], ['Work order & advance', 'W.O.'], ['Won', 'Won']];
   function stageSteps(lead) {
     const lost = lead.stage === 'Lost';
     const at = STEP_STAGES.findIndex(([s]) => s === lead.stage);
@@ -1012,8 +1059,10 @@
       !!lead.survey?.survey_date,
       !!lead.quote_sent_date,
       rounds.some((r) => r.finalized) || CLOSED_STAGES.includes(lead.stage),
+      !!lead.work_order_no,
     ];
-    const detail = ['', photos ? ` · ${plural(photos, 'photo', 'photos')}` : '', '', rounds.length ? ` · ${plural(rounds.length, 'round', 'rounds')}` : ''];
+    const detail = ['', photos ? ` · ${plural(photos, 'photo', 'photos')}` : '', '',
+      rounds.length ? ` · ${plural(rounds.length, 'round', 'rounds')}` : '', ''];
     sections.forEach((node, i) => {
       const summary = node && node.querySelector(':scope > summary');
       if (!summary || node.classList.contains('locked')) return;
@@ -1073,10 +1122,10 @@
   }
 
   function buildDrawer(lead) {
-    const { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode } = buildLeadForm(lead, closeDrawer);
+    const { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode } = buildLeadForm(lead, closeDrawer);
     const hasRounds = !!(lead && (lead.negotiations || []).length > 0);
     const negotiation = hasRounds ? negotiationSection(lead) : negotiationSectionNode;
-    markSections(lead, [form.querySelector('details.stage-section'), surveySectionNode, quoteSection, negotiation]);
+    markSections(lead, [form.querySelector('details.stage-section'), surveySectionNode, quoteSection, negotiation, workOrderSectionNode]);
 
     const removeLead = async () => {
       if (!(await LD.confirm(`Delete ${title(lead)}? This also removes its activity log.`,
@@ -1133,7 +1182,7 @@
         surveySectionNode,
         quoteSection,
         negotiation,
-        checklistSection(lead.id),
+        workOrderSectionNode,
         activitySection(lead.id)),
       h('div', { class: 'drawer-foot' }, saveBtn, moreBtn),
     );
@@ -1259,69 +1308,6 @@
     return section;
   }
 
-  /* ---------- work checklist ---------- */
-
-  let checklistApi = null;
-
-  function checklistSection(id) {
-    const input = h('input', { type: 'text', id: 'check-input', maxlength: '200', placeholder: 'Add a step, for example: Site survey done', 'aria-label': 'New checklist item' });
-    const error = h('p', { class: 'err', role: 'alert' });
-    const base = `/api/leads/${id}/checklist`;
-    const call = async (path, opts) => {
-      try { renderChecklist((await api(path, opts)).checklist); error.textContent = ''; return true; }
-      catch (err) { error.textContent = err.message; return false; }
-    };
-    // Undo puts a removed item back with the same text and tick - at the end of the list, since the API
-    // has no way to set an item's position.
-    const restore = async (item) => {
-      try {
-        let res = await api(base, { method: 'POST', body: { text: item.text } });
-        if (item.done) {
-          const added = res.checklist[res.checklist.length - 1];
-          res = await api(`${base}/${added.id}`, { method: 'PATCH', body: { done: true } });
-        }
-        renderChecklist(res.checklist);
-      } catch (err) { toast(err.message, true); }
-    };
-    checklistApi = {
-      toggle: (itemId, done) => call(`${base}/${itemId}`, { method: 'PATCH', body: { done } }),
-      remove: async (item) => {
-        if (await call(`${base}/${item.id}`, { method: 'DELETE' })) {
-          toast('Checklist item removed', { actionLabel: 'Undo', onAction: () => restore(item) });
-        }
-      },
-    };
-    const submit = async (e) => {
-      e.preventDefault();
-      if (!input.value.trim()) { error.textContent = 'Write the step first'; input.focus(); return; }
-      await call(base, { method: 'POST', body: { text: input.value } });
-      input.value = '';
-      input.focus();
-    };
-    return h('details', { class: 'stage-section' },
-      h('summary', { class: 'stage-section-title' },
-        h('span', { id: 'checklist-title' }, 'Checklist'),
-        h('span', { class: 'section-count', id: 'checklist-count' })),
-      h('div', { class: 'stage-section-body' },
-        h('form', { class: 'note-form', onsubmit: submit }, input, h('button', { class: 'btn', type: 'submit' }, 'Add')),
-        error,
-        h('ul', { class: 'checklist', id: 'checklist' })));
-  }
-
-  function renderChecklist(items) {
-    const list = $('#checklist');
-    if (!list) return;
-    clear(list);
-    const count = $('#checklist-count');
-    count.textContent = items.length ? `${items.filter((i) => i.done).length} / ${items.length}` : '';
-    count.setAttribute('aria-label', items.length ? `${items.filter((i) => i.done).length} of ${items.length} done` : '');
-    items.forEach((item) => list.append(h('li', { class: item.done ? 'done' : '' },
-      h('label', {},
-        h('input', { type: 'checkbox', checked: item.done, onchange: (e) => checklistApi.toggle(item.id, e.target.checked) }),
-        h('span', {}, item.text)),
-      h('button', { class: 'icon-x', type: 'button', 'aria-label': `Remove ${item.text}`, onclick: () => checklistApi.remove(item) }, '\u00d7'))));
-  }
-
   /* ---------- won lead -> project ---------- */
 
   function projectBox(lead) {
@@ -1407,7 +1393,7 @@
   async function loadActivity(id) {
     try {
       const lead = await api(`/api/leads/${id}`);
-      if (openId === id) { renderTimeline(lead.activities); renderChecklist(lead.checklist); }
+      if (openId === id) renderTimeline(lead.activities);
     } catch (err) {
       toast(err.message, true);
     }

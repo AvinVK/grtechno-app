@@ -1032,13 +1032,7 @@ a.p-client-name { color: var(--accent-dark); }
 .client-projects li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .client-projects a { color: var(--accent-dark); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 
-/* ---------- Lead checklist and won-lead box ---------- */
-
-.checklist { margin: 8px 0 0; padding: 0; list-style: none; }
-.checklist li { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--line); }
-.checklist label { display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 0; padding: 10px 0; cursor: pointer; overflow-wrap: anywhere; }
-.checklist input[type="checkbox"] { flex: none; width: 22px; height: 22px; margin: 0; padding: 0; accent-color: var(--accent); }
-.checklist li.done span { color: var(--muted); text-decoration: line-through; }
+/* ---------- Won-lead box ---------- */
 
 .project-box {
   display: grid;

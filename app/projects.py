@@ -35,9 +35,10 @@ def _projects_service():
 
 
 def create_project_from_lead(lead, user):
-    """Turn a won lead into a project. If the lead was raised for an existing client (lead.client_id -
-    someone adding a new project for a client they already have), that client just gains another project;
-    otherwise a client is created (reusing one with the same name if there is one). Returns (project, reused)."""
+    """Turn a won lead into a project. Winning is the moment the admin maps it to a client - either an
+    existing one (lead.client_id, set on the same request that moved it to Won) or a brand-new one, never
+    guessed by matching names, so two enquiries that happen to share a name never merge on their own.
+    Returns (project, reused)."""
     if lead.stage != "Won":
         raise ProjectError("Only a won lead can become a project.")
     if lead.project is not None:
@@ -50,15 +51,13 @@ def create_project_from_lead(lead, user):
         client = lead.client
         reused = True
     else:
-        client = Client.query.filter(func.lower(Client.name) == name.lower()).first()
-        reused = client is not None
-        if client is None:
-            client = Client(
-                name=name, contact_name=lead.contact_name if lead.company else "", phone=lead.phone, email=lead.email,
-                site_category=lead.site_category, pincode=lead.site_pincode, state=lead.site_state,
-                district=lead.site_district, city=lead.site_city, address=lead.site_address, owner_code=owner,
-            )
-            db.session.add(client)
+        client = Client(
+            name=name, contact_name=lead.contact_name if lead.company else "", phone=lead.phone, email=lead.email,
+            site_category=lead.site_category, pincode=lead.site_pincode, state=lead.site_state,
+            district=lead.site_district, city=lead.site_city, address=lead.site_address, owner_code=owner,
+        )
+        db.session.add(client)
+        reused = False
 
     service_names = [s.name for s in lead.services] if lead.services else ([lead.service] if lead.service else [])
     title = f"{client.name} - {', '.join(service_names)}" if service_names else client.name
@@ -70,7 +69,12 @@ def create_project_from_lead(lead, user):
         work_category=lead.service, services=list(lead.services), estimated_amount=estimated_amount, owner_code=owner,
         site_pincode=lead.site_pincode, site_state=lead.site_state, site_district=lead.site_district,
         site_city=lead.site_city, site_address=lead.site_address,
+        work_order_no=lead.work_order_no, work_order_date=lead.work_order_date,
     )
+    # The advance that won the lead is the project's first payment step, already received - it carries
+    # over so the project doesn't start its payment schedule from a blank page.
+    if lead.advance_amount is not None:
+        project.payments.append(ProjectPayment(label="Advance", amount=lead.advance_amount, due_date=lead.advance_date, position=1))
     db.session.add(project)
     db.session.flush()
     lead.activities.insert(0, Activity(kind="project", text=f"Project {project.code} created"))

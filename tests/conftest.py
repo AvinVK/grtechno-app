@@ -115,3 +115,33 @@ def accounts_client(app, accounts):
 @pytest.fixture
 def anon(app):
     return app.test_client()
+
+
+def advance_to_negotiation(client, lead_id):
+    """Drive a lead from New enquiry through a finalized negotiation round - survey done, quote sent, one
+    finalized round. Shared setup for stage-gate tests and win_lead below. Doesn't touch est_value (a
+    caller may have set its own) - a project's amount comes from the latest round, not est_value, see
+    test_negotiation_rounds_added_edited_and_used_as_the_project_estimate. The round's own estimate
+    matches the 1,000,000 most callers' leads already use for est_value, so totals stay compatible."""
+    client.put(f"/api/leads/{lead_id}/survey", json={"survey_date": "2026-09-20"})
+    client.patch(f"/api/leads/{lead_id}", json={"quote_sent_date": "2026-09-21"})
+    client.post(f"/api/leads/{lead_id}/negotiations", json={
+        "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 1000000, "finalized": True,
+    })
+
+
+def win_lead(client, admin_client, lead_id, client_id=None):
+    """Finish the pipeline for a lead (see advance_to_negotiation) and mark it won as the admin - the
+    work order and advance, then Won, optionally mapped to an existing client_id (default: a brand-new
+    client, named after the lead, since winning no longer guesses by matching names)."""
+    advance_to_negotiation(client, lead_id)
+    client.patch(f"/api/leads/{lead_id}", json={
+        "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23",
+    })
+    body = {"stage": "Won"}
+    if client_id is not None:
+        body["client_id"] = client_id
+    res = admin_client.patch(f"/api/leads/{lead_id}", json=body)
+    assert res.status_code == 200, res.get_json()
+    return res.get_json()

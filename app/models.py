@@ -88,6 +88,10 @@ class Lead(db.Model):
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id"), nullable=True, index=True)
     quote_sent_date = db.Column(db.Date, nullable=True)
+    work_order_no = db.Column(db.String(60), nullable=False, default="", server_default="")
+    work_order_date = db.Column(db.Date, nullable=True)
+    advance_amount = db.Column(db.Numeric(14, 2), nullable=True)
+    advance_date = db.Column(db.Date, nullable=True)
     enquired_by_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True)
 
     owner = db.relationship("User")
@@ -99,12 +103,6 @@ class Lead(db.Model):
         back_populates="lead",
         cascade="all, delete-orphan",
         order_by="Activity.id.desc()",
-    )
-    checklist = db.relationship(
-        "ChecklistItem",
-        back_populates="lead",
-        cascade="all, delete-orphan",
-        order_by="ChecklistItem.position, ChecklistItem.id",
     )
     project = db.relationship("Project", back_populates="lead", uselist=False)
     survey = db.relationship("LeadSurvey", back_populates="lead", uselist=False, cascade="all, delete-orphan")
@@ -142,6 +140,10 @@ class Lead(db.Model):
             "client_id": self.client_id,
             "client_name": self.client.name if self.client else None,
             "quote_sent_date": self.quote_sent_date.isoformat() if self.quote_sent_date else None,
+            "work_order_no": self.work_order_no,
+            "work_order_date": self.work_order_date.isoformat() if self.work_order_date else None,
+            "advance_amount": float(self.advance_amount) if self.advance_amount is not None else None,
+            "advance_date": self.advance_date.isoformat() if self.advance_date else None,
             "enquired_by_id": self.enquired_by_id,
             "enquired_by_name": self.enquired_by.name if self.enquired_by else None,
             "survey": self.survey.to_dict() if self.survey else None,
@@ -149,7 +151,6 @@ class Lead(db.Model):
         }
         if with_activities:
             data["activities"] = [a.to_dict() for a in self.activities]
-            data["checklist"] = [c.to_dict() for c in self.checklist]
         return data
 
 
@@ -170,24 +171,6 @@ class Activity(db.Model):
 
     def to_dict(self) -> dict:
         return {"id": self.id, "kind": self.kind, "text": self.text, "created_at": _iso(self.created_at)}
-
-
-class ChecklistItem(db.Model):
-    """One tick-off item on a lead's work checklist."""
-
-    __tablename__ = "lead_checklist_items"
-
-    id = db.Column(db.Integer, primary_key=True)
-    lead_id = db.Column(db.Integer, db.ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
-    text = db.Column(db.String(200), nullable=False)
-    done = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
-    position = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
-
-    lead = db.relationship("Lead", back_populates="checklist")
-
-    def to_dict(self) -> dict:
-        return {"id": self.id, "text": self.text, "done": self.done}
 
 
 class LeadSurvey(db.Model):
