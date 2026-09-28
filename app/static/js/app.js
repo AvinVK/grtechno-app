@@ -653,16 +653,20 @@
       wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
     ];
 
-    // Read only - the stage moves on its own, as each step's own fields are completed (or via Mark
-    // won / Mark lost), never by picking a value here directly.
+    // Read only, one line - the stage moves on its own, as each step's own fields are completed (or
+    // via Mark won / Mark lost), never by picking a value here directly.
     let stageField = null;
     if (lead) {
       const stageDisplay = choice(isOpen(lead) ? S.open_stages : S.stages, L.stage);
       stageDisplay.disabled = true;
-      stageDisplay.classList.add('readonly');
-      stageField = h('div', { class: 'stage-section' },
-        h('div', { class: 'stage-section-body' },
-          h('div', { class: 'form-grid' }, wrapField('stage', 'Current stage', stageDisplay))));
+      stageDisplay.id = 'f-stage';
+      stageDisplay.name = 'stage';
+      stageDisplay.setAttribute('aria-describedby', 'err-stage');
+      inputs.stage = stageDisplay;
+      stageField = h('p', { class: 'current-stage' },
+        h('span', { class: 'current-stage-label' }, 'Current stage: '),
+        h('span', { class: 'current-stage-value' }, L.stage),
+        h('span', { class: 'err', id: 'err-stage', role: 'alert' }));
     }
 
     // Quote sent's fields (and, below, Site survey's) are built into this same <form> so one Save

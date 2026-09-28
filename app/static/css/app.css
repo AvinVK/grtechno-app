@@ -1221,10 +1221,6 @@ a.p-client-name { color: var(--accent-dark); }
 .field-picker::after { content: '\2304'; flex: none; color: var(--muted); font-size: 18px; line-height: 1; }
 .field-picker.placeholder { color: var(--muted); }
 .field-picker:disabled { opacity: 0.55; cursor: not-allowed; }
-/* A read-only field, not a temporarily locked one (see .stage-section.locked) - full opacity, no
-   chevron, no pointer cursor, since there's nothing to open. */
-.field-picker.readonly { opacity: 1; cursor: default; background: var(--soon-tint); }
-.field-picker.readonly::after { display: none; }
 
 /* In-app calendar (replaces the phone's own native date popup). */
 .cal-card { max-width: 340px; padding: 16px; }
@@ -1581,6 +1577,10 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 .client-project-main { display: grid; gap: 4px; min-width: 0; }
 .client-project-title { font-weight: 600; overflow-wrap: anywhere; }
 .client-project-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--muted); font-size: 13px; }
+
+.current-stage { margin: 0 0 14px; font-size: 14px; }
+.current-stage-label { color: var(--muted); }
+.current-stage-value { font-weight: 600; }
 
 /* A lead's stage sections, collapsible the same way (native <details>) - only the section for the next
    stage in the pipeline opens by default, so filling in what's next is one tap away without last stage's
