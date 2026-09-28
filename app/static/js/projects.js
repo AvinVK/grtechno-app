@@ -250,6 +250,25 @@
       closeArea = closeBtn;
     }
 
+    // TEMPORARY - for backfilling old work; goes away with the delete route in projects.py.
+    let deleteBtn = null;
+    if (D.can_delete) {
+      deleteBtn = h('button', { class: 'btn danger dash-close', type: 'button' }, 'Delete project');
+      deleteBtn.onclick = async () => {
+        const sure = await confirm(`Delete ${P.code}? Its details and payment schedule will be removed. This cannot be undone.`, { ok: 'Delete', danger: true, title: 'Delete project' });
+        if (!sure) return;
+        deleteBtn.disabled = true;
+        try {
+          await api(`/api/projects/${P.id}`, { method: 'DELETE' });
+          toast('Project deleted');
+          location.hash = '';
+        } catch (err) {
+          toast(err.message, true);
+          deleteBtn.disabled = false;
+        }
+      };
+    }
+
     clear(view).append(h('div', { class: 'project-detail' },
       canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : h('a', { class: 'back-link', href: '#' }, '← Projects'),
       h('div', { class: 'client-head' },
@@ -274,7 +293,8 @@
           h('h3', {}, 'Who has worked on it'),
           D.team.length ? h('span', { class: 'p-code' }, plural(D.team.length, 'person', 'people')) : null),
         team),
-      closeArea));
+      closeArea,
+      deleteBtn));
     window.scrollTo(0, 0);
   }
 

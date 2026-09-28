@@ -215,6 +215,7 @@ def _detail(project):
             "brought_by": brought_by(project.lead, project.owner),
             "team": _team(project),
             "can_close": g.user.is_admin,
+            "can_delete": g.user.is_admin,          # TEMPORARY - for the backfill, see delete_project
         },
     }
     if can_assign:
@@ -312,3 +313,17 @@ def close_project(project_id):
     project.completed_at = utcnow()
     db.session.commit()
     return jsonify(_detail(project))
+
+
+@bp.delete("/api/projects/<int:project_id>")
+def delete_project(project_id):
+    """TEMPORARY - lets the admin clear out wrong or test projects while old work is being backfilled.
+    Remove this route and the Delete project button once the backfill is done. Its payment schedule goes
+    with it; attendance that pointed at it stays, with no project; a won lead it came from can be made
+    into a project again."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can delete a project.")
+    project = _project_or_404(project_id)
+    db.session.delete(project)
+    db.session.commit()
+    return "", 204

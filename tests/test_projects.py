@@ -1,5 +1,7 @@
+from datetime import date
+
 from app.extensions import db
-from app.models import Client, Lead, Project, Service
+from app.models import Attendance, Client, Lead, Project, ProjectPayment, Service, User
 from conftest import make_user, signed_in
 
 
@@ -343,3 +345,25 @@ def test_completed_at_follows_the_status_when_edited(client, admin_client):
     url = f"/api/projects/{pid}"
     assert admin_client.patch(url, json={"title": "T", "status": "completed"}).get_json()["dashboard"]["completed_at"]
     assert admin_client.patch(url, json={"title": "T", "status": "running"}).get_json()["dashboard"]["completed_at"] is None
+
+
+def test_only_the_admin_can_delete_a_project(client, admin_client, accounts_client, manager_client, manager, app):
+    """TEMPORARY - the delete is only there for the backfill."""
+    pid = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "manager_code": manager.code,
+                                                     "payments": [{"label": "Advance", "amount": 100}]})
+    with app.app_context():
+        admin = User.query.filter_by(is_admin=True).first()
+        db.session.add(Attendance(user_code=admin.code, work_date=date.today(), project_id=pid, check_in_at=db.func.now()))
+        db.session.commit()
+    assert admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["can_delete"] is True
+    assert accounts_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["can_delete"] is False
+    for who in (client, accounts_client, manager_client):
+        assert who.delete(f"/api/projects/{pid}").status_code == 403
+
+    assert admin_client.delete(f"/api/projects/{pid}").status_code == 204
+    assert admin_client.get(f"/api/projects/{pid}").status_code == 404
+    assert admin_client.delete(f"/api/projects/{pid}").status_code == 404
+    with app.app_context():
+        assert ProjectPayment.query.count() == 0
+        assert Attendance.query.one().project_id is None       # the attendance stays, just without a project
