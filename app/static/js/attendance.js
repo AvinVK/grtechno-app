@@ -5,7 +5,7 @@
 
   const { $, h, clear, api, toast, plural, confirm, dateField } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
-  const { fmtTime, nearestDistrict, getLocation, explainLocationIsRequired, pickProject, elapsedSince } = window.ATT;
+  const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
 
   const today = () => new Date().toISOString().slice(0, 10);
@@ -175,28 +175,6 @@
     try { data = await api('/api/attendance/state'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     setTeamLink(data.can_see_team);
 
-    let selectedProjectId = '';
-    let cachedLocation = null;                                 // reused so check-in doesn't ask a second time
-    const projectLabel = (id) => {
-      const p = id && data.projects.find((pr) => String(pr.id) === String(id));
-      return p ? `${p.client_name} – ${p.title}` : 'No project (office work)';
-    };
-    const districtHint = h('p', { class: 'att-step-note', hidden: true });
-    const showDistrict = () => {
-      const district = nearestDistrict(cachedLocation);
-      districtHint.textContent = district ? `Showing projects near ${district}` : '';
-      districtHint.hidden = !district;
-    };
-    const projectBtn = h('button', { type: 'button', id: 'att-project', class: 'field-picker' }, projectLabel(''));
-    projectBtn.onclick = async () => {
-      if (!cachedLocation && (await explainLocationIsRequired())) cachedLocation = await getLocation();
-      showDistrict();
-      const chosen = await pickProject(data.projects, selectedProjectId, nearestDistrict(cachedLocation));
-      if (chosen === undefined) return;                        // closed without choosing
-      selectedProjectId = chosen;
-      projectBtn.textContent = projectLabel(chosen);
-    };
-
     const cardBox = h('div', {});
     const historyBox = h('div', {});
     const barBox = h('div', {});
@@ -230,86 +208,50 @@
       let steps;
       let bar = null;
       if (!t) {
-        const errBox = h('p', { class: 'err', role: 'alert' });
-        const checkInBtn = h('button', { class: 'btn primary', type: 'button' }, 'Check in');
-        checkInBtn.onclick = async () => {
-          errBox.textContent = '';
-          if (!cachedLocation) {
-            const proceed = await explainLocationIsRequired();
-            if (!proceed) return;                                  // they closed the box; nothing happened
-            checkInBtn.disabled = true;
-            checkInBtn.textContent = 'Getting your location…';
-            cachedLocation = await getLocation();
-            showDistrict();
-          }
-          const location = cachedLocation;
-          if (!location) {
-            errBox.textContent = "We couldn't get your location. Allow location access for this site in your browser, then try again.";
-            checkInBtn.disabled = false;
-            checkInBtn.textContent = 'Check in';
-            return;
-          }
+        // Not checked in yet (or today's record was just deleted): the same dark card with one big Check in
+        // button as the Me hub - it asks for the location and the project itself (attendance-core.js).
+        const box = h('section', { class: 'me-today att-today-dark', 'aria-live': 'polite', 'aria-label': 'Today' });
+        renderToday(box, data, { onChange: reload, historyLink: false });
+        clear(cardBox).append(box);
+        clear(barBox);
+        return;
+      }
+      const links = [mapLink(t), data.can_see_team ? deleteLink(t, reload) : null].filter(Boolean);
+      const checkedIn = step('done', 'Checked in', h('span', { class: 'att-step-time' }, fmtTime(t.check_in_at)),
+        h('span', { class: 'att-step-sub' }, t.project_title || 'No project (office work)'),
+        links.length ? h('div', { class: 'att-day-links' }, links) : null);
 
-          checkInBtn.disabled = true;
-          checkInBtn.textContent = 'Checking in…';
-          try {
-            await api('/api/attendance/check-in', {
-              method: 'POST',
-              body: { project_id: selectedProjectId || null, lat: location.lat, lng: location.lng },
-            });
-            toast('Checked in with your location');
-            await reload();
-          } catch (err) {
-            errBox.textContent = err.message;
-            checkInBtn.disabled = false;
-            checkInBtn.textContent = 'Check in';
-          }
-        };
+      if (!t.check_out_at) {
+        // TODO: "Switch project" mid-day - needs a new endpoint that changes today's project_id.
+        const elapsed = h('span', { class: 'att-elapsed' }, elapsedSince(t.check_in_at));
+        elapsedTimer = setInterval(() => { elapsed.textContent = elapsedSince(t.check_in_at); }, 30000);
+        const finish = usualFinish(data.history);
         steps = [
-          step('current', 'Check in', null,
-            h('label', { for: 'att-project', class: 'att-step-sub' }, 'Working on'), projectBtn, districtHint),
-          step('pending', 'Working', null),
+          checkedIn,
+          step('active', 'Working', elapsed, finish ? h('span', { class: 'att-step-note' }, 'Usual finish around ', h('span', { class: 'att-num' }, finish)) : null),
           step('pending', 'Check out', null),
         ];
-        bar = actionBar(errBox, checkInBtn, h('p', { class: 'att-caption' }, 'Uses your location once'));
+
+        const checkOutBtn = h('button', { class: 'btn ink', type: 'button' }, 'Check out');
+        checkOutBtn.onclick = async () => {
+          checkOutBtn.disabled = true;
+          try {
+            await api('/api/attendance/check-out', { method: 'POST' });
+            toast('Checked out');
+            await reload();
+          } catch (err) {
+            toast(err.message, true);
+            checkOutBtn.disabled = false;
+          }
+        };
+        bar = actionBar(checkOutBtn);
       } else {
-        const links = [mapLink(t), data.can_see_team ? deleteLink(t, reload) : null].filter(Boolean);
-        const checkedIn = step('done', 'Checked in', h('span', { class: 'att-step-time' }, fmtTime(t.check_in_at)),
-          h('span', { class: 'att-step-sub' }, t.project_title || 'No project (office work)'),
-          links.length ? h('div', { class: 'att-day-links' }, links) : null);
-
-        if (!t.check_out_at) {
-          // TODO: "Switch project" mid-day - needs a new endpoint that changes today's project_id.
-          const elapsed = h('span', { class: 'att-elapsed' }, elapsedSince(t.check_in_at));
-          elapsedTimer = setInterval(() => { elapsed.textContent = elapsedSince(t.check_in_at); }, 30000);
-          const finish = usualFinish(data.history);
-          steps = [
-            checkedIn,
-            step('active', 'Working', elapsed, finish ? h('span', { class: 'att-step-note' }, 'Usual finish around ', h('span', { class: 'att-num' }, finish)) : null),
-            step('pending', 'Check out', null),
-          ];
-
-          const checkOutBtn = h('button', { class: 'btn ink', type: 'button' }, 'Check out');
-          checkOutBtn.onclick = async () => {
-            checkOutBtn.disabled = true;
-            try {
-              await api('/api/attendance/check-out', { method: 'POST' });
-              toast('Checked out');
-              await reload();
-            } catch (err) {
-              toast(err.message, true);
-              checkOutBtn.disabled = false;
-            }
-          };
-          bar = actionBar(checkOutBtn);
-        } else {
-          steps = [
-            checkedIn,
-            step('done', 'Working', null),
-            step('done', 'Checked out', h('span', { class: 'att-step-time' }, fmtTime(t.check_out_at)),
-              h('span', { class: 'att-step-sub' }, h('span', { class: 'att-num' }, `${t.hours} h`), ' total')),
-          ];
-        }
+        steps = [
+          checkedIn,
+          step('done', 'Working', null),
+          step('done', 'Checked out', h('span', { class: 'att-step-time' }, fmtTime(t.check_out_at)),
+            h('span', { class: 'att-step-sub' }, h('span', { class: 'att-num' }, `${t.hours} h`), ' total')),
+        ];
       }
       clear(cardBox).append(h('div', { class: 'att-today' }, h('ol', { class: 'att-steps' }, steps)));
       clear(barBox);

@@ -166,5 +166,74 @@ window.ATT = (() => {
 
   const checkOut = () => window.LD.api('/api/attendance/check-out', { method: 'POST' });
 
-  return { fmtTime, nearestDistrict, getLocation, explainLocationIsRequired, pickProject, elapsedSince, checkIn, checkOut };
+  /* The dark Today card: where today's check-in stands, the time since checking in, and one big Check in /
+     Check out button. Drawn into `box` from /api/attendance/state's `data`; after a check-in or check-out
+     it calls onChange() so the page can fetch fresh data and draw again. Used on the Me hub, and on Your
+     attendance while you haven't checked in yet (historyLink false there - the history is right below). */
+  function renderToday(box, data, { onChange, historyLink = true }) {
+    const { toast } = window.LD;
+    clearInterval(box._timer);
+    const t = data.today;
+    let status;
+    let big = null;
+    let button = null;
+
+    if (!t) {
+      status = 'Not checked in yet';
+      button = h('button', { class: 'btn primary me-today-btn', type: 'button' }, 'Check in');
+      button.onclick = async () => {
+        button.disabled = true;
+        button.textContent = 'Checking in\u2026';
+        try {
+          if (await checkIn(data.projects)) {
+            toast('Checked in with your location');
+            await onChange();
+            return;
+          }
+        } catch (err) {
+          toast(err.message, true);
+        }
+        button.disabled = false;
+        button.textContent = 'Check in';
+      };
+    } else if (!t.check_out_at) {
+      status = [`Checked in at ${fmtTime(t.check_in_at)}`, t.project_title].filter(Boolean).join(' \u00b7 ');
+      big = h('span', { class: 'me-today-big' }, elapsedSince(t.check_in_at));
+      box._timer = setInterval(() => {
+        if (!box.isConnected) { clearInterval(box._timer); return; }
+        big.textContent = elapsedSince(t.check_in_at);
+      }, 30000);
+      button = h('button', { class: 'btn me-today-btn me-out', type: 'button' }, 'Check out');
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          await checkOut();
+          toast('Checked out');
+          await onChange();
+        } catch (err) {
+          toast(err.message, true);
+          button.disabled = false;
+        }
+      };
+    } else {
+      status = `Done for today \u00b7 ${fmtTime(t.check_in_at)} \u2013 ${fmtTime(t.check_out_at)}`;
+      big = h('span', { class: 'me-today-big' }, `${t.hours} h`);
+    }
+
+    clear(box).append(...[
+      // On the hub: a "Today" label and a link to the full history. Your attendance has both already.
+      historyLink ? h('div', { class: 'me-today-top' },
+        h('span', { class: 'me-today-label' }, 'Today'),
+        h('a', { class: 'me-today-link', href: '/attendance' }, 'History \u203a')) : null,
+      h('p', { class: 'me-today-status' }, status),
+      big,
+      button,
+      !t ? h('p', { class: 'me-today-note' }, 'Uses your location once') : null,
+    ].filter(Boolean));
+  }
+
+  return {
+    fmtTime, nearestDistrict, getLocation, explainLocationIsRequired, pickProject, elapsedSince, checkIn, checkOut,
+    renderToday,
+  };
 })();
