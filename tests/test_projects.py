@@ -367,3 +367,12 @@ def test_only_the_admin_can_delete_a_project(client, admin_client, accounts_clie
     with app.app_context():
         assert ProjectPayment.query.count() == 0
         assert Attendance.query.one().project_id is None       # the attendance stays, just without a project
+
+
+def test_a_closed_project_can_still_be_deleted(client, admin_client):
+    """TEMPORARY - closed/completed projects need the backfill cleanup too."""
+    pid = make_project(client, admin_client)
+    admin_client.post(f"/api/projects/{pid}/close")
+    dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
+    assert dash["can_delete"] is True
+    assert admin_client.delete(f"/api/projects/{pid}").status_code == 204
