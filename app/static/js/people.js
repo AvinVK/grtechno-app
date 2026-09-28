@@ -1,6 +1,6 @@
 /* Manpower & staff, and the Attendance sheet (admin only): field workers and office staff who don't sign
-   in to the app, tracked from the WhatsApp groups they mark attendance in. Both pages open on two boxes,
-   Manpower and Staff, with a head count each; a box opens that group's people:
+   in to the app, tracked from the WhatsApp groups they mark attendance in. Both pages open straight on
+   the list of people, with a search and chips for All and each group (Manpower, Staff):
    - Manpower & staff (data-mode="roster"): each person, where they worked on their most recent working
      day, and the last 7 days as green (present) / red (absent) dots. A person opens a popup: their current
      site, average hours, and the last 2 weeks as dates circled green or red.
@@ -45,35 +45,8 @@
     ? `Attendance data up to ${shortDate(parseDay(data.data_until))}`
     : 'No attendance data yet.');
 
-  /* ---------- the two boxes ---------- */
-
   async function load() {
     return api('/api/workforce');
-  }
-
-  function showBoxes(data) {
-    // Under each count: on Manpower & staff, how many were at work on the latest day we have data for;
-    // on the Attendance sheet, the group's average attendance over the period.
-    const note = (key) => {
-      const people = data[key];
-      if (!data.data_until || !people.length) return plural(people.length, 'person', 'people');
-      if (mode === 'sheet') {
-        const counted = people.filter((p) => p.days);
-        const avg = counted.length ? Math.round((counted.reduce((sum, p) => sum + rate(p), 0) / counted.length) * 100) : 0;
-        return `${avg}% average attendance`;
-      }
-      const atWork = people.filter((p) => p.deployed && p.deployed.date === data.data_until).length;
-      const on = relativeDay(data.data_until, data.today);
-      return `${atWork} at work ${on === 'Today' || on === 'Yesterday' ? on.toLowerCase() : `on ${dayMonth(parseDay(data.data_until))}`}`;
-    };
-    const box = (key) => h('a', { class: 'stat', href: `#${key}` },
-      h('span', { class: 'stat-label' }, `Total ${GROUPS[key].toLowerCase()}`),
-      h('span', { class: 'stat-value' }, data[key].length),
-      h('span', { class: 'stat-note' }, note(key)));
-    clear(view).append(h('div', { class: 'people' },
-      h('div', { class: 'list-head' }, h('h2', {}, mode === 'sheet' ? 'Attendance sheet' : 'Manpower & staff')),
-      h('div', { class: 'people-boxes' }, box('manpower'), box('staff')),
-      dataNote(data)));
   }
 
   /* ---------- Manpower & staff: where each person is, and their last 7 days ---------- */
@@ -98,15 +71,27 @@
 
   const groupLabel = (k) => GROUPS[k] || k.charAt(0).toUpperCase() + k.slice(1);
 
-  // A search by name and a chip per group, taken from the groups the data actually has (not a fixed list).
-  function showRoster(data, key) {
+  // The list both pages open on: a search by name and a chip per group, taken from the groups the data
+  // actually has (not a fixed list), plus All. Manpower & staff lists by name with the week's dots; the
+  // Attendance sheet lists lowest attendance first. The chip in use goes into the address (#manpower,
+  // #staff), so coming back from a person lands on the same one.
+  function showList(data, key) {
     const groups = Object.keys(data).filter((k) => Array.isArray(data[k]));
-    const state = { q: '', group: key };
-    const legend = h('p', { class: 'wk-legend' },
-      'Last 7 days, oldest first: ',
-      h('i', { class: 'wk-dot present' }), ' present ',
-      h('i', { class: 'wk-dot absent' }), ' absent ',
-      h('i', { class: 'wk-dot none' }), ' no data yet');
+    const state = { q: '', group: groups.includes(key) ? key : 'all' };
+    const sheet = mode === 'sheet';
+    const period = data.period ? `${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}` : null;
+    const legend = sheet
+      ? h('p', { class: 'wk-legend' }, ['Lowest attendance first', period].filter(Boolean).join(' · '))
+      : h('p', { class: 'wk-legend' },
+        'Last 7 days, oldest first: ',
+        h('i', { class: 'wk-dot present' }), ' present ',
+        h('i', { class: 'wk-dot absent' }), ' absent ',
+        h('i', { class: 'wk-dot none' }), ' no data yet');
+    const order = sheet
+      ? (a, b) => rate(a) - rate(b) || a.name.localeCompare(b.name)
+      : (a, b) => a.name.localeCompare(b.name);
+    const row = sheet ? sheetRow : (p) => rosterRow(p, data.today);
+
     const heading = h('h2', {});
     const count = h('span', { class: 'att-week-sum' });
     const chips = h('div', { class: 'stage-filter people-chips', role: 'group', 'aria-label': 'Show group' });
@@ -119,23 +104,25 @@
     function render() {
       const pool = state.group === 'all' ? groups.flatMap((g) => data[g]) : data[state.group];
       const q = state.q.trim().toLowerCase();
-      const people = pool.filter((p) => !q || p.name.toLowerCase().includes(q))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      const people = pool.filter((p) => !q || p.name.toLowerCase().includes(q)).sort(order);
       heading.textContent = state.group === 'all' ? 'Everyone' : groupLabel(state.group);
       count.textContent = plural(people.length, 'person', 'people');
       clear(chips).append(...[['all', 'All', groups.reduce((n, g) => n + data[g].length, 0)],
         ...groups.map((g) => [g, groupLabel(g), data[g].length])].map(([value, label, n]) => h('button', {
         type: 'button', class: 'filter-chip', 'aria-pressed': String(state.group === value),
-        onclick: () => { state.group = value; render(); },
+        onclick: () => {
+          state.group = value;
+          history.replaceState(null, '', value === 'all' ? window.location.pathname : `#${value}`);
+          render();
+        },
       }, label, h('span', { class: 'n' }, n))));
       clear(listBox).append(people.length
-        ? h('ul', { class: 'att-week-card' }, people.map((p) => rosterRow(p, data.today)))
+        ? h('ul', { class: 'att-week-card' }, people.map(row))
         : h('p', { class: 'empty-state' }, pool.length ? 'Nobody matches this search.' : 'Nobody here yet.'));
     }
     render();
 
     clear(view).append(h('div', { class: 'people' },
-      h('a', { class: 'back-link', href: '#' }, `← ${mode === 'sheet' ? 'Attendance sheet' : 'Manpower & staff'}`),
       h('div', { class: 'list-head' }, heading, count),
       search,
       chips,
@@ -261,20 +248,6 @@
       p.days ? h('div', { class: 'att-bar', 'aria-hidden': 'true' }, fill) : null));
   }
 
-  function showSheet(data, key) {
-    const people = [...data[key]].sort((a, b) => rate(a) - rate(b) || a.name.localeCompare(b.name));
-    const period = data.period
-      ? `${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}`
-      : null;
-    clear(view).append(h('div', { class: 'people' },
-      h('a', { class: 'back-link', href: '#' }, '← Attendance sheet'),
-      h('div', { class: 'list-head' }, h('h2', {}, GROUPS[key]), period ? h('span', { class: 'att-week-sum' }, period) : null),
-      h('p', { class: 'wk-legend' }, 'Lowest attendance first.'),
-      people.length
-        ? h('ul', { class: 'att-week-card' }, people.map(sheetRow))
-        : h('p', { class: 'empty-state' }, `No ${GROUPS[key].toLowerCase()} yet.`),
-      dataNote(data)));
-  }
 
   /* ---------- one person: every day they came and skipped, by week ---------- */
 
@@ -379,8 +352,7 @@
       clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
       try { cache = await load(); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     }
-    if (GROUPS[hash]) return mode === 'sheet' ? showSheet(cache, hash) : showRoster(cache, hash);
-    return showBoxes(cache);
+    return showList(cache, hash);
   }
 
   window.addEventListener('hashchange', route);

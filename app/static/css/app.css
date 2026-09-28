@@ -1378,8 +1378,6 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .people .list-head { margin: 0; align-items: baseline; }
 .people .att-head { margin: 0; }
 .people .att-week { margin: 0 0 8px; }
-.people-boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.people-boxes .stat-note { font-size: 13px; }
 .people-note { font-size: 13px; }
 .people .people-chips { margin: 0; padding: 0; }
 .people-row { color: inherit; text-decoration: none; }
