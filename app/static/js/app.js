@@ -653,12 +653,17 @@
       wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
     ];
 
-    const stageField = lead
-      ? h('div', { class: 'stage-section' },
-          h('div', { class: 'stage-section-body' },
-            h('div', { class: 'form-grid' },
-              wrapField('stage', isOpen(lead) ? 'Stage' : 'Status', choice(isOpen(lead) ? S.open_stages : S.stages, L.stage)))))
-      : null;
+    // Read only - the stage moves on its own, as each step's own fields are completed (or via Mark
+    // won / Mark lost), never by picking a value here directly.
+    let stageField = null;
+    if (lead) {
+      const stageDisplay = choice(isOpen(lead) ? S.open_stages : S.stages, L.stage);
+      stageDisplay.disabled = true;
+      stageDisplay.classList.add('readonly');
+      stageField = h('div', { class: 'stage-section' },
+        h('div', { class: 'stage-section-body' },
+          h('div', { class: 'form-grid' }, wrapField('stage', 'Current stage', stageDisplay))));
+    }
 
     // Quote sent's fields (and, below, Site survey's) are built into this same <form> so one Save
     // changes button submits everything together - no separate per-stage save button. Each is rendered
