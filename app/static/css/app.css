@@ -519,9 +519,6 @@ button.bottom-nav-item { font: 600 12px/1 var(--font-body); }
 .form-actions { margin-top: 18px; }
 .form-actions .btn { width: 100%; min-height: 48px; font-size: 16px; }
 
-.outcome { display: flex; gap: 8px; margin-bottom: 16px; }
-.outcome .btn { flex: 1; }
-
 /* ---------- Form controls ---------- */
 
 .field { display: grid; gap: 4px; align-content: start; }

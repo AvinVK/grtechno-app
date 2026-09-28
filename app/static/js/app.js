@@ -902,10 +902,6 @@
       inputs.stage.value = result;
       saveBtn.click();
     };
-    // Mark won stays in view, admin only - it's the step that maps the lead to a client. Mark lost sits
-    // in the sheet's "More actions" menu with the other destructive ones, open to whoever owns the lead.
-    const outcomeButtons = lead && isOpen(lead) && S.me.is_admin ? h('div', { class: 'outcome' },
-      h('button', { class: 'btn', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won')) : null;
 
     // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
     // display has to check both roots instead of just `form`.
@@ -1021,7 +1017,7 @@
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
-    return { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode };
+    return { form, saveBtn, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode };
   }
 
   // The pipeline as five steps across the top of the sheet: done ones green, the current one in the accent.
@@ -1126,26 +1122,17 @@
   }
 
   function buildDrawer(lead) {
-    const { form, saveBtn, outcomeButtons, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode } = buildLeadForm(lead, closeDrawer);
+    const { form, saveBtn, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode } = buildLeadForm(lead, closeDrawer);
     const hasRounds = !!(lead && (lead.negotiations || []).length > 0);
     const negotiation = hasRounds ? negotiationSection(lead) : negotiationSectionNode;
     markSections(lead, [form.querySelector('details.stage-section'), surveySectionNode, quoteSection, negotiation, workOrderSectionNode]);
 
-    const removeLead = async () => {
-      if (!(await LD.confirm(`Delete ${title(lead)}? This also removes its activity log.`,
-        { title: 'Delete lead', ok: 'Yes, delete', danger: true }))) return;
-      try {
-        await api(`/api/leads/${lead.id}`, { method: 'DELETE' });
-        closeDrawer();
-        toast('Lead deleted');
-      } catch (err) {
-        toast(err.message, true);
-      }
-      await load();
-    };
+    // Mark won only once the deal is actually being negotiated, not from New enquiry onward - and only
+    // for the admin, since it's the step that maps the lead to a client. Mark lost has no such gate.
+    const canMarkWon = S.me.is_admin && STAGE_ORDER.indexOf(lead.stage) >= STAGE_ORDER.indexOf('Negotiation');
     const moreActions = [
+      isOpen(lead) && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
       isOpen(lead) ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
-      { label: 'Delete lead', danger: true, run: removeLead },
     ].filter(Boolean);
     const moreBtn = h('button', { class: 'btn more-btn', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(moreActions) }, '⋯');
 
@@ -1180,7 +1167,6 @@
       h('div', { class: 'drawer-scroll' },
         stageSteps(lead),
         dueBanner,
-        outcomeButtons,
         projectBox(lead),
         form,
         surveySectionNode,
