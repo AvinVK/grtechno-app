@@ -610,7 +610,7 @@ textarea[aria-invalid="true"] { border-color: var(--signal); }
 .contact-btn.call:hover { background: var(--ok-ink); border-color: var(--ok-ink); }
 
 /* Pipeline stepper: New, Survey, Quote, Negot., Won - a 4px bar and a small label each. */
-.stage-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0 0 14px; padding: 0; list-style: none; }
+.stage-steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 0 0 14px; padding: 0; list-style: none; }
 .stage-steps .step { display: grid; gap: 5px; }
 .stage-steps .step i { height: 4px; border-radius: 2px; background: var(--line); }
 .stage-steps .step span { color: var(--muted); font-size: 11px; font-weight: 600; text-align: center; }

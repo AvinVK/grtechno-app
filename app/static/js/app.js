@@ -1025,7 +1025,10 @@
   function stageSteps(lead) {
     const lost = lead.stage === 'Lost';
     const at = STEP_STAGES.findIndex(([s]) => s === lead.stage);
-    return h('ol', { class: `stage-steps${lost ? ' lost' : ''}`, 'aria-label': `Stage: ${lead.stage}` },
+    return h('ol', {
+      class: `stage-steps${lost ? ' lost' : ''}`, 'aria-label': `Stage: ${lead.stage}`,
+      style: `grid-template-columns: repeat(${STEP_STAGES.length}, minmax(0, 1fr))`,
+    },
       STEP_STAGES.map(([stage, short], i) => {
         const state = lost ? 'lost' : i < at || lead.stage === 'Won' ? 'done' : i === at ? 'current' : 'pending';
         return h('li', { class: `step ${state}`, 'aria-current': state === 'current' ? 'step' : null },
