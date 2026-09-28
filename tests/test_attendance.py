@@ -187,3 +187,23 @@ def test_the_admins_attendance_page_is_the_team_register(admin_client, client):
     html = admin_client.get("/attendance").get_data(as_text=True)
     assert 'data-team-only="1"' in html and ">Team attendance</a>" in html
     assert 'data-team-only="0"' in client.get("/attendance").get_data(as_text=True)
+
+
+
+# ---------- what they're working on: a project, office work or marketing work ----------
+
+def test_check_in_to_marketing_work(client):
+    res = client.post("/api/attendance/check-in", json={"work": "marketing", "lat": 21.1, "lng": 79.0})
+    assert res.status_code == 201
+    today = res.get_json()["today"]
+    assert today["project_id"] is None and today["work_kind"] == "marketing" and today["work_label"] == "Marketing work"
+
+
+def test_office_work_is_the_default_without_a_project(client):
+    today = client.post("/api/attendance/check-in", json={"lat": 21.1, "lng": 79.0}).get_json()["today"]
+    assert today["work_kind"] == "" and today["work_label"] == "Office work"
+
+
+def test_an_unknown_kind_of_work_is_refused(client):
+    res = client.post("/api/attendance/check-in", json={"work": "napping", "lat": 21.1, "lng": 79.0})
+    assert res.status_code == 422 and "work" in res.get_json()["fields"]

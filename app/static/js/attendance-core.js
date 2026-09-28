@@ -103,7 +103,9 @@ window.ATT = (() => {
   function pickProject(projects, selectedId, nearDistrict) {
     return new Promise((resolve) => {
       const toOption = (p) => ({ id: String(p.id), label: `${p.client_name} – ${p.title}`, district: p.site_district });
-      const all = [{ id: '', label: 'No project (office work)' }, ...projects.map(toOption)];
+      // Office and marketing work come first - they aren't projects, so they show whatever the district.
+      const fixed = [{ id: '', label: 'No project (office work)' }, { id: 'marketing', label: 'Marketing work' }];
+      const all = [...fixed, ...projects.map(toOption)];
       const inDistrict = nearDistrict ? projects.filter((p) => p.site_district === nearDistrict) : [];
       let showingAll = !nearDistrict || inDistrict.length === 0;
 
@@ -115,7 +117,7 @@ window.ATT = (() => {
 
       function renderRows() {
         clear(list);
-        const shown = showingAll ? all : [all[0], ...inDistrict.map(toOption)];
+        const shown = showingAll ? all : [...fixed, ...inDistrict.map(toOption)];
         shown.forEach((opt) => {
           const selected = String(selectedId ?? '') === opt.id;
           list.append(h('li', {
@@ -157,10 +159,12 @@ window.ATT = (() => {
       here = await getLocation();
       if (!here) throw new Error("We couldn't get your location. Allow location access for this site in your browser, then try again.");
     }
-    const projectId = await pickProject(projects, '', nearestDistrict(here));
-    if (projectId === undefined) return null;                   // closed the list without choosing
+    const choice = await pickProject(projects, '', nearestDistrict(here));
+    if (choice === undefined) return null;                      // closed the list without choosing
+    const marketing = choice === 'marketing';
     return window.LD.api('/api/attendance/check-in', {
-      method: 'POST', body: { project_id: projectId || null, lat: here.lat, lng: here.lng },
+      method: 'POST',
+      body: { project_id: marketing ? null : choice || null, work: marketing ? 'marketing' : 'office', lat: here.lat, lng: here.lng },
     });
   }
 
@@ -197,7 +201,7 @@ window.ATT = (() => {
         button.textContent = 'Check in';
       };
     } else if (!t.check_out_at) {
-      status = [`Checked in at ${fmtTime(t.check_in_at)}`, t.project_title].filter(Boolean).join(' \u00b7 ');
+      status = [`Checked in at ${fmtTime(t.check_in_at)}`, t.work_label].filter(Boolean).join(' \u00b7 ');
       big = h('span', { class: 'me-today-big' }, elapsedSince(t.check_in_at));
       box._timer = setInterval(() => {
         if (!box.isConnected) { clearInterval(box._timer); return; }

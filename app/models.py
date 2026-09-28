@@ -529,6 +529,8 @@ class Attendance(db.Model):
     check_in_lng = db.Column(db.Float, nullable=True)
     check_out_at = db.Column(db.DateTime, nullable=True)
     notes = db.Column(db.String(400), nullable=False, default="", server_default="")
+    # With no project: "" is office work, "marketing" is marketing work.
+    work_kind = db.Column(db.String(20), nullable=False, default="", server_default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     user = db.relationship("User")
@@ -554,6 +556,9 @@ class Attendance(db.Model):
             "work_date": self.work_date.isoformat(), "project_id": self.project_id,
             "project_title": self.project.title if self.project else None,
             "project_code": self.project.code if self.project else None,
+            "work_kind": self.work_kind,
+            # What they were working on, in words: the project, or marketing / office work.
+            "work_label": self.project.title if self.project else ("Marketing work" if self.work_kind == "marketing" else "Office work"),
             "check_in_at": _iso(self.check_in_at), "check_out_at": _iso(self.check_out_at),
             "check_in_lat": self.check_in_lat, "check_in_lng": self.check_in_lng,
             "check_in_map_url": self.check_in_map_url,

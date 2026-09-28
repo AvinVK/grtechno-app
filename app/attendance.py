@@ -98,6 +98,10 @@ def check_in():
             project = None
         if project is None:
             return jsonify(error="Check the highlighted fields", fields={"project_id": "Choose a project from the list"}), 422
+    # Without a project: office work (the default) or marketing work.
+    work = payload.get("work") or "office"
+    if work not in ("office", "marketing"):
+        return jsonify(error="Check the highlighted fields", fields={"work": "Choose what you are working on"}), 422
 
     lat = _coord(payload, "lat", -90, 90, f.errors)
     lng = _coord(payload, "lng", -180, 180, f.errors)
@@ -109,6 +113,7 @@ def check_in():
     row = Attendance(
         user_code=g.user.code, work_date=date.today(), project_id=project.id if project else None,
         check_in_at=utcnow(), check_in_lat=lat, check_in_lng=lng, notes=f.data.get("notes", ""),
+        work_kind="marketing" if work == "marketing" and project is None else "",
     )
     db.session.add(row)
     db.session.commit()

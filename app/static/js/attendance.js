@@ -87,7 +87,7 @@
     return dayRow({
       title,
       right: h('span', { class: 'att-day-hours' }, a.hours != null ? `${a.hours} h` : ''),
-      sub: a.project_title ? [a.project_title, ' · ', timesText(a)] : timesText(a),
+      sub: a.work_label ? [a.work_label, ' · ', timesText(a)] : timesText(a),
       hours: a.hours,
       links: [mapLink(a), onDeleted ? deleteLink(a, onDeleted) : null],
     });
@@ -220,7 +220,7 @@
       }
       const links = [mapLink(t), data.can_see_team ? deleteLink(t, reload) : null].filter(Boolean);
       const checkedIn = step('done', 'Checked in', h('span', { class: 'att-step-time' }, fmtTime(t.check_in_at)),
-        h('span', { class: 'att-step-sub' }, t.project_title || 'No project (office work)'),
+        h('span', { class: 'att-step-sub' }, t.work_label),
         links.length ? h('div', { class: 'att-day-links' }, links) : null);
 
       if (!t.check_out_at) {
