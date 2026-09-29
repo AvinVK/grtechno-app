@@ -109,7 +109,23 @@
               { title: 'Turn off user', ok: 'Yes, turn off', danger: true,
                 message: `Turn off ${u.name}? They are signed out and cannot sign in until you turn them on again. Their leads stay.` },
               () => toast(`${u.name} is turned off`)),
-          }, 'Turn off'));
+          }, 'Turn off'),
+        h('button', {
+          class: 'btn small danger', type: 'button',
+          onclick: async () => {
+            const sure = await confirm(
+              `Delete ${u.name}? This removes their sign-in and attendance history for good - it cannot be undone. Their leads and projects stay, just without an owner.`,
+              { title: 'Delete user', ok: 'Yes, delete', danger: true });
+            if (!sure) return;
+            try {
+              await api(`/api/users/${u.code}`, { method: 'DELETE' });
+              toast(`${u.name} deleted`);
+            } catch (err) {
+              toast(err.message, true);
+            }
+            await refresh();
+          },
+        }, 'Delete user'));
       return h('article', { class: 'user-row' },
         h('div', { class: 'user-main' },
           h('span', { class: 'user-name' }, u.name, u.is_admin ? h('span', { class: 'user-tag' }, 'Admin') : null),

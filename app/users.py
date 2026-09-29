@@ -116,3 +116,16 @@ def set_active(code):
     user.is_active = active
     db.session.commit()
     return jsonify(user=_dict(user))
+
+
+@bp.delete("/<code>")
+def delete_user(code):
+    """Turn off keeps the account (and its history) around; this removes it - the sign-in, and its
+    attendance rows (cascade on users.code). Leads and projects they owned stay, just unowned
+    (owner_code/manager_code go to SET NULL, same as when a user's role is retired any other way)."""
+    user = db.get_or_404(User, code)
+    if user.is_admin:
+        abort(400, "The admin account cannot be deleted.")
+    db.session.delete(user)
+    db.session.commit()
+    return "", 204

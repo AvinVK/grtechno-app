@@ -1,5 +1,7 @@
+from datetime import date
+
 from app.extensions import db
-from app.models import Lead, Module, User
+from app.models import Attendance, Lead, Module, User, utcnow
 from conftest import make_user, signed_in
 
 
@@ -15,6 +17,7 @@ def test_only_the_admin_can_manage_users(client, admin_client, user):
     assert client.get("/api/users").status_code == 403
     assert client.post("/api/users", json={"name": "Sneaky"}).status_code == 403
     assert client.post(f"/api/users/{user.code}/reset", json={}).status_code == 403
+    assert client.delete(f"/api/users/{user.code}").status_code == 403
     assert admin_client.get("/api/users").status_code == 200
 
 
@@ -33,7 +36,23 @@ def test_admin_adds_a_user_and_sees_the_setup_code_once(admin_client, app):
 def test_admin_account_is_protected(admin_client, admin):
     assert admin_client.post(f"/api/users/{admin.code}/reset", json={}).status_code == 400
     assert admin_client.post(f"/api/users/{admin.code}/active", json={"active": False}).status_code == 400
+    assert admin_client.delete(f"/api/users/{admin.code}").status_code == 400
     assert db.session.get(User, admin.code).is_active
+
+
+def test_admin_can_delete_a_user(app, admin_client, user):
+    """Unlike turning off, deleting removes the sign-in for good and clears their attendance history -
+    but a lead they owned stays, just unowned (owner_code -> SET NULL)."""
+    lead = new_lead(signed_in(app, user), company="Kept")
+    with app.app_context():
+        db.session.add(Attendance(user_code=user.code, work_date=date.today(), check_in_at=utcnow()))
+        db.session.commit()
+
+    assert admin_client.delete(f"/api/users/{user.code}").status_code == 204
+    assert db.session.get(User, user.code) is None
+    assert db.session.get(Lead, lead["id"]).owner_code is None
+    assert Attendance.query.filter_by(user_code=user.code).count() == 0
+    assert admin_client.delete(f"/api/users/{user.code}").status_code == 404
 
 
 # ---------- people only see their own leads ----------
