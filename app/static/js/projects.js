@@ -316,7 +316,6 @@
     const P = data.project;
     const cur = data.currency;
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
-    const area = (rows, value) => { const t = h('textarea', { rows }); t.value = value ?? ''; return t; };
 
     const title = text('text', P.title, { maxlength: 160, autocomplete: 'off' });
     const statusSel = selectField(
@@ -327,8 +326,6 @@
     const days = text('number', P.completion_days, { min: '0', step: '1', inputmode: 'numeric' });
     const estimated = text('number', P.estimated_amount, { min: '0', step: 'any', inputmode: 'decimal' });
     const discount = text('number', P.discount_amount || '', { min: '0', step: 'any', inputmode: 'decimal' });
-    const payTerms = area(3, P.payment_terms);
-    const specialTerms = area(3, P.special_terms);
     const managerSel = data.can_assign_manager
       ? selectField(
         [{ value: '', label: 'Not assigned' }, ...data.managers.map((m) => ({ value: m.code, label: m.name }))],
@@ -339,6 +336,15 @@
     const net = h('p', { class: 'net-amount', 'aria-live': 'polite' });
 
     /* payment schedule */
+    const ovNegotiated = h('dd', {}, '—');
+    const ovAdvance = h('dd', {}, '—');
+    const ovRemaining = h('dd', {}, '—');
+    const payOverview = h('div', { class: 'pay-overview' },
+      h('p', { class: 'pay-overview-title' }, `${P.code} · ${P.title}`),
+      h('dl', { class: 'pay-overview-grid' },
+        h('dt', {}, 'Negotiated amount'), ovNegotiated,
+        h('dt', {}, 'Advance payment'), ovAdvance,
+        h('dt', {}, 'Remaining'), ovRemaining));
     const payRows = h('div', { class: 'pay-rows' });
     const paySummary = h('p', { class: 'pay-summary', 'aria-live': 'polite' });
     const payErr = h('p', { class: 'err', id: 'err-payments', role: 'alert' });
@@ -368,7 +374,14 @@
       net.textContent = netValue === null ? '' : `Net amount: ${money(netValue, cur)}`;
       net.classList.toggle('bad', netValue !== null && netValue < 0);
 
-      const scheduled = payments().reduce((sum, p) => sum + toNumber(p.amount), 0);
+      const rows = payments();
+      const advanceRow = rows.find((p) => p.label.trim().toLowerCase() === 'advance');
+      const advanceAmt = advanceRow ? toNumber(advanceRow.amount) : 0;
+      ovNegotiated.textContent = est === null ? '—' : money(est, cur);
+      ovAdvance.textContent = advanceRow ? money(advanceAmt, cur) : '—';
+      ovRemaining.textContent = netValue === null ? '—' : money(netValue - advanceAmt, cur);
+
+      const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
       paySummary.className = 'pay-summary';
       if (!payRows.children.length) paySummary.textContent = '';
       else if (netValue === null) paySummary.textContent = `Scheduled: ${money(scheduled, cur)}`;
@@ -394,8 +407,7 @@
         const body = {
           title: title.value, status: statusSel.value, work_order_no: woNo.value, work_order_date: woDate.value,
           start_date: startDate.value, completion_days: days.value, estimated_amount: estimated.value,
-          discount_amount: discount.value, payment_terms: payTerms.value, special_terms: specialTerms.value,
-          payments: payments(),
+          discount_amount: discount.value, payments: payments(),
         };
         if (managerSel) body.manager_code = managerSel.value;
         try {
@@ -432,12 +444,8 @@
           field('discount_amount', `Discount (${cur})`, discount)),
         net),
       h('section', { class: 'p-section' },
-        h('h3', {}, 'Terms'),
-        h('div', { class: 'form-grid' },
-          field('payment_terms', 'Payment terms', payTerms, { wide: true }),
-          field('special_terms', 'Special terms', specialTerms, { wide: true }))),
-      h('section', { class: 'p-section' },
         h('h3', {}, 'Payment schedule'),
+        payOverview,
         h('p', { class: 'hint' }, 'Split the net amount into steps, for example advance, on delivery, on completion.'),
         payRows,
         payErr,

@@ -983,6 +983,12 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-summary { font-size: 14px; color: var(--muted); }
 .pay-summary.good { color: var(--ok-ink); font-weight: 600; }
 
+.pay-overview { background: var(--soon-tint); border-radius: var(--r-control); padding: 12px 14px; margin-bottom: 14px; }
+.pay-overview-title { margin: 0 0 8px; font-weight: 600; overflow-wrap: anywhere; }
+.pay-overview-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 0; font-size: 14px; }
+.pay-overview-grid dt { color: var(--muted); }
+.pay-overview-grid dd { margin: 0; text-align: right; font-weight: 600; font-family: var(--font-num); }
+
 .pay-rows { display: grid; gap: 10px; }
 .pay-row {
   display: grid;
