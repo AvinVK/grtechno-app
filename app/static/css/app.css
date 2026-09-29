@@ -992,13 +992,12 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
-  grid-template-areas: "label label x" "amount date x";
+  grid-template-areas: "label amount x";
   gap: 8px;
   align-items: center;
 }
-.pay-label { grid-area: label; }
+.pay-label-text { grid-area: label; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .pay-amount { grid-area: amount; }
-.pay-date { grid-area: date; }
 .pay-row .icon-x { grid-area: x; }
 
 .negotiation-rows { display: grid; gap: 8px; }
@@ -1100,10 +1099,6 @@ a.p-client-name { color: var(--accent-dark); }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
-}
-
-@media (min-width: 640px) {
-  .pay-row { grid-template-columns: 2fr 1fr 1fr 44px; grid-template-areas: "label amount date x"; }
 }
 
 /* ---------- In-app confirmation box (replaces the browser's popup) ---------- */

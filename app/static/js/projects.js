@@ -350,23 +350,36 @@
     const paySummary = h('p', { class: 'pay-summary', 'aria-live': 'polite' });
     const payErr = h('p', { class: 'err', id: 'err-payments', role: 'alert' });
 
-    function addPayRow(p = { label: '', amount: '', due_date: '' }) {
-      const dueDate = dateField(p.due_date || '', { placeholder: 'Due date' });
-      dueDate.classList.add('pay-date');
-      dueDate.setAttribute('aria-label', 'Due date');
+    // Step names are positional, not something the admin types - the first is always the advance, then
+    // "2nd payment", "3rd payment" and so on, renumbered live as rows are added or removed.
+    function labelFor(index) {
+      if (index === 0) return 'Advance';
+      const n = index + 1;
+      const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
+      return `${n}${suffix} payment`;
+    }
+    function renumberPayRows() {
+      [...payRows.children].forEach((row, i) => { row._labelEl.textContent = labelFor(i); });
+    }
+
+    function addPayRow(p = { amount: '' }) {
+      const labelEl = h('p', { class: 'pay-label-text' }, '');
       const row = h('div', { class: 'pay-row' },
-        h('input', { type: 'text', class: 'pay-label', maxlength: 120, placeholder: 'For example: Advance', 'aria-label': 'Payment step name', value: p.label }),
+        labelEl,
         h('input', { type: 'number', class: 'pay-amount', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${cur})`, 'aria-label': 'Amount', value: p.amount ?? '' }),
-        dueDate,
-        h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Remove this payment step', onclick: () => { row.remove(); payErr.textContent = ''; recalc(); } }, '×'));
+        h('button', {
+          class: 'icon-x', type: 'button', 'aria-label': 'Remove this payment step',
+          onclick: () => { row.remove(); payErr.textContent = ''; renumberPayRows(); recalc(); },
+        }, '×'));
+      row._labelEl = labelEl;
       payRows.append(row);
     }
     (P.payments.length ? P.payments : []).forEach(addPayRow);
+    renumberPayRows();
 
-    const payments = () => [...payRows.querySelectorAll('.pay-row')].map((r) => ({
-      label: r.querySelector('.pay-label').value,
+    const payments = () => [...payRows.querySelectorAll('.pay-row')].map((r, i) => ({
+      label: labelFor(i),
       amount: r.querySelector('.pay-amount').value === '' ? 0 : r.querySelector('.pay-amount').value,
-      due_date: r.querySelector('.pay-date').value || null,
     }));
 
     function recalc() {
@@ -438,7 +451,7 @@
         h('p', { class: 'hint' }, 'Split the net amount into steps, for example advance, on delivery, on completion.'),
         payRows,
         payErr,
-        h('button', { class: 'btn small', type: 'button', onclick: () => { addPayRow(); recalc(); payRows.lastChild.querySelector('input').focus(); } }, 'Add payment step'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { addPayRow(); renumberPayRows(); recalc(); payRows.lastChild.querySelector('input').focus(); } }, 'Add payment step'),
         paySummary),
       h('div', { class: 'form-actions' }, saveBtn));
 
