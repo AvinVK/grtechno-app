@@ -106,7 +106,10 @@ def create_user(name: str, is_admin: bool = False, code: str = None, role: str =
 
 
 def find_user(userid_text: str):
-    text = (userid_text or "").strip().lower()
+    # Forgiving the same way the setup code is: a phone keyboard can slip in a stray space around the
+    # dash, or autocorrect it to an en/em dash, without the person noticing - none of that should turn
+    # into "wrong userid or code".
+    text = re.sub(r"\s+", "", userid_text or "").lower().replace("–", "-").replace("—", "-")
     if "-" not in text:
         return None
     user = db.session.get(User, text.rsplit("-", 1)[1])

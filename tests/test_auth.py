@@ -76,6 +76,18 @@ def test_userid_is_name_plus_unique_four_digit_code(app):
     assert find_user(a.userid) is a and find_user("someoneelse-" + b.code) is None and find_user(b.userid.upper()) is b
 
 
+def test_userid_forgives_stray_whitespace_and_smart_dashes(app):
+    # A phone keyboard can slip a space around the dash, or autocorrect it to an en/em dash, without
+    # the person noticing - none of that should read as a wrong userid.
+    a, _ = create_user("Ravi Kumar")
+    db.session.commit()
+    name, code = a.userid.split("-")
+    assert find_user(f"{name} - {code}") is a
+    assert find_user(f"{name}–{code}") is a
+    assert find_user(f"{name}—{code}") is a
+    assert find_user(f" {a.userid} ") is a
+
+
 def test_name_needs_letters_or_numbers(app):
     try:
         create_user("   !!!  ")
