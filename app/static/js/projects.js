@@ -324,16 +324,17 @@
     const woDate = dateField(P.work_order_date);
     const startDate = dateField(P.start_date);
     const days = text('number', P.completion_days, { min: '0', step: '1', inputmode: 'numeric' });
-    const estimated = text('number', P.estimated_amount, { min: '0', step: 'any', inputmode: 'decimal' });
-    const discount = text('number', P.discount_amount || '', { min: '0', step: 'any', inputmode: 'decimal' });
     const managerSel = data.can_assign_manager
       ? selectField(
         [{ value: '', label: 'Not assigned' }, ...data.managers.map((m) => ({ value: m.code, label: m.name }))],
         P.manager_code || '', { title: 'Manager', placeholder: 'Not assigned' })
       : null;
 
+    // The amount is settled by the time a lead is won (see the negotiated figure below) - not something
+    // to hand-edit here anymore.
+    const netValue = P.estimated_amount == null ? null : P.estimated_amount - (P.discount_amount || 0);
+
     const finish = h('p', { class: 'hint', 'aria-live': 'polite' });
-    const net = h('p', { class: 'net-amount', 'aria-live': 'polite' });
 
     /* payment schedule */
     const ovNegotiated = h('dd', {}, '—');
@@ -369,19 +370,14 @@
     }));
 
     function recalc() {
-      const est = estimated.value === '' ? null : toNumber(estimated.value);
-      const netValue = est === null ? null : est - toNumber(discount.value);
-      net.textContent = netValue === null ? '' : `Net amount: ${money(netValue, cur)}`;
-      net.classList.toggle('bad', netValue !== null && netValue < 0);
-
       const rows = payments();
+      const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
       const advanceRow = rows.find((p) => p.label.trim().toLowerCase() === 'advance');
       const advanceAmt = advanceRow ? toNumber(advanceRow.amount) : 0;
-      ovNegotiated.textContent = est === null ? '—' : money(est, cur);
+      ovNegotiated.textContent = P.estimated_amount == null ? '—' : money(P.estimated_amount, cur);
       ovAdvance.textContent = advanceRow ? money(advanceAmt, cur) : '—';
-      ovRemaining.textContent = netValue === null ? '—' : money(netValue - advanceAmt, cur);
+      ovRemaining.textContent = netValue === null ? '—' : money(netValue - scheduled, cur);
 
-      const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
       paySummary.className = 'pay-summary';
       if (!payRows.children.length) paySummary.textContent = '';
       else if (netValue === null) paySummary.textContent = `Scheduled: ${money(scheduled, cur)}`;
@@ -406,8 +402,7 @@
         saveBtn.disabled = true;
         const body = {
           title: title.value, status: statusSel.value, work_order_no: woNo.value, work_order_date: woDate.value,
-          start_date: startDate.value, completion_days: days.value, estimated_amount: estimated.value,
-          discount_amount: discount.value, payments: payments(),
+          start_date: startDate.value, completion_days: days.value, payments: payments(),
         };
         if (managerSel) body.manager_code = managerSel.value;
         try {
@@ -438,12 +433,6 @@
           field('completion_days', 'Completion period (days)', days)),
         finish),
       h('section', { class: 'p-section' },
-        h('h3', {}, 'Amount'),
-        h('div', { class: 'form-grid' },
-          field('estimated_amount', `Estimated amount (${cur})`, estimated),
-          field('discount_amount', `Discount (${cur})`, discount)),
-        net),
-      h('section', { class: 'p-section' },
         h('h3', {}, 'Payment schedule'),
         payOverview,
         h('p', { class: 'hint' }, 'Split the net amount into steps, for example advance, on delivery, on completion.'),
@@ -455,7 +444,7 @@
 
     form.addEventListener('input', (e) => {
       // A payment message from the last save no longer applies once the amounts change.
-      if (payRows.contains(e.target) || e.target === estimated || e.target === discount) payErr.textContent = '';
+      if (payRows.contains(e.target)) payErr.textContent = '';
       recalc();
     });
 

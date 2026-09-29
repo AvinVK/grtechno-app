@@ -978,8 +978,7 @@ a.p-client-name { color: var(--accent-dark); }
 .p-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .p-section-head h3 { margin: 0; }
 
-.net-amount { font: 600 16px/1.2 var(--font-display); }
-.net-amount.bad, .pay-summary.bad { color: var(--signal); }
+.pay-summary.bad { color: var(--signal); }
 .pay-summary { font-size: 14px; color: var(--muted); }
 .pay-summary.good { color: var(--ok-ink); font-weight: 600; }
 
