@@ -1174,11 +1174,19 @@
     // Mark won only once the deal is actually being negotiated, not from New enquiry onward - and only
     // for the admin, since it's the step that maps the lead to a client. Mark lost has no such gate.
     const canMarkWon = S.me.is_admin && STAGE_ORDER.indexOf(lead.stage) >= STAGE_ORDER.indexOf('Negotiation');
+    // Once the work order itself is saved, Won is actually reachable (the server's own gate), so both
+    // outcomes get their own row above Activity instead of staying tucked in More actions.
+    const workOrderSaved = isOpen(lead) && !!lead.work_order_no;
+    const outcomeRow = workOrderSaved ? h('div', { class: 'outcome-row' },
+      S.me.is_admin ? h('button', { class: 'btn ok-solid', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won') : null,
+      h('button', { class: 'btn danger-solid', type: 'button', onclick: () => markOutcome('Lost') }, 'Mark lost')) : null;
     const moreActions = [
-      isOpen(lead) && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
-      isOpen(lead) ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
+      !workOrderSaved && isOpen(lead) && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
+      !workOrderSaved && isOpen(lead) ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
     ].filter(Boolean);
-    const moreBtn = h('button', { class: 'btn more-btn', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(moreActions) }, '⋯');
+    const moreBtn = moreActions.length
+      ? h('button', { class: 'btn more-btn', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(moreActions) }, '⋯')
+      : null;
 
     // Overdue follow-up: say so up top, with a way straight to the date field.
     const overdue = isOpen(lead) && lead.follow_up_date && diffDays(lead.follow_up_date, S.today) < 0;
@@ -1217,6 +1225,7 @@
         quoteSection,
         negotiation,
         workOrderSectionNode,
+        outcomeRow,
         activitySection()),
       h('div', { class: 'drawer-foot' }, saveBtn, moreBtn),
     );

@@ -1075,6 +1075,13 @@ a.p-client-name { color: var(--accent-dark); }
 .btn.danger-solid { background: var(--signal); border-color: var(--signal); color: #fff; }
 .btn.danger-solid:hover { background: #8e1d2e; border-color: #8e1d2e; }
 
+.btn.ok-solid { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn.ok-solid:hover { background: var(--ok-ink); border-color: var(--ok-ink); }
+
+/* Mark won / Mark lost, once the work order is saved - a row of its own, above Activity. */
+.outcome-row { display: flex; gap: 10px; margin: 4px 0; }
+.outcome-row .btn { flex: 1; min-height: 48px; font-size: 16px; }
+
 @media (prefers-reduced-motion: no-preference) {
   .confirm-card { animation: confirm-in 0.14s ease-out; }
   @keyframes confirm-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
