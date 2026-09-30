@@ -6,7 +6,6 @@
 {% block hub_back %}{% endblock %}{# here the bottom nav's Me leads to the hub #}
 
 {% block page_title %}<span id="appbar-title-text">Active leads</span>{% endblock %}
-{% block page_summary %}<p class="appbar-summary" id="appbar-summary"></p>{% endblock %}
 
 {% block content %}
 <main id="view" class="view" tabindex="-1" data-export-url="{{ url_for('views.export_csv') }}"><p class="loading">Loading leads…</p></main>

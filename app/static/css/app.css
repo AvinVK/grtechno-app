@@ -249,6 +249,9 @@ a.stat:hover { border-color: var(--line-strong); }
 /* ---------- Views ---------- */
 
 .view { padding: 20px; outline: none; }
+/* The large app bar already ends in its own bottom padding - adding this on top of it doubled the gap
+   above the search box/content on every Leads tab and on Me. */
+.page-app .view, .page-me .view { padding-top: 0; }
 
 .loading, .empty-state {
   padding: 40px 0;
@@ -1012,9 +1015,6 @@ a.p-client-name { color: var(--accent-dark); }
 }
 
 @media (max-width: 640px) {
-  .topbar { padding: calc(11px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 8px calc(14px + env(safe-area-inset-left)); gap: 6px 12px; }
-  .top-actions { gap: 4px 10px; }
-  .hide-narrow { display: none; }
   .view { padding: 14px; }
   .stage-filter { margin: 0 -14px; padding: 4px 14px; scroll-padding-left: 14px; }
   .lbl-full { display: none; }
@@ -1216,8 +1216,8 @@ a.p-client-name { color: var(--accent-dark); }
 .att-head h2 { font: 600 24px/1.1 var(--font-display); }
 .att-head-date { color: var(--muted); font-size: 14px; }
 
-.topbar .att-team-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; justify-content: center; color: var(--accent-dark); font-weight: 600; text-decoration: none; }
-.topbar .att-team-link:hover { text-decoration: underline; }
+.appbar-actions .att-team-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; justify-content: center; color: var(--accent-dark); font-weight: 600; text-decoration: none; }
+.appbar-actions .att-team-link:hover { text-decoration: underline; }
 
 .att-today {
   max-width: 480px;

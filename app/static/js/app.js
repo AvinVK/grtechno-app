@@ -170,20 +170,8 @@
 
     const titleEl = $('#appbar-title-text');
     const countEl = $('.appbar-count');
-    const summaryEl = $('#appbar-summary');
     if (titleEl) titleEl.textContent = VIEW_TITLE[view] || VIEW_TITLE.active;
-    if (view === 'active') {
-      const openCount = S.leads.filter(isOpen).length;
-      const overdue = S.summary.overdue_count;
-      if (countEl) countEl.textContent = String(openCount);
-      if (summaryEl) {
-        clear(summaryEl).append(`${plural(openCount, 'open', 'open')} `,
-          overdue ? h('b', {}, `· ${plural(overdue, 'overdue', 'overdue')}`) : null);
-      }
-    } else {
-      if (countEl) countEl.textContent = '';
-      if (summaryEl) clear(summaryEl);
-    }
+    if (countEl) countEl.textContent = view === 'active' ? String(S.leads.filter(isOpen).length) : '';
   }
 
   function renderAll() {

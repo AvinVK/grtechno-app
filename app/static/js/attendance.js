@@ -160,11 +160,11 @@
   let elapsedTimer = null;
   const stopElapsedTimer = () => { clearInterval(elapsedTimer); elapsedTimer = null; };
 
-  /* The Team link lives in the top bar, outside #view, so it is added and removed by hand. */
+  /* The Team link lives in the app bar, outside #view, so it is added and removed by hand. */
   function setTeamLink(show) {
     const existing = document.getElementById('att-team-link');
     if (existing) existing.remove();
-    const actions = document.querySelector('.topbar .top-actions');
+    const actions = document.querySelector('.appbar-actions');
     if (show && actions) actions.append(h('a', { id: 'att-team-link', class: 'att-team-link', href: '#team' }, 'Team'));
   }
 
