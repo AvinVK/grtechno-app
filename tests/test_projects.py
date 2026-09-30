@@ -7,9 +7,7 @@ from conftest import make_user, signed_in, win_lead
 
 def make_lead(client, **fields):
     body = {"company": "Kalyani Cold Storage", "contact_name": "R. Kulkarni", "phone": "9800000001",
-            "service": "Sprinklers setup", "est_value": 1000000, "site_category": "Commercial complex",
-            "site_pincode": "411001", "site_state": "Maharashtra", "site_district": "Pune", "site_city": "Pune City",
-            "site_address": "Plot 12, MIDC", **fields}
+            "service": "Sprinklers setup", "est_value": 1000000, **fields}
     res = client.post("/api/leads", json=body)
     assert res.status_code == 201, res.get_json()
     return res.get_json()
@@ -31,7 +29,9 @@ def make_project(client, admin_client, **fields):
 
 def test_site_category_list_and_field(client):
     assert client.get("/api/state").get_json()["settings"]["site_categories"][0] == "Hospital"
-    assert make_lead(client)["site_category"] == "Commercial complex"
+    lead = make_lead(client)
+    res = client.put(f"/api/leads/{lead['id']}/survey", json={"site_category": "Commercial complex"})
+    assert res.get_json()["survey"]["site_category"] == "Commercial complex"
 
 
 # ---------- Won lead -> client + project ----------

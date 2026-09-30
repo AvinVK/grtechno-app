@@ -71,12 +71,6 @@ class Lead(db.Model):
     company = db.Column(db.String(160), nullable=False, default="")
     phone = db.Column(EncryptedText, nullable=False, default="")
     email = db.Column(EncryptedText, nullable=False, default="")
-    site_category = db.Column(db.String(60), nullable=False, default="", server_default="")
-    site_pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
-    site_state = db.Column(db.String(80), nullable=False, default="", server_default="")
-    site_district = db.Column(db.String(80), nullable=False, default="", server_default="")
-    site_city = db.Column(db.String(120), nullable=False, default="", server_default="")
-    site_address = db.Column(EncryptedText, nullable=False, default="")
     service = db.Column(db.String(120), nullable=False, default="")  # legacy: pre-multi-service leads only
     source = db.Column(db.String(120), nullable=False, default="")
     est_value = db.Column(db.Numeric(14, 2), nullable=True)  # set at Quote sent, not at creation, for new leads
@@ -120,12 +114,6 @@ class Lead(db.Model):
             "company": self.company,
             "phone": self.phone,
             "email": self.email,
-            "site_category": self.site_category,
-            "site_pincode": self.site_pincode,
-            "site_state": self.site_state,
-            "site_district": self.site_district,
-            "site_city": self.site_city,
-            "site_address": self.site_address,
             "service": self.service,
             "services": service_names,
             "source": self.source,
@@ -187,6 +175,12 @@ class LeadSurvey(db.Model):
     rep_name = db.Column(db.String(120), nullable=False, default="", server_default="")
     rep_role = db.Column(db.String(60), nullable=False, default="", server_default="")
     rep_phone = db.Column(db.String(40), nullable=False, default="", server_default="")
+    site_category = db.Column(db.String(60), nullable=False, default="", server_default="")
+    site_pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
+    site_state = db.Column(db.String(80), nullable=False, default="", server_default="")
+    site_district = db.Column(db.String(80), nullable=False, default="", server_default="")
+    site_city = db.Column(db.String(120), nullable=False, default="", server_default="")
+    site_address = db.Column(EncryptedText, nullable=False, default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     lead = db.relationship("Lead", back_populates="survey")
@@ -202,6 +196,9 @@ class LeadSurvey(db.Model):
             "surveyor_id": self.surveyor_id,
             "surveyor_name": self.surveyor.name if self.surveyor else None,
             "rep_name": self.rep_name, "rep_role": self.rep_role, "rep_phone": self.rep_phone,
+            "site_category": self.site_category, "site_pincode": self.site_pincode,
+            "site_state": self.site_state, "site_district": self.site_district, "site_city": self.site_city,
+            "site_address": self.site_address,
             "photos": [p.to_dict() for p in self.photos],
         }
 

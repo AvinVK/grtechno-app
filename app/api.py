@@ -26,12 +26,6 @@ TEXT_LIMITS = {
     "company": 160,
     "phone": 40,
     "email": 160,
-    "site_category": 60,
-    "site_pincode": 6,
-    "site_state": 80,
-    "site_district": 80,
-    "site_city": 120,
-    "site_address": 400,
     "service": 120,
     "source": 120,
     "notes": 5000,
@@ -110,9 +104,6 @@ def _validate(payload: dict) -> tuple[dict, dict]:
             errors[field] = f"Keep this under {limit} characters"
             continue
         data[field] = value
-
-    if data.get("site_pincode") and not PINCODE_RE.fullmatch(data["site_pincode"]):
-        errors["site_pincode"] = "Enter a 6-digit pincode"
 
     if "est_value" in payload:
         raw = payload["est_value"]
@@ -468,6 +459,10 @@ def upsert_survey(lead_id):
         else:
             surveyor_id = surveyor.id
 
+    site_pincode = str(payload.get("site_pincode") or "").strip()[:6]
+    if site_pincode and not PINCODE_RE.fullmatch(site_pincode):
+        errors["site_pincode"] = "Enter a 6-digit pincode"
+
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
@@ -477,6 +472,12 @@ def upsert_survey(lead_id):
     survey.rep_name = str(payload.get("rep_name") or "").strip()[:120]
     survey.rep_role = str(payload.get("rep_role") or "").strip()[:60]
     survey.rep_phone = str(payload.get("rep_phone") or "").strip()[:40]
+    survey.site_category = str(payload.get("site_category") or "").strip()[:60]
+    survey.site_pincode = site_pincode
+    survey.site_state = str(payload.get("site_state") or "").strip()[:80]
+    survey.site_district = str(payload.get("site_district") or "").strip()[:80]
+    survey.site_city = str(payload.get("site_city") or "").strip()[:120]
+    survey.site_address = str(payload.get("site_address") or "").strip()[:400]
     db.session.add(survey)
 
     # A completed survey while the lead is still sitting at New enquiry moves it along automatically -

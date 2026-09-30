@@ -123,7 +123,10 @@ def advance_to_negotiation(client, lead_id):
     caller may have set its own) - a project's amount comes from the latest round, not est_value, see
     test_negotiation_rounds_added_edited_and_used_as_the_project_estimate. The round's own estimate
     matches the 1,000,000 most callers' leads already use for est_value, so totals stay compatible."""
-    client.put(f"/api/leads/{lead_id}/survey", json={"survey_date": "2026-09-20"})
+    client.put(f"/api/leads/{lead_id}/survey", json={
+        "survey_date": "2026-09-20", "site_category": "Commercial complex", "site_pincode": "411001",
+        "site_state": "Maharashtra", "site_district": "Pune", "site_city": "Pune City", "site_address": "Plot 12, MIDC",
+    })
     client.patch(f"/api/leads/{lead_id}", json={"quote_sent_date": "2026-09-21"})
     client.post(f"/api/leads/{lead_id}/negotiations", json={
         "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 1000000, "finalized": True,

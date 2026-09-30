@@ -46,6 +46,7 @@ def create_project_from_lead(lead, user):
 
     owner = lead.owner_code or user.code
     name = lead.company or lead.contact_name
+    survey = lead.survey  # set by now - Won requires the site survey step, which is where site details live
 
     if lead.client_id is not None:
         client = lead.client
@@ -53,8 +54,9 @@ def create_project_from_lead(lead, user):
     else:
         client = Client(
             name=name, contact_name=lead.contact_name if lead.company else "", phone=lead.phone, email=lead.email,
-            site_category=lead.site_category, pincode=lead.site_pincode, state=lead.site_state,
-            district=lead.site_district, city=lead.site_city, address=lead.site_address, owner_code=owner,
+            site_category=survey.site_category if survey else "", pincode=survey.site_pincode if survey else "",
+            state=survey.site_state if survey else "", district=survey.site_district if survey else "",
+            city=survey.site_city if survey else "", address=survey.site_address if survey else "", owner_code=owner,
         )
         db.session.add(client)
         reused = False
@@ -67,8 +69,9 @@ def create_project_from_lead(lead, user):
     project = Project(
         client=client, lead=lead, title=title,
         work_category=lead.service, services=list(lead.services), estimated_amount=estimated_amount, owner_code=owner,
-        site_pincode=lead.site_pincode, site_state=lead.site_state, site_district=lead.site_district,
-        site_city=lead.site_city, site_address=lead.site_address,
+        site_pincode=survey.site_pincode if survey else "", site_state=survey.site_state if survey else "",
+        site_district=survey.site_district if survey else "", site_city=survey.site_city if survey else "",
+        site_address=survey.site_address if survey else "",
         work_order_no=lead.work_order_no, work_order_date=lead.work_order_date,
     )
     # The advance that won the lead is the project's first payment step, already received - it carries

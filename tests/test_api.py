@@ -147,18 +147,23 @@ def test_there_is_no_settings_page(client):
 
 
 def test_lead_stores_site_location(client):
-    lead = make(client, site_pincode="411001", site_state="Maharashtra", site_district="Pune", site_city="Pune City")
-    assert (lead["site_pincode"], lead["site_state"], lead["site_district"], lead["site_city"]) == (
+    lead = make(client)
+    res = client.put(f"/api/leads/{lead['id']}/survey", json={
+        "site_pincode": "411001", "site_state": "Maharashtra", "site_district": "Pune", "site_city": "Pune City",
+    })
+    survey = res.get_json()["survey"]
+    assert (survey["site_pincode"], survey["site_state"], survey["site_district"], survey["site_city"]) == (
         "411001", "Maharashtra", "Pune", "Pune City")
     text = client.get("/export.csv").get_data(as_text=True)
     assert "Site pincode,State,District,City,Site address" in text and "411001,Maharashtra,Pune,Pune City" in text
 
 
 def test_pincode_must_be_six_digits(client):
-    res = client.post("/api/leads", json={"company": "X", "site_pincode": "4110"})
+    lead = make(client)
+    res = client.put(f"/api/leads/{lead['id']}/survey", json={"site_pincode": "4110"})
     assert res.status_code == 422 and "site_pincode" in res.get_json()["fields"]
-    assert client.post("/api/leads", json={"company": "X", "site_pincode": "011001"}).status_code == 422
-    assert client.post("/api/leads", json={"company": "X", "site_pincode": ""}).status_code == 201
+    assert client.put(f"/api/leads/{lead['id']}/survey", json={"site_pincode": "011001"}).status_code == 422
+    assert client.put(f"/api/leads/{lead['id']}/survey", json={"site_pincode": ""}).status_code == 200
 
 
 def test_pincode_lookup_fetches_once_then_serves_from_the_table(client, monkeypatch):

@@ -62,8 +62,11 @@ def export_csv():
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow([label for _, label in CSV_COLUMNS])
+    site_keys = ("site_pincode", "site_state", "site_district", "site_city", "site_address")
     for lead in visible_leads().order_by(Lead.id).all():
         row = lead.to_dict()
+        survey = row["survey"] or {}
+        row.update({key: survey.get(key) for key in site_keys})
         writer.writerow([_safe_cell("" if row[key] is None else row[key]) for key, _ in CSV_COLUMNS])
 
     # The BOM lets Excel read the currency symbol and non-English names correctly.

@@ -4,7 +4,7 @@ import click
 
 from .extensions import db
 from .auth import create_user, find_user, issue_setup_code, SETUP_CODE_DAYS
-from .models import Activity, Lead, User, utcnow
+from .models import Activity, Lead, LeadSurvey, User, utcnow
 from .timeutil import today_local
 
 # (company, contact, phone, service, source, value, stage, follow-up offset in days or None, notes)
@@ -85,11 +85,6 @@ def register_cli(app):
                 contact_name=contact,
                 phone=phone,
                 email=f"info@{company.split()[0].lower()}.example.com",
-                site_pincode="411001",
-                site_state="Maharashtra",
-                site_district="Pune",
-                site_city="Pune City",
-                site_address="Pune, Maharashtra",
                 service=service,
                 source=source,
                 est_value=value,
@@ -100,6 +95,13 @@ def register_cli(app):
                 owner_code=owner.code if owner else None,
             )
             lead.activities.append(Activity(kind="created", text="Lead created"))
+            if stage != "New enquiry":
+                # Every stage past New enquiry requires a completed site survey - give it the same demo site.
+                lead.survey = LeadSurvey(
+                    survey_date=today, rep_name="Site contact", rep_role="Manager", rep_phone=phone,
+                    site_pincode="411001", site_state="Maharashtra", site_district="Pune",
+                    site_city="Pune City", site_address="Pune, Maharashtra",
+                )
             db.session.add(lead)
         db.session.commit()
         click.echo(f"Added {len(DEMO)} demo leads.")

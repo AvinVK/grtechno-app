@@ -25,9 +25,7 @@ def make_staff(name="Ramesh Surveyor"):
 
 
 def make_lead(admin_client, **fields):
-    body = {"company": "Kalyani Cold Storage", "contact_name": "R. Kulkarni", "phone": "9800000001",
-            "site_category": "Commercial complex", "site_pincode": "411001", "site_state": "Maharashtra",
-            "site_district": "Pune", "site_city": "Pune City", "site_address": "Plot 12, MIDC", **fields}
+    body = {"company": "Kalyani Cold Storage", "contact_name": "R. Kulkarni", "phone": "9800000001", **fields}
     res = admin_client.post("/api/leads", json=body)
     assert res.status_code == 201, res.get_json()
     return res.get_json()

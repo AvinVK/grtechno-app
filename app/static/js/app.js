@@ -158,11 +158,6 @@
   }
 
   function renderNav() {
-    const searchBtn = $('#search-btn');
-    if (searchBtn) {
-      searchBtn.hidden = !(view in searchOpen);
-      searchBtn.setAttribute('aria-expanded', String(!!searchOpen[view]));
-    }
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
@@ -318,9 +313,6 @@
   const closedMonth = (l) => (l.closed_at ? l.closed_at.slice(0, 7) : '');
   const monthLabel = (ym) => (ym ? `${MONTH_NAMES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}` : 'No closing date');
 
-  // One search row per list, opened from the top bar's search button (or already open while a search is set).
-  const searchOpen = { active: false, closed: false };
-
   function listView(kind) {
     const isActive = kind === 'active';
     const stages = isActive ? S.open_stages : CLOSED_STAGES;
@@ -333,25 +325,12 @@
     const activeFilters = h('div', { class: 'active-filters' });
     const results = h('div', { class: 'lead-groups' });
 
-    let searchRow = null;
-    if (searchOpen[kind] || f.q) {
-      searchOpen[kind] = true;
-      const search = h('input', {
-        type: 'search', placeholder: 'Search name, phone, site, notes', 'aria-label': 'Search leads',
-        value: f.q,
-        oninput: (e) => { f.q = e.target.value; refresh(); },
-        onkeydown: (e) => { if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); } },
-        onblur: (e) => { if (!e.target.value.trim()) setTimeout(closeSearch, 0); },
-      });
-      searchRow = h('div', { class: 'search-row' }, search);
-      setTimeout(() => { if (search.isConnected && !f.q) search.focus(); }, 0);
-    }
-    function closeSearch() {
-      if (!searchOpen[kind]) return;
-      searchOpen[kind] = false;
-      f.q = '';
-      renderMain();
-    }
+    const search = h('input', {
+      type: 'search', placeholder: 'Search name, phone, site, notes', 'aria-label': 'Search leads',
+      value: f.q,
+      oninput: (e) => { f.q = e.target.value; refresh(); },
+    });
+    const searchRow = h('div', { class: 'search-row' }, search);
 
     // Area/service/source/date filters - mainly useful for triaging fresh New enquiry leads, but they
     // apply across whichever stage chip is selected on the Active tab. Picked in a popup (openFilterPicker)
@@ -365,7 +344,7 @@
       clear(filterButton).append(...[icon(...FILTER_ICON), 'Filters', n ? h('span', { class: 'filter-count' }, n) : null].filter(Boolean));
     }
     if (isActive) {
-      areas = [...new Set(pool.map((l) => l.site_district).filter(Boolean))].sort();
+      areas = [...new Set(pool.map((l) => l.survey?.site_district).filter(Boolean))].sort();
       // A filter left over from an earlier visit (this view's state persists across tab switches) can
       // point at a value that no longer applies here - drop it instead of silently hiding everything.
       if (f.area && !areas.includes(f.area)) f.area = '';
@@ -422,7 +401,7 @@
       const items = pool.filter((l) => {
         if (f.stage && l.stage !== f.stage) return false;
         if (isActive) {
-          if (f.area && l.site_district !== f.area) return false;
+          if (f.area && l.survey?.site_district !== f.area) return false;
           if (f.service && !(l.services.includes(f.service) || l.service === f.service)) return false;
           if (f.source && l.source !== f.source) return false;
           const day = l.created_at.slice(0, 10);
@@ -430,9 +409,10 @@
           if (f.to && day > f.to) return false;
         }
         if (!q) return true;
-        return [l.company, l.contact_name, l.phone, l.email, l.site_pincode, l.site_city, l.site_district, l.site_state,
-          l.site_address, l.site_category, serviceLabel(l), l.notes]
-          .some((v) => v.toLowerCase().includes(q));
+        const sv = l.survey || {};
+        return [l.company, l.contact_name, l.phone, l.email, sv.site_pincode, sv.site_city, sv.site_district, sv.site_state,
+          sv.site_address, sv.site_category, serviceLabel(l), l.notes]
+          .some((v) => (v || '').toLowerCase().includes(q));
       });
       items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
 
@@ -499,7 +479,7 @@
     const roundText = shownRound && shownRound.estimate != null
       ? `R${shownRound.round_no}${shownRound.finalized ? ' ✓' : ''} ${fmtShortMoney(shownRound.estimate)}` : null;
     const latestRound = rounds.length ? rounds[rounds.length - 1].round_no : null;
-    const area = l.site_city || l.site_district;
+    const area = l.survey?.site_city || l.survey?.site_district;
     return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
       h('span', { class: 'row-main' },
         h('span', { class: 'row-title' }, title(l)),
@@ -548,8 +528,7 @@
 
   function buildLeadForm(lead, onSaved) {
     const L = lead || {
-      company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', services: [], source: '',
-      site_category: '', site_pincode: '', site_state: '', site_district: '', site_city: '',
+      company: '', contact_name: '', phone: '', email: '', service: '', services: [], source: '',
       est_value: null, quote_sent_date: null, stage: S.stages[0], follow_up_date: null, client_id: null,
       enquired_by_id: null,
     };
@@ -581,30 +560,6 @@
         class: 'btn small', type: 'button',
         onclick: () => { dateInput.value = addDays(S.today, days); },
       }, label)));
-
-    // Typing a full pincode fills state, district and city. They stay editable if the lookup is wrong or missing.
-    const pinHint = h('p', { class: 'hint', 'aria-live': 'polite' });
-    let pinSeq = 0;
-    const pinInput = text('text', L.site_pincode, { maxlength: 6, inputmode: 'numeric', autocomplete: 'off' });
-    pinInput.addEventListener('input', async () => {
-      const pin = pinInput.value.replace(/\D/g, '').slice(0, 6);
-      if (pinInput.value !== pin) pinInput.value = pin;
-      const mine = ++pinSeq;
-      if (pin.length < 6) { pinHint.textContent = ''; return; }
-      pinHint.textContent = 'Looking up\u2026';
-      try {
-        const found = await api(`/api/pincode/${pin}`);
-        if (mine !== pinSeq) return;
-        inputs.site_state.value = found.state;
-        inputs.site_district.value = found.district;
-        inputs.site_city.value = found.city;
-        pinHint.textContent = `${found.city}, ${found.district}, ${found.state}`;
-      } catch (err) {
-        if (mine === pinSeq) pinHint.textContent = err.message;
-      }
-    });
-    const pinField = wrapField('site_pincode', 'Site pincode', pinInput, '', true);
-    pinField.append(pinHint);
 
     // Every new lead is for a company we haven't worked with yet - it's only mapped to a client (an
     // existing one, or a new one) once it's won; see markOutcome below. A lead already carrying a
@@ -638,12 +593,6 @@
     const enquiryFields = [
       wrapField('phone', 'Phone', text('tel', L.phone, { maxlength: 40, autocomplete: 'off' }), '', true),
       wrapField('email', 'Email', text('email', L.email, { maxlength: 160, autocomplete: 'off' })),
-      wrapField('site_category', 'Site category', choice(S.settings.site_categories, L.site_category, 'Not set'), '', true),
-      pinField,
-      wrapField('site_state', 'State', text('text', L.site_state, { maxlength: 80, autocomplete: 'off' }), '', true),
-      wrapField('site_district', 'District', text('text', L.site_district, { maxlength: 80, autocomplete: 'off' }), '', true),
-      wrapField('site_city', 'City', text('text', L.site_city, { maxlength: 120, autocomplete: 'off' }), '', true),
-      wrapField('site_address', 'Site address', area(2, L.site_address), 'wide', true),
       serviceField,
       wrapField('source', 'Source', choice(S.settings.sources, L.source, 'Not set'), '', true),
       wrapField('enquired_by_id', 'Enquired by', enquiredBySel, '', true),
@@ -708,14 +657,50 @@
       const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
       const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
       const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
+
+      // Site details - captured here, not at New enquiry, since they're what the survey itself confirms.
+      const siteCategorySel = choice(S.settings.site_categories, sv.site_category, 'Not set');
+      const siteState = h('input', { type: 'text', value: sv.site_state || '', maxlength: 80, autocomplete: 'off' });
+      const siteDistrict = h('input', { type: 'text', value: sv.site_district || '', maxlength: 80, autocomplete: 'off' });
+      const siteCity = h('input', { type: 'text', value: sv.site_city || '', maxlength: 120, autocomplete: 'off' });
+      const siteAddress = area(2, sv.site_address);
+      // Typing a full pincode fills state, district and city. They stay editable if the lookup is wrong or missing.
+      const pinHint = h('p', { class: 'hint', 'aria-live': 'polite' });
+      let pinSeq = 0;
+      const pinInput = text('text', sv.site_pincode, { maxlength: 6, inputmode: 'numeric', autocomplete: 'off' });
+      pinInput.addEventListener('input', async () => {
+        const pin = pinInput.value.replace(/\D/g, '').slice(0, 6);
+        if (pinInput.value !== pin) pinInput.value = pin;
+        const mine = ++pinSeq;
+        if (pin.length < 6) { pinHint.textContent = ''; return; }
+        pinHint.textContent = 'Looking up…';
+        try {
+          const found = await api(`/api/pincode/${pin}`);
+          if (mine !== pinSeq) return;
+          siteState.value = found.state;
+          siteDistrict.value = found.district;
+          siteCity.value = found.city;
+          pinHint.textContent = `${found.city}, ${found.district}, ${found.state}`;
+        } catch (err) {
+          if (mine === pinSeq) pinHint.textContent = err.message;
+        }
+      });
+      const pinField = reqField('Site pincode', pinInput);
+      pinField.append(pinHint);
+      const siteAddressField = reqField('Site address', siteAddress);
+      siteAddressField.classList.add('wide');
+
       const surveyErr = h('p', { class: 'err', role: 'alert' });
       // Once any part of the survey is entered (or it was already saved), every survey box must be filled.
       // Surveyed by is left out of "started" since it's prefilled with whoever took the enquiry.
-      surveyCheck = () => (sv.survey_date || [surveyDateInput, repName, repRole, repPhone].some((c) => c.value.trim())
-        ? [surveyDateInput, surveyorSel, repName, repRole, repPhone] : []);
+      const siteControls = [siteCategorySel, pinInput, siteState, siteDistrict, siteCity, siteAddress];
+      surveyCheck = () => (sv.survey_date || [surveyDateInput, repName, repRole, repPhone, ...siteControls].some((c) => c.value.trim())
+        ? [surveyDateInput, surveyorSel, repName, repRole, repPhone, ...siteControls] : []);
       surveyBody = () => ({
         survey_date: surveyDateInput.value || null, surveyor_id: surveyorSel.value || null,
         rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
+        site_category: siteCategorySel.value, site_pincode: pinInput.value, site_state: siteState.value,
+        site_district: siteDistrict.value, site_city: siteCity.value, site_address: siteAddress.value,
       });
 
       if (lead.stage === 'New enquiry' && !sv.survey_date) {
@@ -762,7 +747,7 @@
       };
 
       if (surveyLocked) {
-        [surveyDateInput, surveyorSel, repName, repRole, repPhone].forEach((c) => { c.disabled = true; });
+        [surveyDateInput, surveyorSel, repName, repRole, repPhone, ...siteControls].forEach((c) => { c.disabled = true; });
       }
       surveySectionNode = h('details', { class: 'stage-section', open: expand === 1 },
         h('summary', { class: 'stage-section-title' }, 'Site survey'),
@@ -770,7 +755,10 @@
           h('div', { class: 'form-grid' },
             reqField('Survey date', surveyDateInput), reqField('Surveyed by', surveyorSel),
             reqField('Site representative', repName), reqField('Role (manager, guard, ...)', repRole),
-            reqField('Representative phone', repPhone)),
+            reqField('Representative phone', repPhone),
+            reqField('Site category', siteCategorySel), pinField,
+            reqField('State', siteState), reqField('District', siteDistrict), reqField('City', siteCity),
+            siteAddressField),
           surveyErr,
           h('p', { class: 'hint' }, 'Site photos'), photoGrid,
           surveyLocked ? null : h('label', { class: 'btn small' }, 'Add photos', fileInput)));
@@ -893,13 +881,12 @@
         updateSaveLabel();
       }
 
-      // Once the lead has moved past New enquiry, its contact/site details are read only too, same as
-      // every other stage - except follow-up date and notes, which stay live for the lead's whole life
-      // (the overdue banner's Reschedule jumps straight to that field, and with Activity read only,
-      // Notes is the one place left to add anything).
+      // Once the lead has moved past New enquiry, its contact details are read only too, same as every
+      // other stage - except follow-up date and notes, which stay live for the lead's whole life (the
+      // overdue banner's Reschedule jumps straight to that field, and with Activity read only, Notes is
+      // the one place left to add anything).
       if (isPastStage('New enquiry')) {
-        ['company', 'contact_name', 'phone', 'email', 'site_category', 'site_pincode', 'site_state',
-          'site_district', 'site_city', 'site_address', 'source', 'enquired_by_id'].forEach((name) => { inputs[name].disabled = true; });
+        ['company', 'contact_name', 'phone', 'email', 'source', 'enquired_by_id'].forEach((name) => { inputs[name].disabled = true; });
         serviceBoxes.forEach((s) => { s.box.querySelector('input').disabled = true; });
       }
 
@@ -972,8 +959,7 @@
             if (!body.company.trim()) missing.company = 'This field is required';
             if (!body.contact_name.trim()) missing.contact_name = 'This field is required';
           }
-          ['phone', 'site_category', 'site_pincode', 'site_state', 'site_district', 'site_city',
-            'site_address', 'source'].forEach((name) => {
+          ['phone', 'source'].forEach((name) => {
             if (!body[name].trim()) missing[name] = 'This field is required';
           });
           if (!body.service_ids.length) missing.service_ids = 'Choose at least one service';
@@ -1075,7 +1061,8 @@
 
   // Call / WhatsApp / Map (and Email when there is one) - a button only for what this lead has.
   function contactActions(l) {
-    const site = [l.site_address, l.site_city, l.site_district, l.site_state, l.site_pincode].filter(Boolean).join(', ');
+    const sv = l.survey || {};
+    const site = [sv.site_address, sv.site_city, sv.site_district, sv.site_state, sv.site_pincode].filter(Boolean).join(', ');
     const links = [
       l.phone ? h('a', { class: 'btn contact-btn call', href: `tel:${telNumber(l.phone)}` }, 'Call') : null,
       l.phone ? h('a', { class: 'btn contact-btn', href: `https://wa.me/${waNumber(l.phone)}`, target: '_blank', rel: 'noopener noreferrer' }, 'WhatsApp') : null,
@@ -1459,19 +1446,6 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && S && openId === undefined) load().catch(() => {});
   });
-
-  // The top bar's search button opens (or closes, clearing it) the search row at the top of the list.
-  const searchBtn = $('#search-btn');
-  if (searchBtn) {
-    searchBtn.addEventListener('pointerdown', (e) => e.preventDefault());   // keep the search box's focus (no blur-close first)
-    searchBtn.addEventListener('click', () => {
-      if (!(view in searchOpen) || !S) return;
-      searchOpen[view] = !searchOpen[view];
-      if (!searchOpen[view]) filters[view].q = '';
-      renderNav();
-      renderMain();
-    });
-  }
 
   function start() {
     syncView();
