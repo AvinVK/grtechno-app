@@ -894,6 +894,16 @@
         updateSaveLabel();
       }
 
+      // Once the lead has moved past New enquiry, its contact/site details are read only too, same as
+      // every other stage - except follow-up date and notes, which stay live for the lead's whole life
+      // (the overdue banner's Reschedule jumps straight to that field, and with Activity read only,
+      // Notes is the one place left to add anything).
+      if (isPastStage('New enquiry')) {
+        ['company', 'contact_name', 'phone', 'email', 'site_category', 'site_pincode', 'site_state',
+          'site_district', 'site_city', 'site_address', 'source', 'enquired_by_id'].forEach((name) => { inputs[name].disabled = true; });
+        serviceBoxes.forEach((s) => { s.box.querySelector('input').disabled = true; });
+      }
+
       form = h('form', { novalidate: true, id: 'lead-form' },
         errorBox,
         stageField,
