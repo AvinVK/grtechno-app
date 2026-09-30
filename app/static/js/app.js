@@ -550,7 +550,7 @@
     const L = lead || {
       company: '', contact_name: '', phone: '', email: '', site_address: '', service: '', services: [], source: '',
       site_category: '', site_pincode: '', site_state: '', site_district: '', site_city: '',
-      est_value: null, quote_sent_date: null, stage: S.stages[0], follow_up_date: null, notes: '', client_id: null,
+      est_value: null, quote_sent_date: null, stage: S.stages[0], follow_up_date: null, client_id: null,
       enquired_by_id: null,
     };
     const inputs = {};
@@ -650,7 +650,6 @@
       h('div', { class: 'field wide' },
         wrapField('follow_up_date', 'Follow-up date', dateInput, '', true),
         quick),
-      wrapField('notes', 'Notes', area(4, L.notes), 'wide'),
     ];
 
     // Read only, one line - the stage moves on its own, as each step's own fields are completed (or
