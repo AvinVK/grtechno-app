@@ -547,6 +547,10 @@ input[aria-invalid="true"],
 select[aria-invalid="true"],
 textarea[aria-invalid="true"] { border-color: var(--signal); }
 
+/* Read-only history (an earlier stage or negotiation round, once the lead has moved on) - visibly
+   different from a live field, without the near-invisible native disabled look. */
+input:disabled, textarea:disabled { background: var(--track); color: var(--muted); cursor: default; }
+
 .err { min-height: 0; color: var(--signal); font-size: 14px; font-weight: 500; }
 .err:empty { display: none; }
 .hint { color: var(--muted); font-size: 14px; }

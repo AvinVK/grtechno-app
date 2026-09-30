@@ -693,8 +693,13 @@
       const expand = nextStageIndex(lead);
       const surveyDone = !!(lead.survey && lead.survey.survey_date);
       const quoteSent = !!lead.quote_sent_date;
+      // -1 for a closed lead (Won/Lost aren't in STAGE_ORDER) - nothing is "current" on one of those, so
+      // every stage section reads as past and locks read-only, same as if it had moved beyond each one.
+      const stageIndex = STAGE_ORDER.indexOf(lead.stage);
+      const isPastStage = (stage) => stageIndex === -1 || stageIndex > STAGE_ORDER.indexOf(stage);
 
-      // Site survey - always editable, since it's either already done or is exactly what's next.
+      // Site survey - editable while it's either already done or exactly what's next; once the lead has
+      // moved on to Quote sent or beyond, it's read-only history (see isPastStage below).
       const sv = lead.survey || {};
       const defaultSurveyor = sv.surveyor_id ?? lead.enquired_by_id;
       const surveyDateInput = dateField(sv.survey_date || '');
@@ -723,12 +728,13 @@
         updateSaveLabel();
       }
 
+      const surveyLocked = isPastStage('Site survey');
       const photoGrid = h('div', { class: 'photo-grid' });
       function renderPhotos() {
         clear(photoGrid);
         (lead.survey?.photos || []).forEach((p) => photoGrid.append(h('div', { class: 'photo-thumb' },
           h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Site photo' })),
-          h('button', {
+          surveyLocked ? null : h('button', {
             class: 'icon-x', type: 'button', 'aria-label': 'Remove photo',
             onclick: async () => {
               await api(`/api/leads/${lead.id}/survey/photos/${p.id}`, { method: 'DELETE' });
@@ -756,6 +762,9 @@
         fileInput.value = '';
       };
 
+      if (surveyLocked) {
+        [surveyDateInput, surveyorSel, repName, repRole, repPhone].forEach((c) => { c.disabled = true; });
+      }
       surveySectionNode = h('details', { class: 'stage-section', open: expand === 1 },
         h('summary', { class: 'stage-section-title' }, 'Site survey'),
         h('div', { class: 'stage-section-body' },
@@ -765,7 +774,7 @@
             reqField('Representative phone', repPhone)),
           surveyErr,
           h('p', { class: 'hint' }, 'Site photos'), photoGrid,
-          h('label', { class: 'btn small' }, 'Add photos', fileInput)));
+          surveyLocked ? null : h('label', { class: 'btn small' }, 'Add photos', fileInput)));
 
       const quoteFields = h('div', { class: 'form-grid' },
         wrapField('quote_sent_date', 'Quote sent', dateField(L.quote_sent_date), '', true),
@@ -784,6 +793,10 @@
           e.preventDefault();
           toast('Complete the site survey first', true);
         });
+      } else if (isPastStage('Quote sent')) {
+        // Already done, and the lead has moved on - viewable, but read only, same as Site survey above.
+        inputs.quote_sent_date.disabled = true;
+        inputs.est_value.disabled = true;
       } else if (lead.stage === 'Site survey' && !lead.quote_sent_date) {
         // Sending the quote for the first time is what completes Site survey's own step - make that
         // outcome visible on the button itself, before it's clicked, instead of only in the toast after.
@@ -868,6 +881,9 @@
           e.preventDefault();
           toast('Finalize a negotiation round first', true);
         });
+      } else if (isPastStage('Work order & advance')) {
+        // The lead is Won or Lost - viewable, but read only, same as the earlier stages once passed.
+        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date'].forEach((name) => { inputs[name].disabled = true; });
       } else if (lead.stage === 'Negotiation' && !lead.work_order_no) {
         const woInput = inputs.work_order_no;
         const updateSaveLabel = () => {
@@ -1240,6 +1256,9 @@
     const err = h('p', { class: 'err', role: 'alert' });
 
     function buildRow(round, roundNo) {
+      // A saved round is only still editable if it's the latest one and negotiation is still the current
+      // stage - every earlier round is read-only history, and once the lead has moved on, so is this one.
+      const editable = !round || (roundNo === lead.negotiations.length && lead.stage === 'Negotiation');
       const dateInput = dateField(round ? round.date || '' : '', { placeholder: 'Round date' });
       const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120 });
       const estimate = h('input', {
@@ -1248,27 +1267,33 @@
       });
       const finalized = h('input', { type: 'checkbox' });
       finalized.checked = !!(round && round.finalized);
-      const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Save round');
-      saveBtn.onclick = async () => {
-        err.textContent = '';
-        if (!requireFilled([dateInput, person, estimate])) return;
-        const body = {
-          date: dateInput.value || null, authorized_person: person.value,
-          estimate: estimate.value === '' ? null : estimate.value, finalized: finalized.checked,
+      let actions = null;
+      if (!editable) {
+        [dateInput, person, estimate, finalized].forEach((c) => { c.disabled = true; });
+      } else {
+        const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Save round');
+        saveBtn.onclick = async () => {
+          err.textContent = '';
+          if (!requireFilled([dateInput, person, estimate])) return;
+          const body = {
+            date: dateInput.value || null, authorized_person: person.value,
+            estimate: estimate.value === '' ? null : estimate.value, finalized: finalized.checked,
+          };
+          try {
+            const res = round
+              ? await api(`/api/leads/${lead.id}/negotiations/${round.id}`, { method: 'PATCH', body })
+              : await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body });
+            lead.negotiations = res.negotiations;
+            adding = false;
+            renderRows();
+            toast('Saved');
+            // The leads list behind the drawer shows each lead's finalized (or latest) round - refresh it so
+            // a round saved here shows up there straight away, not only after the next full reload.
+            await load();
+          } catch (e) { err.textContent = e.message; }
         };
-        try {
-          const res = round
-            ? await api(`/api/leads/${lead.id}/negotiations/${round.id}`, { method: 'PATCH', body })
-            : await api(`/api/leads/${lead.id}/negotiations`, { method: 'POST', body });
-          lead.negotiations = res.negotiations;
-          adding = false;
-          renderRows();
-          toast('Saved');
-          // The leads list behind the drawer shows each lead's finalized (or latest) round - refresh it so
-          // a round saved here shows up there straight away, not only after the next full reload.
-          await load();
-        } catch (e) { err.textContent = e.message; }
-      };
+        actions = h('div', { class: 'round-actions' }, saveBtn);
+      }
       // Same one-per-line labeled layout as every other stage's fields, in place of the old cramped
       // single row - five fields side by side never had room to also show which was which.
       return h('div', { class: 'negotiation-round' },
@@ -1277,15 +1302,17 @@
           reqField('Round date', dateInput), reqField('Authorized person', person),
           reqField(`Estimate (${S.settings.currency})`, estimate)),
         h('label', { class: 'check-row' }, finalized, h('span', {}, 'Finalized')),
-        h('div', { class: 'round-actions' }, saveBtn));
+        actions);
     }
 
     // A blank new round only appears after tapping "+ Add new round", and never while a round is ticked
-    // Finalized - the deal is settled, so untick (and save) that round first to reopen negotiation.
+    // Finalized - the deal is settled, so untick (and save) that round first to reopen negotiation. Once
+    // the lead has moved past Negotiation, none of that is offered any more - the rounds are just history.
     let adding = false;
     function renderRows() {
       clear(list);
       lead.negotiations.forEach((r, i) => list.append(buildRow(r, i + 1)));
+      if (lead.stage !== 'Negotiation') return;
       const done = lead.negotiations.find((r) => r.finalized);
       if (done) {
         list.append(h('p', { class: 'hint' },
