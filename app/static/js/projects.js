@@ -150,7 +150,7 @@
         field('title', 'Project title', titleInput, { wide: true }),
         field('work_category', 'Work category', category),
         field('status', 'Status', statusSel)),
-      h('p', { class: 'hint' }, 'You can add the work order details on the next screen, and the payment schedule from its own tab.'),
+      h('p', { class: 'hint' }, 'You can add the work order details on the next screen, and the payment timeline from its own tab.'),
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
@@ -266,7 +266,7 @@
     if (D.can_delete) {
       deleteBtn = h('button', { class: 'btn danger dash-close', type: 'button' }, 'Delete project');
       deleteBtn.onclick = async () => {
-        const sure = await confirm(`Delete ${P.code}? Its details and payment schedule will be removed. This cannot be undone.`, { ok: 'Delete', danger: true, title: 'Delete project' });
+        const sure = await confirm(`Delete ${P.code}? Its details and payment timeline will be removed. This cannot be undone.`, { ok: 'Delete', danger: true, title: 'Delete project' });
         if (!sure) return;
         deleteBtn.disabled = true;
         try {
@@ -361,10 +361,15 @@
       [...payRows.children].forEach((row, i) => { row._labelEl.textContent = labelFor(i); });
     }
 
-    function addPayRow(p = { amount: '' }) {
+    function addPayRow(p = { amount: '', label: '' }) {
       const labelEl = h('p', { class: 'pay-label-text' }, '');
+      const milestoneInput = h('input', {
+        type: 'text', class: 'pay-milestone', maxlength: 120,
+        placeholder: 'Milestone, for example: Material delivery, Site handover', 'aria-label': 'Milestone', value: p.label ?? '',
+      });
       const row = h('div', { class: 'pay-row' },
         labelEl,
+        milestoneInput,
         h('input', { type: 'number', class: 'pay-amount', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${cur})`, 'aria-label': 'Amount', value: p.amount ?? '' }),
         h('button', {
           class: 'icon-x', type: 'button', 'aria-label': 'Remove this payment step',
@@ -376,18 +381,20 @@
     (P.payments.length ? P.payments : []).forEach(addPayRow);
     renumberPayRows();
 
+    // The position tag (Advance, 2nd payment, ...) is always shown; the milestone is the admin's own
+    // description of what that step is tied to, and falls back to the position tag when left blank.
     const payments = () => [...payRows.querySelectorAll('.pay-row')].map((r, i) => ({
-      label: labelFor(i),
+      label: r.querySelector('.pay-milestone').value.trim() || labelFor(i),
       amount: r.querySelector('.pay-amount').value === '' ? 0 : r.querySelector('.pay-amount').value,
     }));
 
     function recalc() {
       const rows = payments();
       const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
-      const advanceRow = rows.find((p) => p.label.trim().toLowerCase() === 'advance');
-      const advanceAmt = advanceRow ? toNumber(advanceRow.amount) : 0;
+      // The advance is always the first step, by position - not by matching what its milestone says.
+      const advanceAmt = rows.length ? toNumber(rows[0].amount) : 0;
       ovNegotiated.textContent = P.estimated_amount == null ? '—' : money(P.estimated_amount, cur);
-      ovAdvance.textContent = advanceRow ? money(advanceAmt, cur) : '—';
+      ovAdvance.textContent = rows.length ? money(advanceAmt, cur) : '—';
       ovRemaining.textContent = netValue === null ? '—' : money(netValue - scheduled, cur);
 
       paySummary.className = 'pay-summary';
@@ -399,7 +406,7 @@
     }
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save payment schedule');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save payment timeline');
     const form = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
         e.preventDefault();
@@ -408,7 +415,7 @@
         saveBtn.disabled = true;
         try {
           await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { payments: payments() } });
-          toast('Payment schedule saved');
+          toast('Payment timeline saved');
           window.location.hash = `#p${P.id}`;
         } catch (err) {
           errorBox.textContent = err.message;
@@ -420,9 +427,9 @@
       } },
       errorBox,
       h('section', { class: 'p-section' },
-        h('h3', {}, 'Payment schedule'),
+        h('h3', {}, 'Payment timeline'),
         payOverview,
-        h('p', { class: 'hint' }, 'Split the net amount into steps, for example advance, on delivery, on completion.'),
+        h('p', { class: 'hint' }, 'Split the net amount into steps, each tied to its own site milestone.'),
         payRows,
         payErr,
         h('button', { class: 'btn small', type: 'button', onclick: () => { addPayRow(); renumberPayRows(); recalc(); payRows.lastChild.querySelector('input').focus(); } }, 'Add payment step'),

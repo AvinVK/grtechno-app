@@ -997,11 +997,12 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
-  grid-template-areas: "label amount x";
+  grid-template-areas: "label label x" "milestone amount x";
   gap: 8px;
   align-items: center;
 }
 .pay-label-text { grid-area: label; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.pay-milestone { grid-area: milestone; }
 .pay-amount { grid-area: amount; }
 .pay-row .icon-x { grid-area: x; }
 
