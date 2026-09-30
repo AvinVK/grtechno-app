@@ -997,7 +997,9 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
-  grid-template-areas: "label label x" "milestone amount x";
+  /* The × sits with the milestone/amount row it removes, not spanning up into the position caption too -
+     centering it across both would land it between the two, aligned with neither. */
+  grid-template-areas: "label label ." "milestone amount x";
   gap: 8px;
   align-items: center;
 }

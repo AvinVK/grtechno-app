@@ -108,7 +108,6 @@
     }
 
     clear(view).append(h('div', {},
-      h('div', { class: 'list-head' }, h('h2', {}, 'Clients & Projects')),
       h('div', { class: 'filters' }, search, serviceSel), count, results));
     refresh();
   }

@@ -91,7 +91,6 @@
     }
 
     wrap.append(
-      h('div', { class: 'list-head' }, h('h2', {}, 'Projects')),                  // "+ New" is in the top bar
       h('div', { class: 'filters' }, search, chips), count, list);
     clear(view).append(wrap);
     renderChips();

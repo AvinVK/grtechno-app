@@ -299,7 +299,9 @@
 
     clear(view).append(h('div', {},
       teamOnly ? null : h('a', { class: 'back-link', href: '#' }, '← Your attendance'),
-      h('div', { class: 'list-head' }, h('h2', {}, 'Team attendance')),
+      // The top bar already says "Team attendance" for the admin (team_only) - only worth repeating
+      // in-page for someone whose top bar still says "Your attendance" while they're looking at this.
+      teamOnly ? null : h('div', { class: 'list-head' }, h('h2', {}, 'Team attendance')),
       h('div', { class: 'filters' }, dateInput), count, list));
     refresh();
   }
