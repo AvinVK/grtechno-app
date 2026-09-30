@@ -30,7 +30,7 @@ def admin_only_page():
 
 @page_bp.get("/users")
 def page():
-    return render_template("users.html", heading="Users & roles", heading_href="/users")
+    return render_template("users.html", page_title="Users & roles")
 
 
 def _dict(user: User, lead_count: int = 0) -> dict:

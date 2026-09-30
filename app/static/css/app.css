@@ -59,6 +59,7 @@ html { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent;
 a, button, select, summary { touch-action: manipulation; }
 
 body {
+  position: relative;      /* so the appbar sentinel below can anchor to the document, not the appbar's own (collapsing) height */
   margin: 0;
   overflow-x: hidden;
   background: var(--paper);
@@ -83,28 +84,57 @@ a { color: var(--accent-dark); }
 
 /* ---------- Top bar ---------- */
 
-.topbar {
+/* Shared by both appbar kinds. */
+.appbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.appbar-actions form { margin: 0; }
+.appbar-actions .icon-btn {
+  width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+}
+.appbar-actions .avatar-btn { border: 0; background: transparent; border-radius: 50%; }
+
+/* Large: the Leads views and Me - a big title that shrinks into a sticky compact bar on scroll. */
+.appbar.large {
   position: sticky;
   top: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: calc(13px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
-  color: var(--ink);
+  z-index: 30;
+  background: var(--paper);
+  padding: calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 14px calc(16px + env(safe-area-inset-left));
 }
+.appbar-top { display: flex; align-items: center; min-height: 44px; }
+.appbar-section { color: var(--muted); font: 600 13px/1.2 var(--font-body); }
+.appbar-heading { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
+.appbar-title { margin: 0; font: 700 30px/1.15 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.appbar-count { display: none; color: var(--muted); font: 500 15px/1 var(--font-num); }
+.appbar-summary { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.appbar-summary:empty { display: none; }
+.appbar-summary b { color: var(--signal); font-weight: 600; }
+/* Positioned by common.js at the expanded bar's own height, so collapsing the bar (which shrinks its
+   layout height) can't drag the sentinel up with it and re-trigger itself. */
+.appbar-sentinel { position: absolute; left: 0; width: 1px; height: 1px; pointer-events: none; }
 
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px 16px;
-  margin-left: auto;
+/* Collapsed state, toggled by the IntersectionObserver in common.js once the sentinel scrolls past. */
+.appbar.large.is-collapsed {
+  background: var(--panel);
+  box-shadow: 0 2px 10px rgba(27, 33, 40, 0.1);
+  padding-bottom: 10px;
 }
+.appbar.large.is-collapsed .appbar-section,
+.appbar.large.is-collapsed .appbar-summary { display: none; }
+.appbar.large.is-collapsed .appbar-top { min-height: 0; }
+.appbar.large.is-collapsed .appbar-heading { margin-top: 0; }
+.appbar.large.is-collapsed .appbar-title { font: 700 18px/1.2 var(--font-display); }
+.appbar.large.is-collapsed .appbar-count { display: inline; }
+.appbar.large.is-collapsed .appbar-actions .icon-btn { border-color: transparent; background: transparent; }
 
-.top-actions form { margin: 0; }
-
-.topbar .link-btn { color: var(--accent-dark); }
+/* Pushed: Clients, Projects, Attendance, Users, People and similar screens reached from Me. */
+.appbar.pushed {
+  background: var(--paper);
+  padding: calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
+}
+.appbar-row { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.appbar-back { display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; }
+.appbar.pushed .appbar-actions .btn { min-height: 40px; padding: 0 14px; font-size: 14px; }
+.appbar-title-pushed { margin: 6px 0 0; font: 700 28px/1.2 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 
 /* ---------- Buttons ---------- */
 
@@ -314,12 +344,15 @@ a.stat:hover { border-color: var(--line-strong); }
 
 .lead-group { max-width: 1100px; margin: 0 auto 14px; }
 .group-head {
-  display: flex; align-items: baseline; gap: 8px; margin: 12px 2px 6px;
+  position: sticky; top: 0; z-index: 10; background: var(--paper);
+  display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 12px 2px 6px;
   font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
 }
 .group-head.group-overdue { color: var(--signal); }
 .group-head.group-today { color: var(--amber); }
 .group-count { font: 500 12px/1.2 var(--font-num); }
+/* On the Leads tab screens the collapsed bar stays pinned at 56px - group headers stick just below it. */
+.page-app .group-head { top: 56px; }
 
 /* A white card holding a list of rows, separated by hairlines - used by lists across the app. */
 .card-group { margin: 0; padding: 0; list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; }
@@ -791,7 +824,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .notice.error { background: var(--signal-tint); color: var(--signal); }
 .login-card .hint a { color: var(--accent-dark); }
 
-/* ---------- Menu (left panel) ---------- */
+/* ---------- Icon buttons ---------- */
 
 .icon-btn {
   flex: none;
@@ -824,22 +857,27 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .list-head h2 { font: 600 22px/1.1 var(--font-display); }
 
 .p-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "main value" "foot foot";
-  gap: 6px 12px;
-  padding: 12px 10px;
-  border-bottom: 1px solid var(--line);
-  color: inherit;
-  text-decoration: none;
+  display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 12px 14px;
+  color: inherit; text-decoration: none;
 }
 .p-row:hover { background: var(--hover); }
-.p-main { grid-area: main; display: grid; min-width: 0; }
-.p-row .row-value { grid-area: value; }
-.p-foot { grid-area: foot; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.p-tile {
+  flex: none; display: grid; place-items: center; width: 40px; height: 40px;
+  border-radius: 10px; font: 700 15px/1 var(--font-body);
+}
+.p-tile[data-status="planned"] { background: var(--track); color: var(--muted); }
+.p-tile[data-status="running"] { background: var(--ok-tint); color: var(--ok-ink); }
+.p-tile[data-status="on_hold"] { background: var(--amber-tint); color: var(--amber); }
+.p-tile[data-status="completed"] { background: var(--soon-tint); color: var(--soon); }
+.p-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.p-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 2px; }
 .p-code { color: var(--muted); font-size: 13px; font-weight: 600; }
 .p-manager { color: var(--muted); font-size: 13px; }
 .p-manager.none { font-style: italic; }
+.p-side { flex: none; display: grid; justify-items: end; gap: 4px; }
+.p-progress-pct { font: 500 13px/1 var(--font-num); color: var(--muted); }
+.p-progress-bar { width: 56px; height: 6px; border-radius: var(--r-pill); background: var(--track); overflow: hidden; }
+.p-progress-bar i { display: block; height: 100%; background: var(--ok); }
 
 .chip-p-planned { background: var(--track); color: var(--muted); }
 .chip-p-running { background: var(--accent-tint); color: var(--accent-dark); }
@@ -1328,7 +1366,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
   background: var(--accent-tint); color: var(--accent-dark); font: 600 22px/1 var(--font-display);
 }
 .me-who { display: grid; gap: 2px; min-width: 0; }
-.me-who h1 { font: 600 22px/1.15 var(--font-display); overflow-wrap: anywhere; }
+.me-who h2 { font: 600 22px/1.15 var(--font-display); overflow-wrap: anywhere; }
 .me-who > span { color: var(--muted); font-size: 14px; }
 .me-userid { font: 500 13px/1.2 var(--font-num); }
 
@@ -1374,15 +1412,16 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 
 /* ---------- Clients & Projects: switch, grouping by area, rows ---------- */
 
-.seg-wrap { padding: 16px 20px 0; }
-.seg { display: flex; max-width: 1100px; margin: 0 auto; padding: 3px; border-radius: var(--r-control); background: var(--track); }
+.seg-wrap { margin-top: 14px; }
+.seg { display: flex; max-width: 1100px; margin: 0 auto; padding: 3px; border-radius: 10px; background: var(--track); }
 .seg a {
-  flex: 1; padding: 8px 12px; border-radius: calc(var(--r-control) - 3px);
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px;
+  padding: 0 12px; border-radius: 8px;
   color: var(--muted); font: 600 14px/1.2 var(--font-body); text-align: center; text-decoration: none;
 }
-.seg a[aria-current="page"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(27, 33, 40, 0.15); }
-.top-new { min-height: 36px; padding: 0 14px; font-size: 14px; }
-@media (max-width: 640px) { .seg-wrap { padding: 12px 14px 0; } }
+.seg a[aria-current="page"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(27, 33, 40, 0.12); }
+.seg-count { color: var(--muted); font: 500 13px/1 var(--font-num); }
+.seg a[aria-current="page"] .seg-count { color: inherit; }
 
 /* District, then area: both collapse (native <details>/<summary>), plain headings with a turning chevron
    instead of the browser's own disclosure triangle. Each area's clients sit in one white card. */
@@ -1436,16 +1475,21 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 
 .card-group .p-row { border-bottom: 0; padding: 12px 14px; }
 
-.client-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
+.client-row { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 12px 14px; color: inherit; text-decoration: none; }
 .client-row:hover { background: var(--hover); }
 .client-tile {
   flex: none; display: grid; place-items: center; width: 40px; height: 40px;
-  border-radius: var(--r-control); background: var(--soon-tint); color: var(--soon); font: 600 14px/1 var(--font-body);
+  border-radius: 10px; font: 700 15px/1 var(--font-body);
 }
+/* Cycled by a stable hash of the client id (see clients.js tileTone) so a client keeps its colour. */
+.client-tile[data-tone="0"] { background: var(--accent-tint); color: var(--accent-dark); }
+.client-tile[data-tone="1"] { background: var(--soon-tint); color: var(--soon); }
+.client-tile[data-tone="2"] { background: var(--ok-tint); color: var(--ok-ink); }
 .client-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .client-row-name { font: 600 16px/1.25 var(--font-display); overflow-wrap: anywhere; }
 .client-row-count { color: var(--muted); font-size: 13px; }
 .client-row-value { flex: none; font: 500 15px/1.2 var(--font-num); }
+.row-chevron { flex: none; color: var(--muted); font-size: 20px; line-height: 1; }
 
 .client-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .client-head h2 { font: 600 24px/1.1 var(--font-display); overflow-wrap: anywhere; }

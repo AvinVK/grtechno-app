@@ -45,7 +45,7 @@ def _summaries(keys) -> dict:
 @bp.get("/me")
 def page():
     keys = {m.key for m in modules_for(g.user)}
-    return render_template("me.html", heading="Me", heading_href="/me", summaries=_summaries(keys),
+    return render_template("me.html", summaries=_summaries(keys),
                            has_attendance="attendance" in keys and not g.user.is_admin)   # no check-in card for the admin
 
 

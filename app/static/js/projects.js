@@ -48,7 +48,7 @@
     const wrap = h('div', {});
     const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter by status' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
-    const list = h('ul', { class: 'card-group rows' });
+    const results = h('div', {});
     const search = h('input', {
       type: 'search', placeholder: 'Search project, client, work order', 'aria-label': 'Search projects',
       value: filter.q, oninput: (e) => { filter.q = e.target.value; refresh(); },
@@ -66,6 +66,24 @@
       }
     }
 
+    // Tiled by status, then a chevron - or, when the project has a progress value, a small bar instead.
+    function projectRow(p) {
+      const side = p.progress != null
+        ? h('span', { class: 'p-side' },
+            h('span', { class: 'p-progress-pct' }, `${Math.round(p.progress)}%`),
+            h('span', { class: 'p-progress-bar' }, h('i', { style: `width:${Math.max(0, Math.min(100, p.progress))}%` })))
+        : h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›');
+      return h('li', {}, h('a', { class: 'p-row', href: `#p${p.id}` },
+        h('span', { class: 'p-tile', 'data-status': p.status, 'aria-hidden': 'true' }, (p.title[0] || '?').toUpperCase()),
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, p.title),
+          h('span', { class: 'row-sub' }, [p.client_name, STATUS[p.status][0]].filter(Boolean).join(' · ')),
+          h('span', { class: 'p-foot' }, h('span', { class: 'p-code' }, p.code),
+            fmtShort(p.net_amount, cur) ? h('span', {}, fmtShort(p.net_amount, cur)) : null,
+            p.manager_name ? h('span', { class: 'p-manager' }, `PM: ${p.manager_name}`) : h('span', { class: 'p-manager none' }, 'No manager yet'))),
+        side));
+    }
+
     function refresh() {
       const q = filter.q.trim().toLowerCase();
       const items = data.projects.filter((p) => {
@@ -73,25 +91,24 @@
         return !q || [p.title, p.client_name, p.code, p.work_category].some((v) => (v || '').toLowerCase().includes(q));
       });
       count.textContent = plural(items.length, 'project', 'projects');
-      clear(list);
+      clear(results);
       if (!items.length) {
-        list.append(h('li', { class: 'empty-state' }, data.projects.length
+        results.append(h('p', { class: 'empty-state' }, data.projects.length
           ? 'No projects match this search.'
           : 'No projects yet. Tap Add project, or win a lead and tap Create project on it.'));
         return;
       }
-      items.forEach((p) => list.append(h('li', {}, h('a', { class: 'p-row', href: `#p${p.id}` },
-        h('span', { class: 'p-main' },
-          h('span', { class: 'row-title' }, p.title),
-          h('span', { class: 'row-sub' }, [p.client_name, p.work_category].filter(Boolean).join(' · '))),
-        h('span', { class: 'row-value' }, fmtShort(p.net_amount, cur)),
-        h('span', { class: 'p-foot' }, statusChip(p.status),
-          h('span', { class: 'p-code' }, p.code),
-          p.manager_name ? h('span', { class: 'p-manager' }, `PM: ${p.manager_name}`) : h('span', { class: 'p-manager none' }, 'No manager yet'))))));
+      // Grouped by status, in the pipeline's own order, each under a sticky header - same pattern as
+      // the Leads list's follow-up groups.
+      const groups = data.statuses.map((s) => ({ key: s, label: STATUS[s][0] === 'Completed' ? 'Done' : STATUS[s][0],
+        items: items.filter((p) => p.status === s) }));
+      groups.filter((g) => g.items.length).forEach((g) => results.append(h('section', { class: 'p-group lead-group' },
+        h('h3', { class: 'group-head' }, g.label, h('span', { class: 'group-count' }, g.items.length)),
+        h('ul', { class: 'card-group rows' }, g.items.map(projectRow)))));
     }
 
     wrap.append(
-      h('div', { class: 'filters' }, search, chips), count, list);
+      h('div', { class: 'filters' }, search, chips), count, results);
     clear(view).append(wrap);
     renderChips();
     refresh();

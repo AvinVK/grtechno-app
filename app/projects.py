@@ -143,7 +143,11 @@ def _payments(raw, errors):
 
 @bp.get("/projects")
 def page():
-    return render_template("projects.html")
+    title = "Projects" if g.user.sees_all else "My projects"
+    return render_template(
+        "projects.html", page_title=title,
+        client_count=visible_clients().count(), project_count=visible_projects().count(),
+    )
 
 
 @bp.get("/api/projects")

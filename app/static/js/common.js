@@ -322,3 +322,20 @@ window.LD = (() => {
     pickList, selectField, pickDate, dateField,
   };
 })();
+
+/* The large app bar (Leads views, Me) shrinks into a compact sticky bar once its sentinel - pinned to the
+   document at the bar's own (expanded) height - scrolls up past the fold. One observer, no scroll
+   listener; every page with the large bar gets this for free since common.js loads on every signed-in
+   page. The sentinel is positioned in JS, not CSS, because collapsing shrinks the bar's own layout
+   height - anchoring the sentinel to that height (as a normal sibling right after it) would drag the
+   sentinel up with it the moment it collapses, and it would never see itself scroll back into view. */
+(() => {
+  'use strict';
+  const bar = document.getElementById('appbar');
+  const sentinel = document.querySelector('.appbar-sentinel');
+  if (!bar || !sentinel || !('IntersectionObserver' in window)) return;
+  sentinel.style.top = `${bar.offsetHeight}px`;
+  new IntersectionObserver(([entry]) => {
+    bar.classList.toggle('is-collapsed', !entry.isIntersecting);
+  }, { rootMargin: '-48px 0px 0px 0px' }).observe(sentinel);
+})();

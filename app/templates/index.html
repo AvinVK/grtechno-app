@@ -1,12 +1,13 @@
 {% extends "base.html" %}
+{% set appbar_variant = 'large' %}
 {% block title %}Leads{% endblock %}
 {% block body_class %}page-app{% endblock %}
 
 {% block hub_back %}{% endblock %}{# here the bottom nav's Me leads to the hub #}
 
-{% block actions %}
-  <a class="link-btn hide-narrow" href="{{ url_for('views.export_csv') }}">Export CSV</a>
-{% endblock %}
+{% block page_section %}<span class="appbar-section" id="appbar-section">Leads</span>{% endblock %}
+{% block page_title %}<span id="appbar-title-text">Active</span>{% endblock %}
+{% block page_summary %}<p class="appbar-summary" id="appbar-summary"></p>{% endblock %}
 
 {% block content %}
 <main id="view" class="view" tabindex="-1" data-export-url="{{ url_for('views.export_csv') }}"><p class="loading">Loading leads…</p></main>

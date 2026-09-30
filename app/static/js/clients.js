@@ -27,17 +27,25 @@
   /* ---------- list, grouped by area, with a search and a service filter ---------- */
 
   let listCurrency = '';
-  const initials = (name) => name.split(/\s+/).filter((w) => /\w/.test(w)).slice(0, 2).map((w) => w.match(/\w/)[0]).join('').toUpperCase();
 
-  // An initials tile, the name and project count, and what their projects are worth on the right. (The list
-  // API has no per-project statuses, so the tile is one neutral colour rather than coloured by status.)
+  // A stable hash of the id, so a client keeps the same tile colour across visits (3 tones, see app.css).
+  function tileTone(id) {
+    let n = id;
+    n = ((n >> 16) ^ n) * 0x45d9f3b;
+    n = ((n >> 16) ^ n) * 0x45d9f3b;
+    n = (n >> 16) ^ n;
+    return Math.abs(n) % 3;
+  }
+
+  // An initial tile, the name and project count, and what their projects are worth on the right.
   function clientRow(c) {
     return h('li', {}, h('a', { class: 'client-row', href: `#c${c.id}` },
-      h('span', { class: 'client-tile', 'aria-hidden': 'true' }, initials(c.name) || '?'),
+      h('span', { class: 'client-tile', 'data-tone': String(tileTone(c.id)), 'aria-hidden': 'true' }, (c.name[0] || '?').toUpperCase()),
       h('span', { class: 'client-row-main' },
         h('span', { class: 'client-row-name' }, c.name),
         h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))),
-      c.total_estimated_value != null ? h('span', { class: 'client-row-value' }, fmtShort(c.total_estimated_value, listCurrency)) : null));
+      c.total_estimated_value != null ? h('span', { class: 'client-row-value' }, fmtShort(c.total_estimated_value, listCurrency)) : null,
+      h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›')));
   }
 
   function areaBlock(area, clients, expand) {

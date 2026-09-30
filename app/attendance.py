@@ -52,8 +52,8 @@ def _coord(payload, name, low, high, errors):
 def page():
     # The admin doesn't check in or out - their Attendance is the team register for a chosen day.
     if g.user.is_admin:
-        return render_template("attendance.html", heading="Team attendance", team_only=True)
-    return render_template("attendance.html", heading="Your attendance", team_only=False)
+        return render_template("attendance.html", page_title="Team attendance", team_only=True)
+    return render_template("attendance.html", page_title="Your attendance", team_only=False)
 
 
 def _no_admin_check_ins():

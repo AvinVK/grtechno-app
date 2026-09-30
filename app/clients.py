@@ -2,7 +2,7 @@
 
 import re
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
 from .auth import visible_clients, visible_projects
@@ -69,7 +69,11 @@ def _project_rows(client):
 
 @bp.get("/clients")
 def page():
-    return render_template("clients.html", heading="Clients & Projects")
+    title = "Clients" if g.user.sees_all else "My clients"
+    return render_template(
+        "clients.html", page_title=title,
+        client_count=visible_clients().count(), project_count=visible_projects().count(),
+    )
 
 
 @bp.get("/api/clients")

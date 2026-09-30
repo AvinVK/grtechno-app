@@ -1,8 +1,11 @@
 {% extends "base.html" %}
+{% set appbar_variant = 'large' %}
 {% from "_me_links.html" import services, manage with context %}
 {% block title %}Me - Leads{% endblock %}
 {% block body_class %}page-plain page-me{% endblock %}
 {% block hub_back %}{% endblock %}
+
+{% block page_title %}Me{% endblock %}
 
 {% block actions %}
   <button class="icon-btn avatar-btn" id="profile-btn" type="button" aria-label="Account" aria-haspopup="true">
@@ -15,7 +18,7 @@
   <section class="me-head">
     <span class="me-avatar" aria-hidden="true">{{ current_user.name[:1]|upper }}</span>
     <div class="me-who">
-      <h1>{{ current_user.name }}</h1>
+      <h2>{{ current_user.name }}</h2>
       <span><span class="me-userid">{{ current_user.userid }}</span>{% if current_user.is_admin %} · Admin{% endif %}</span>
     </div>
   </section>

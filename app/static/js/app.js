@@ -157,6 +157,8 @@
         S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads'));
   }
 
+  const VIEW_TITLE = { active: 'Active', closed: 'Won / Lost', add: 'New lead', status: 'Your status' };
+
   function renderNav() {
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page');
@@ -165,6 +167,23 @@
     const badge = $('.bottom-nav .nav-badge');
     badge.textContent = S.summary.due_count;
     badge.hidden = S.summary.due_count === 0;
+
+    const titleEl = $('#appbar-title-text');
+    const countEl = $('.appbar-count');
+    const summaryEl = $('#appbar-summary');
+    if (titleEl) titleEl.textContent = VIEW_TITLE[view] || VIEW_TITLE.active;
+    if (view === 'active') {
+      const openCount = S.leads.filter(isOpen).length;
+      const overdue = S.summary.overdue_count;
+      if (countEl) countEl.textContent = String(openCount);
+      if (summaryEl) {
+        clear(summaryEl).append(`${plural(openCount, 'open', 'open')} `,
+          overdue ? h('b', {}, `· ${plural(overdue, 'overdue', 'overdue')}`) : null);
+      }
+    } else {
+      if (countEl) countEl.textContent = '';
+      if (summaryEl) clear(summaryEl);
+    }
   }
 
   function renderAll() {
@@ -248,10 +267,11 @@
       renderOptions();
 
       const doneBtn = h('button', { class: 'btn primary', type: 'button' }, 'Done');
+      const exportLink = h('a', { class: 'btn', href: $('#view').dataset.exportUrl }, 'Export CSV');
       const card = h('div', { class: 'confirm-card filter-modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Filters' },
         h('h2', { class: 'filter-modal-title' }, 'Filters'),
         h('div', { class: 'filter-modal-body' }, catList, optionsPane),
-        h('div', { class: 'confirm-actions' }, doneBtn));
+        h('div', { class: 'confirm-actions' }, exportLink, doneBtn));
       const overlay = h('div', { class: 'confirm-overlay filter-overlay', onclick: (e) => { if (e.target === overlay) finish(); } }, card);
       function finish() { overlay.remove(); resolve(); }
       doneBtn.onclick = finish;
@@ -1420,6 +1440,16 @@
   }
 
   window.addEventListener('hashchange', syncView);
+
+  // Tapping the bottom-nav item for the tab you're already on doesn't change the hash (no hashchange
+  // fires) - scroll back to the top instead, same as most native apps do.
+  document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      if (a.dataset.view !== view) return;
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
 
   overlay.addEventListener('click', closeDrawer);
 

@@ -12,22 +12,41 @@
   {% if current_user %}<script src="{{ asset('js/common.js') }}" defer></script>{% endif %}
 </head>
 <body class="{% block body_class %}{% endblock %}{% if bottom_nav %} has-bottom-nav{% endif %}">
+{# A block can only be defined once per template, so the title/actions (each page overrides exactly one
+   copy) are captured here and reused in whichever of the two appbar shapes below actually renders. #}
+{% set page_title_html %}{% block page_title %}{% endblock %}{% endset %}
+{% set actions_html %}{% block actions %}{% endblock %}{% endset %}
 {% block header %}
-  <header class="topbar">
-    {% if current_user %}
-    {# There's no side menu at all - the Me hub is the nav for everyone (it lists every link the old menu
-       did). The bottom tabs' Me leads there; without them (no Leads service) every other page shows this
-       back arrow to it instead. #}
-    {% block hub_back %}{% if not bottom_nav %}<a class="icon-btn hub-back" href="{{ url_for('me.page') }}" aria-label="Back to Me">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
-    </a>{% endif %}{% endblock %}
-    {% endif %}
-    {% block brand %}{% endblock %}
-    {% block tabs %}{% endblock %}
-    <div class="top-actions">
-      {% block actions %}{% endblock %}
+  {% if current_user %}
+  {% if appbar_variant == 'large' %}
+  {# Tab screens (the Leads views and Me): a big title that shrinks into a compact sticky bar once you
+     scroll past it (see the sentinel + IntersectionObserver in common.js - no scroll listener). #}
+  <header class="appbar large" id="appbar">
+    <div class="appbar-top">
+      {% block page_section %}{% endblock %}
+      <div class="appbar-actions">{{ actions_html }}</div>
     </div>
+    <div class="appbar-heading">
+      <h1 class="appbar-title">{{ page_title_html }}</h1>
+      <span class="appbar-count" aria-hidden="true"></span>
+    </div>
+    {% block page_summary %}{% endblock %}
   </header>
+  <div class="appbar-sentinel" aria-hidden="true"></div>
+  {% else %}
+  {# Pushed screens (Clients, Projects, Attendance, Users, People...): there's no side menu at all - the
+     Me hub is the nav for everyone (it lists every link a side menu would) - so every pushed screen leads
+     back to it with a labelled link, then its own compact primary action if it has one, then its title. #}
+  <header class="appbar pushed">
+    <div class="appbar-row">
+      {% block hub_back %}{% if not bottom_nav %}<a class="back-link appbar-back" href="{{ url_for('me.page') }}">‹ {% block back_label %}Me{% endblock %}</a>{% endif %}{% endblock %}
+      <div class="appbar-actions">{{ actions_html }}</div>
+    </div>
+    <h1 class="appbar-title-pushed">{{ page_title_html }}</h1>
+    {% block tabs %}{% endblock %}
+  </header>
+  {% endif %}
+  {% endif %}
 {% endblock %}
 {% block content %}{% endblock %}
 {% if current_user %}

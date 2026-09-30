@@ -49,12 +49,12 @@ def admin_only_page():
 
 @page_bp.get("/workforce")
 def workforce_page():
-    return render_template("people.html", mode="roster", heading="Manpower & staff", heading_href="/workforce")
+    return render_template("people.html", mode="roster", page_title="Manpower & staff")
 
 
 @page_bp.get("/attendance-sheet")
 def sheet_page():
-    return render_template("people.html", mode="sheet", heading="Attendance sheet", heading_href="/attendance-sheet")
+    return render_template("people.html", mode="sheet", page_title="Attendance sheet")
 
 
 # The separate Manpower list and Staff list pages were folded into Manpower & staff; old links still land.
