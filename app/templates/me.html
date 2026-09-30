@@ -3,9 +3,6 @@
 {% block title %}Me - Leads{% endblock %}
 {% block body_class %}page-plain page-me{% endblock %}
 {% block hub_back %}{% endblock %}
-{# The "Me" bottom tab is already current here, and the avatar/name card right below says who you are -
-   a "Me" title in the bar above both would just repeat them. #}
-{% block brand %}{% endblock %}
 
 {% block actions %}
   <button class="icon-btn avatar-btn" id="profile-btn" type="button" aria-label="Account" aria-haspopup="true">
@@ -32,10 +29,10 @@
 
   <section class="me-section" aria-labelledby="me-services">
     <div class="me-section-head"><h2 id="me-services">Services</h2></div>
-    {{ services(nav_modules, current_module, 'hub', summaries) }}
+    {{ services(nav_modules, summaries) }}
   </section>
 
-  {{ manage('hub') }}
+  {{ manage() }}
 
   <form class="card-group me-rows me-signout" id="signout-form" method="post" action="{{ url_for('auth.logout') }}">
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">

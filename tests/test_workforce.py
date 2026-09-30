@@ -34,19 +34,18 @@ def test_pages_and_api_are_admin_only(client, manager_client, accounts_client, a
     assert anon.get("/workforce").status_code == 302 and anon.get("/api/workforce").status_code == 401
     roster = admin_client.get("/workforce").get_data(as_text=True)
     sheet = admin_client.get("/attendance-sheet").get_data(as_text=True)
-    assert 'data-mode="roster"' in roster and 'people.js' in roster and '>Manpower &amp; staff</a>' in roster
-    assert 'data-mode="sheet"' in sheet and '>Attendance sheet</a>' in sheet
+    assert 'data-mode="roster"' in roster and 'people.js' in roster
+    assert 'data-mode="sheet"' in sheet
 
 
 def test_both_are_in_the_admin_menu_only(client, admin_client):
     for label in ("Manpower &amp; staff", "Attendance sheet"):
-        assert label not in client.get("/").get_data(as_text=True)
-        assert label in admin_client.get("/").get_data(as_text=True)
+        assert label not in client.get("/me").get_data(as_text=True)
+        assert label in admin_client.get("/me").get_data(as_text=True)
 
 
 def test_attendance_is_called_your_attendance_in_the_menu(client):
-    html = client.get("/attendance").get_data(as_text=True)
-    assert "<span>Your attendance</span>" in html and ">Your attendance</a>" in html
+    assert "Your attendance" in client.get("/me").get_data(as_text=True)
 
 
 # ---------- the two groups ----------

@@ -67,7 +67,7 @@ def csrf(client):
     with client.session_transaction() as s:
         has_token = "csrf" in s
     if not has_token:                            # signed in: /login redirected, so load a page that has a form
-        client.get("/")
+        client.get("/me")
     with client.session_transaction() as s:
         return s["csrf"]
 

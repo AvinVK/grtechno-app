@@ -8,7 +8,7 @@ from app.config import Config
 
 def test_pages_link_files_with_a_fingerprint(client):
     html = client.get("/").get_data(as_text=True)
-    for name in ("css/app.css", "js/common.js", "js/shell.js", "js/app.js"):
+    for name in ("css/app.css", "js/common.js", "js/app.js"):
         assert re.search(rf'/static/{re.escape(name)}\?v=[0-9a-f]{{10}}"', html), name
     login = create_app(type("T", (Config,), {"TESTING": True, "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
                                              "SECRET_KEY": "asset-test-secret-not-a-placeholder"})).test_client()

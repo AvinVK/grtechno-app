@@ -1,55 +1,37 @@
-{# The service and admin links, shared by the side menu (_sidebar.html, variant "sidebar") and the Me hub
-   (me.html, variant "hub"), so both always offer the same places with the same names and icons.
+{# The service and admin links shown on the Me hub (me.html) - the only nav in the app; there's no side
+   menu, so every page reaches this through the bottom tabs' Me or the back arrow.
    Import with context: {% from "_me_links.html" import services, manage with context %} #}
 {% from "_icons.html" import icon %}
 
-{% macro label(m, variant) -%}
+{% macro label(m) -%}
 {%- if m.key == 'attendance' -%}{{ 'Team attendance' if current_user.is_admin else 'Your attendance' }}
-{%- elif m.key == 'clients' and variant == 'sidebar' -%}Clients &amp; Projects
 {%- else -%}{{ m.name }}{%- endif -%}
 {%- endmacro %}
 
-{# The menu skips Projects (it lives inside Clients & Projects there); the hub gives it a tile of its own. #}
-{% macro services(nav_modules, current_module, variant='sidebar', summaries={}) -%}
-{% if variant == 'hub' %}
+{% macro services(nav_modules, summaries={}) -%}
 <div class="me-tiles">
   {% for m in nav_modules %}
-  <a class="me-tile" href="{{ m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m, 'hub') }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
+  <a class="me-tile" href="{{ m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m) }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
   {% else %}
   <p class="sb-empty">No services are turned on yet.</p>
   {% endfor %}
 </div>
-{% else %}
-{% for m in nav_modules if m.key != 'projects' %}
-<a class="sb-link" href="{{ m.path }}"{% if current_module and current_module.key == m.key %} aria-current="page"{% endif %}>{{ icon(m.icon) }}<span>{{ label(m, 'sidebar') }}</span></a>
-{% else %}
-<p class="sb-empty">No services are turned on yet.</p>
-{% endfor %}
-{% endif %}
 {%- endmacro %}
 
 {# Admin only - the pages themselves check again on the server; hiding a link is not access control. #}
-{% macro manage(variant='sidebar') -%}
+{% macro manage() -%}
 {% if current_user.is_admin %}
-{% set links = [
-  ('users_page.page', 'user', 'Users & roles'),
-  ('workers_page.workforce_page', 'manpower', 'Manpower & staff'),
-  ('workers_page.sheet_page', 'attendance', 'Attendance sheet'),
-] %}
-{% if variant == 'hub' %}
 <section class="me-section" aria-labelledby="me-manage">
   <div class="me-section-head"><h2 id="me-manage">Manage</h2><span class="chip chip-role">Admin</span></div>
   <div class="card-group me-rows">
-    {% for endpoint, ic, text in links %}
+    {% for endpoint, ic, text in [
+      ('users_page.page', 'user', 'Users & roles'),
+      ('workers_page.workforce_page', 'manpower', 'Manpower & staff'),
+      ('workers_page.sheet_page', 'attendance', 'Attendance sheet'),
+    ] %}
     <a class="me-row" href="{{ url_for(endpoint) }}">{{ icon(ic) }}<span>{{ text }}</span><span class="me-chevron" aria-hidden="true">›</span></a>
     {% endfor %}
   </div>
 </section>
-{% else %}
-<p class="sb-label">Manage</p>
-{% for endpoint, ic, text in links %}
-<a class="sb-link" href="{{ url_for(endpoint) }}"{% if request.endpoint == endpoint %} aria-current="page"{% endif %}>{{ icon(ic) }}<span>{{ text }}</span></a>
-{% endfor %}
-{% endif %}
 {% endif %}
 {%- endmacro %}

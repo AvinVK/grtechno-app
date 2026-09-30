@@ -39,23 +39,22 @@ def test_menu_needs_sign_in(anon):
     assert anon.get("/api/modules").status_code == 401
 
 
-def test_page_has_the_menu_button_and_panel(client, user):
-    html = client.get("/").get_data(as_text=True)
-    assert 'id="menu-btn"' in html and 'aria-expanded="false"' in html
-    assert 'id="sidebar"' in html and "Your attendance" in html and "Sign out" in html
-    assert user.userid in html                                                   # who is signed in
+def test_no_page_has_a_menu_button_or_panel(client, user):
+    # There's no side menu anywhere - the Me hub is the one place all these links live.
+    for html in (client.get("/").get_data(as_text=True), client.get("/me").get_data(as_text=True)):
+        assert 'id="menu-btn"' not in html and 'id="sidebar"' not in html
+    html = client.get("/me").get_data(as_text=True)
+    assert "Your attendance" in html and "Sign out" in html and user.userid in html
     assert 'href="/attendance"' in html
-    # the service you are on is marked
-    assert 'href="/" aria-current="page"' in html
 
 
 def test_users_and_roles_is_only_in_the_admin_menu(client, admin_client, manager_client, accounts_client):
     for who in (client, manager_client, accounts_client):                        # every non-admin role
-        html = who.get("/").get_data(as_text=True)
+        html = who.get("/me").get_data(as_text=True)
         assert 'href="/users"' not in html and "Users &amp; roles" not in html and ">Manage<" not in html
         assert who.get("/users").status_code == 403
         assert who.get("/api/users").status_code == 403
-    html = admin_client.get("/").get_data(as_text=True)
+    html = admin_client.get("/me").get_data(as_text=True)
     assert 'href="/users"' in html and "Users &amp; roles" in html
 
 

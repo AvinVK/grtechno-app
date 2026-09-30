@@ -185,7 +185,7 @@ def test_the_admin_cannot_check_in_or_out(admin_client):
 
 def test_the_admins_attendance_page_is_the_team_register(admin_client, client):
     html = admin_client.get("/attendance").get_data(as_text=True)
-    assert 'data-team-only="1"' in html and ">Team attendance</a>" in html
+    assert 'data-team-only="1"' in html
     assert 'data-team-only="0"' in client.get("/attendance").get_data(as_text=True)
 
 
