@@ -39,12 +39,12 @@ def test_menu_needs_sign_in(anon):
     assert anon.get("/api/modules").status_code == 401
 
 
-def test_no_page_has_a_menu_button_or_panel(client, user):
+def test_no_page_has_a_menu_button_or_panel(client):
     # There's no side menu anywhere - the Me hub is the one place all these links live.
     for html in (client.get("/").get_data(as_text=True), client.get("/me").get_data(as_text=True)):
         assert 'id="menu-btn"' not in html and 'id="sidebar"' not in html
     html = client.get("/me").get_data(as_text=True)
-    assert "Your attendance" in html and "Sign out" in html and user.userid in html
+    assert "Your attendance" in html and "Sign out" in html
     assert 'href="/attendance"' in html
 
 

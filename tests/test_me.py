@@ -12,15 +12,16 @@ def test_me_needs_sign_in(anon):
 
 
 def test_me_shows_who_you_are_and_signs_out(client, user):
+    # Name/userid live in the profile menu (View profile, see test_api_me_reports_...) rather than
+    # the page body now - Sign out is still a plain button on the page itself.
     html = client.get("/me").get_data(as_text=True)
-    assert user.name in html and user.userid in html and "· Admin" not in html
     assert 'action="/logout"' in html and 'name="csrf"' in html and ">Sign out</button>" in html
 
 
 def test_manage_is_for_the_admin_only(client, admin_client):
     assert "Manage" not in client.get("/me").get_data(as_text=True)
     html = admin_client.get("/me").get_data(as_text=True)
-    assert "· Admin" in html and 'id="me-manage"' in html
+    assert 'id="me-manage"' in html
     for href in ("/users", "/workforce", "/attendance-sheet"):
         assert f'href="{href}"' in html
     # Hiding the links is not the access control - the pages still refuse anyone else.

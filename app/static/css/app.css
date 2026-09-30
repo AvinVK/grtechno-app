@@ -92,7 +92,8 @@ a { color: var(--accent-dark); }
 }
 .appbar-actions .avatar-btn { border: 0; background: transparent; border-radius: 50%; }
 
-/* Large: the Leads views and Me - a big title that shrinks into a sticky compact bar on scroll. */
+/* Large: the Leads views and Me - a big title that shrinks into a sticky compact bar on scroll. Title and
+   actions share one row, so a page with no section label (Me) isn't left with an empty row above it. */
 .appbar.large {
   position: sticky;
   top: 0;
@@ -100,10 +101,10 @@ a { color: var(--accent-dark); }
   background: var(--paper);
   padding: calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 14px calc(16px + env(safe-area-inset-left));
 }
-.appbar-top { display: flex; align-items: center; min-height: 44px; }
-.appbar-section { color: var(--muted); font: 600 13px/1.2 var(--font-body); }
-.appbar-heading { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
-.appbar-title { margin: 0; font: 700 30px/1.15 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.appbar-section { display: block; margin-bottom: 2px; color: var(--muted); font: 600 13px/1.2 var(--font-body); }
+.appbar-section:empty { display: none; }
+.appbar-heading { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.appbar-title { flex: 1; min-width: 0; margin: 0; font: 700 30px/1.15 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .appbar-count { display: none; color: var(--muted); font: 500 15px/1 var(--font-num); }
 .appbar-summary { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
 .appbar-summary:empty { display: none; }
@@ -120,8 +121,7 @@ a { color: var(--accent-dark); }
 }
 .appbar.large.is-collapsed .appbar-section,
 .appbar.large.is-collapsed .appbar-summary { display: none; }
-.appbar.large.is-collapsed .appbar-top { min-height: 0; }
-.appbar.large.is-collapsed .appbar-heading { margin-top: 0; }
+.appbar.large.is-collapsed .appbar-heading { min-height: 0; }
 .appbar.large.is-collapsed .appbar-title { font: 700 18px/1.2 var(--font-display); }
 .appbar.large.is-collapsed .appbar-count { display: inline; }
 .appbar.large.is-collapsed .appbar-actions .icon-btn { border-color: transparent; background: transparent; }
@@ -131,10 +131,12 @@ a { color: var(--accent-dark); }
   background: var(--paper);
   padding: calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));
 }
-.appbar-row { display: flex; align-items: center; gap: 12px; min-height: 44px; }
-.appbar-back { display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; }
-.appbar.pushed .appbar-actions .btn { min-height: 40px; padding: 0 14px; font-size: 14px; }
-.appbar-title-pushed { margin: 6px 0 0; font: 700 28px/1.2 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+/* Title, primary action and the back link all share this one row - see base.html. */
+.appbar-row { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.appbar-back { flex: none; display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; white-space: nowrap; }
+.appbar.pushed .appbar-actions { flex: none; margin-left: 0; }
+.appbar.pushed .appbar-actions .btn { min-height: 40px; padding: 0 14px; font-size: 14px; white-space: nowrap; }
+.appbar-title-pushed { flex: 1; min-width: 0; margin: 0; font: 700 22px/1.2 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 
 /* ---------- Buttons ---------- */
 
@@ -1360,15 +1362,6 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 /* ---------- Me hub (/me) ---------- */
 
 .me { display: grid; gap: 18px; max-width: 560px; margin: 0 auto; }
-.me-head { display: flex; align-items: center; gap: 14px; }
-.me-avatar {
-  flex: none; display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%;
-  background: var(--accent-tint); color: var(--accent-dark); font: 600 22px/1 var(--font-display);
-}
-.me-who { display: grid; gap: 2px; min-width: 0; }
-.me-who h2 { font: 600 22px/1.15 var(--font-display); overflow-wrap: anywhere; }
-.me-who > span { color: var(--muted); font-size: 14px; }
-.me-userid { font: 500 13px/1.2 var(--font-num); }
 
 /* Today: a dark card with the check-in state and its one button. */
 .me-today { display: grid; gap: 6px; padding: 16px 18px 18px; border-radius: var(--r-card); background: #1b2128; color: #fff; }

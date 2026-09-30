@@ -157,7 +157,7 @@
         S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads'));
   }
 
-  const VIEW_TITLE = { active: 'Active', closed: 'Won / Lost', add: 'New lead', status: 'Your status' };
+  const VIEW_TITLE = { active: 'Active leads', closed: 'Won / Lost', add: 'New lead', status: 'Your status' };
 
   function renderNav() {
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {

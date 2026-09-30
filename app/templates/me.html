@@ -15,14 +15,6 @@
 
 {% block content %}
 <main id="view" class="view me" tabindex="-1">
-  <section class="me-head">
-    <span class="me-avatar" aria-hidden="true">{{ current_user.name[:1]|upper }}</span>
-    <div class="me-who">
-      <h2>{{ current_user.name }}</h2>
-      <span><span class="me-userid">{{ current_user.userid }}</span>{% if current_user.is_admin %} · Admin{% endif %}</span>
-    </div>
-  </section>
-
   {% if has_attendance %}
   {# Filled in by me.js from /api/attendance/state, with check-in / check-out from attendance-core.js. #}
   <section class="me-today" id="me-today" aria-live="polite" aria-label="Today">
