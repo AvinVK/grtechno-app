@@ -1,8 +1,8 @@
 /* Leads - fire protection lead management.
-   "Cool slate": a white top bar (with a thin sunset stripe along its top edge) over a cool slate-grey page,
-   white cards on it. The sunset gradient (--bar) is kept only for the stripe, the menu header and the sign-in
-   hero. The accent is flame red-orange; crimson (--signal) is kept for overdue and delete so it never reads
-   as a plain action colour. Radii come from three tokens: controls, cards and pills. */
+   "Cool slate": a white top bar over a cool slate-grey page, white cards on it. The sunset gradient (--bar)
+   is kept for the menu header and the sign-in hero. The accent is flame red-orange; crimson (--signal) is
+   kept for overdue and delete so it never reads as a plain action colour. Radii come from three tokens:
+   controls, cards and pills. */
 
 :root {
   --paper: #f1f3f5;
@@ -99,15 +99,6 @@ a { color: var(--accent-dark); }
   background: var(--panel);
   color: var(--ink);
   border-bottom: 1px solid var(--line);
-}
-
-/* The sunset gradient, kept as a thin stripe along the top edge of the white bar. */
-.topbar::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: var(--bar);
 }
 
 .brand {
