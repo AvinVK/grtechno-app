@@ -40,7 +40,7 @@
     <div class="appbar-row">
       <h1 class="appbar-title-pushed">{{ page_title_html }}</h1>
       <div class="appbar-actions">{{ actions_html }}</div>
-      {% block hub_back %}<a class="back-link appbar-back" href="{{ url_for('me.page') }}">‹ {% block back_label %}Me{% endblock %}</a>{% endblock %}
+      {% block hub_back %}<a class="back-link appbar-back" id="appbar-back" href="{{ url_for('me.page') }}">‹ {% block back_label %}Me{% endblock %}</a>{% endblock %}
     </div>
     {% block tabs %}{% endblock %}
   </header>

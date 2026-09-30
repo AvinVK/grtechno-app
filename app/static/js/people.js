@@ -76,6 +76,7 @@
   // Attendance sheet lists lowest attendance first. The chip in use goes into the address (#manpower,
   // #staff), so coming back from a person lands on the same one.
   function showList(data, key) {
+    LD.resetAppbarBack?.();
     const groups = Object.keys(data).filter((k) => Array.isArray(data[k]));
     const state = { q: '', group: groups.includes(key) ? key : 'all' };
     const sheet = mode === 'sheet';
@@ -327,8 +328,8 @@
     const key = data.worker.category;
     const came = data.attendance.filter((a) => a.status === 'present').length;
     const days = data.period ? Math.round((parseDay(data.period.end) - parseDay(data.period.start)) / 86400000) + 1 : 0;
+    LD.setAppbarBack?.(GROUPS[key] || 'Back', `#${key}`);
     clear(view).append(h('div', { class: 'people' },
-      h('a', { class: 'back-link', href: `#${key}` }, `← ${GROUPS[key] || 'Back'}`),
       h('div', { class: 'att-head' },
         h('h2', {}, data.worker.name),
         h('span', { class: 'att-head-date' }, GROUPS[key] || '')),

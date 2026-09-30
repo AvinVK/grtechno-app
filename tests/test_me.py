@@ -68,7 +68,7 @@ def test_bottom_nav_me_goes_to_the_hub(client):
     html = client.get("/").get_data(as_text=True)
     assert 'class="bottom-nav-item" href="/me"' in html
     assert "data-open-menu" not in html
-    assert "hub-back" not in html                                  # Leads has the bottom nav instead
+    assert "appbar-back" not in html                               # Leads has the bottom nav instead
 
 
 def test_profile_button_is_on_every_me_page(client, admin_client):
@@ -107,12 +107,12 @@ def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
         html = who.get(url).get_data(as_text=True)
         assert 'class="bottom-nav"' in html and 'href="/me" aria-current="page"' in html, url
         assert 'href="/#active"' in html and "has-bottom-nav" in html, url
-        assert "hub-back" not in html, url                         # Me in the tabs is the way back
+        assert 'id="appbar-back"' in html, url                     # the appbar's own way back, alongside the tabs
 
 
 def test_without_leads_other_pages_get_a_back_arrow_instead(manager_client):
     html = manager_client.get("/clients").get_data(as_text=True)
-    assert 'class="back-link appbar-back" href="/me"' in html and 'class="bottom-nav"' not in html
+    assert 'id="appbar-back" href="/me"' in html and 'class="bottom-nav"' not in html
     assert "appbar-back" not in manager_client.get("/me").get_data(as_text=True)
 
 
