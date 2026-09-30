@@ -171,6 +171,7 @@
   /* ---------- my attendance ---------- */
 
   async function showMine() {
+    LD.resetAppbarBack?.();
     stopElapsedTimer();
     clear(view).append(h('p', { class: 'loading' }, 'Loading attendance…'));
     let data;
@@ -274,6 +275,7 @@
   /* ---------- team register (admin, accounts) ---------- */
 
   async function showTeam() {
+    if (!teamOnly) LD.setAppbarBack?.('Your attendance', '#');
     stopElapsedTimer();
     setTeamLink(false);
     document.body.classList.remove('has-att-bar');
@@ -298,9 +300,9 @@
     dateInput.onchange = refresh;
 
     clear(view).append(h('div', {},
-      teamOnly ? null : h('a', { class: 'back-link', href: '#' }, '← Your attendance'),
       // The top bar already says "Team attendance" for the admin (team_only) - only worth repeating
-      // in-page for someone whose top bar still says "Your attendance" while they're looking at this.
+      // in-page for someone whose top bar still says "Your attendance" while they're looking at this;
+      // the way back for them is the appbar's own back link (set above), not an in-page one.
       teamOnly ? null : h('div', { class: 'list-head' }, h('h2', {}, 'Team attendance')),
       h('div', { class: 'filters' }, dateInput), count, list));
     refresh();

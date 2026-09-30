@@ -61,6 +61,7 @@
   }
 
   async function showList() {
+    LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading clients…'));
     let data;
     try { data = await api('/api/clients'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
@@ -152,6 +153,7 @@
   }
 
   function renderSummary(client, projects, currency, broughtBy) {
+    LD.setAppbarBack?.('Clients', '#');
     const since = new Date(client.created_at);
     const sinceText = `Since ${since.getDate()} ${MONTHS[since.getMonth()]} ${since.getFullYear()}`;
 
@@ -180,7 +182,6 @@
     }
 
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: '#' }, '← Clients & Projects'),
       h('div', { class: 'client-head' },
         h('div', {},
           h('h2', {}, client.name),
@@ -208,6 +209,7 @@
   /* ---------- one client: edit contact and site details ---------- */
 
   function renderForm(client, categories) {
+    LD.setAppbarBack?.(client.name, `#c${client.id}`);
     const C = client;
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
     const area = (rows, value) => { const t = h('textarea', { rows }); t.value = value ?? ''; return t; };
@@ -270,7 +272,6 @@
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: `#c${client.id}` }, `← ${client.name}`),
       h('div', { class: 'p-head' }, h('h2', {}, 'Edit details')),
       form));
   }

@@ -21,6 +21,12 @@
     return h('span', { class: `chip chip-p-${tone}` }, label);
   };
 
+  // One project's tabs (dashboard, payments, details, attendance) all lead back to the same nearer place:
+  // its client if this role can open Clients & Projects, otherwise the project list itself.
+  function setProjectAppbarBack(c) {
+    LD.setAppbarBack?.(canOpenClients ? c.name : 'Projects', canOpenClients ? `/clients#c${c.id}` : '#');
+  }
+
   // The four sections of one project - a horizontally-scrolling chip row, same pattern as the stage
   // filters elsewhere, so it never depends on a fixed item count fitting a phone's width.
   const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['details', 'More details'], ['attendance', 'Attendance']];
@@ -40,6 +46,7 @@
   /* ---------- list ---------- */
 
   async function showList() {
+    LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading projects…'));
     let data;
     try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
@@ -117,6 +124,7 @@
   /* ---------- add a project that did not come from a lead ---------- */
 
   async function showNew() {
+    LD.setAppbarBack?.('Clients', '/clients');
     clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
     let data;
     try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
@@ -170,7 +178,6 @@
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: '/clients' }, '\u2190 Clients & Projects'),
       h('div', { class: 'p-head' }, h('h2', {}, 'Add project')),
       form));
   }
@@ -244,6 +251,7 @@
   function renderDashboard(data) {
     const P = data.project;
     const D = data.dashboard;
+    setProjectAppbarBack(data.client);
     const c = data.client;
     const cur = data.currency;
 
@@ -297,7 +305,6 @@
     }
 
     clear(view).append(h('div', { class: 'project-detail' },
-      canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : h('a', { class: 'back-link', href: '#' }, '← Projects'),
       h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
       h('p', { class: 'hint' }, P.title),
       projectTabs(P.id, ''),
@@ -334,10 +341,11 @@
     else renderDashboard(data);
   }
 
-  // The back-link and code/status/title header, identical on all four tabs.
+  // The header, identical on all three of the tabs below (dashboard has its own, near-identical version -
+  // see renderDashboard); the back link itself goes in the appbar (setProjectAppbarBack), not in here.
   function projectHead(P, c) {
+    setProjectAppbarBack(c);
     return [
-      canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : h('a', { class: 'back-link', href: '#' }, '← Projects'),
       h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
       h('p', { class: 'hint' }, P.title),
     ];
