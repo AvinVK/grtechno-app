@@ -304,11 +304,12 @@ a.stat:hover { border-color: var(--line-strong); }
   color: var(--ink);
   font: 600 14px/1 var(--font-body);
   cursor: pointer;
+  text-decoration: none;   /* also used as <a> for the project section tabs */
 }
 
 .filter-chip .n { color: var(--muted); }
 
-.filter-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.filter-chip[aria-pressed="true"], .filter-chip[aria-current="page"] { background: var(--ink); border-color: var(--ink); color: #fff; }
 .lbl-short { display: none; }
 /* Drawn 36px tall, but tappable across 44px: an invisible strip above and below. */
 .filter-chip::after { content: ""; position: absolute; inset: -4px 0; }

@@ -21,6 +21,15 @@
     return h('span', { class: `chip chip-p-${tone}` }, label);
   };
 
+  // The four sections of one project - a horizontally-scrolling chip row, same pattern as the stage
+  // filters elsewhere, so it never depends on a fixed item count fitting a phone's width.
+  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['details', 'More details'], ['attendance', 'Attendance']];
+  const projectTabs = (id, active) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
+    PROJECT_TABS.map(([slug, label]) => h('a', {
+      class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
+      'aria-current': active === slug ? 'page' : null,
+    }, label)));
+
   const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
 
   function fmtDate(iso) {
@@ -126,7 +135,7 @@
             work_category: category.value, status: statusSel.value,
           } });
           toast('Project added');
-          window.location.hash = `#p${saved.project.id}/edit`;       // straight on to the work order and amounts
+          window.location.hash = `#p${saved.project.id}/details`;       // straight on to the work order details
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
@@ -141,7 +150,7 @@
         field('title', 'Project title', titleInput, { wide: true }),
         field('work_category', 'Work category', category),
         field('status', 'Status', statusSel)),
-      h('p', { class: 'hint' }, 'You can add the work order, amounts, terms and payment schedule on the next screen.'),
+      h('p', { class: 'hint' }, 'You can add the work order details on the next screen, and the payment schedule from its own tab.'),
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
@@ -206,6 +215,16 @@
       h('span', { class: 'stat-note' }, note));
   }
 
+  // Who has checked in against this project - app users and manpower/staff alike. Used on the Attendance
+  // on this site tab.
+  const teamList = (D) => (D.team.length
+    ? h('ul', { class: 'att-week-card' }, D.team.map((m) => h('li', { class: 'att-day' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, m.name),
+        h('span', { class: 'dash-days' }, h('span', { class: 'att-num' }, m.days), m.days === 1 ? ' day' : ' days')),
+      h('span', { class: 'att-day-sub' }, `${m.kind} · last on ${shortDate(parseDay(m.last_day))}`))))
+    : h('p', { class: 'hint' }, 'No attendance has been recorded against this project yet.'));
+
   function renderDashboard(data) {
     const P = data.project;
     const D = data.dashboard;
@@ -220,14 +239,6 @@
       h('span', { class: 'stat-label' }, label),
       h('span', { class: 'dash-info-value' }, value),
       sub ? h('span', { class: 'dash-info-sub' }, sub) : null);
-
-    const team = D.team.length
-      ? h('ul', { class: 'att-week-card' }, D.team.map((m) => h('li', { class: 'att-day' },
-        h('div', { class: 'att-day-top' },
-          h('span', { class: 'att-day-date' }, m.name),
-          h('span', { class: 'dash-days' }, h('span', { class: 'att-num' }, m.days), m.days === 1 ? ' day' : ' days')),
-        h('span', { class: 'att-day-sub' }, `${m.kind} · last on ${shortDate(parseDay(m.last_day))}`))))
-      : h('p', { class: 'hint' }, 'No attendance has been recorded against this project yet.');
 
     let closeArea = null;
     if (P.status === 'completed') {
@@ -271,11 +282,9 @@
 
     clear(view).append(h('div', { class: 'project-detail' },
       canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : h('a', { class: 'back-link', href: '#' }, '← Projects'),
-      h('div', { class: 'client-head' },
-        h('div', {},
-          h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
-          h('p', { class: 'hint' }, P.title)),
-        h('a', { class: 'btn small', href: `#p${P.id}/edit` }, 'Edit details')),
+      h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
+      h('p', { class: 'hint' }, P.title),
+      projectTabs(P.id, ''),
       h('div', { class: 'client-stats' },
         timeTile(P, D),
         h('div', { class: 'stat' },
@@ -288,19 +297,14 @@
         info('Client',
           canOpenClients ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
           [c.contact_name, c.phone].filter(Boolean).join(' · ') || null)),
-      h('section', { class: 'p-section' },
-        h('div', { class: 'p-section-head' },
-          h('h3', {}, 'Who has worked on it'),
-          D.team.length ? h('span', { class: 'p-code' }, plural(D.team.length, 'person', 'people')) : null),
-        team),
       closeArea,
       deleteBtn));
     window.scrollTo(0, 0);
   }
 
-  /* ---------- one project: edit details ---------- */
+  /* ---------- one project: the other three tabs ---------- */
 
-  async function showDetail(id, editing) {
+  async function showDetail(id, section) {
     clear(view).append(h('p', { class: 'loading' }, 'Loading project…'));
     let data;
     try { data = await api(`/api/projects/${id}`); }
@@ -308,35 +312,30 @@
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to projects')));
       return;
     }
-    if (editing) renderDetail(data);
+    if (section === 'payments') renderPayments(data);
+    else if (section === 'details') renderDetails(data);
+    else if (section === 'attendance') renderAttendance(data);
     else renderDashboard(data);
   }
 
-  function renderDetail(data) {
-    const P = data.project;
-    const cur = data.currency;
-    const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
+  // The back-link and code/status/title header, identical on all four tabs.
+  function projectHead(P, c) {
+    return [
+      canOpenClients ? h('a', { class: 'back-link', href: `/clients#c${c.id}` }, `← ${c.name}`) : h('a', { class: 'back-link', href: '#' }, '← Projects'),
+      h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
+      h('p', { class: 'hint' }, P.title),
+    ];
+  }
 
-    const title = text('text', P.title, { maxlength: 160, autocomplete: 'off' });
-    const statusSel = selectField(
-      data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), P.status, { title: 'Status' });
-    const woNo = text('text', P.work_order_no, { maxlength: 60, autocomplete: 'off' });
-    const woDate = dateField(P.work_order_date);
-    const startDate = dateField(P.start_date);
-    const days = text('number', P.completion_days, { min: '0', step: '1', inputmode: 'numeric' });
-    const managerSel = data.can_assign_manager
-      ? selectField(
-        [{ value: '', label: 'Not assigned' }, ...data.managers.map((m) => ({ value: m.code, label: m.name }))],
-        P.manager_code || '', { title: 'Manager', placeholder: 'Not assigned' })
-      : null;
+  function renderPayments(data) {
+    const P = data.project;
+    const c = data.client;
+    const cur = data.currency;
 
     // The amount is settled by the time a lead is won (see the negotiated figure below) - not something
     // to hand-edit here anymore.
     const netValue = P.estimated_amount == null ? null : P.estimated_amount - (P.discount_amount || 0);
 
-    const finish = h('p', { class: 'hint', 'aria-live': 'polite' });
-
-    /* payment schedule */
     const ovNegotiated = h('dd', {}, '—');
     const ovAdvance = h('dd', {}, '—');
     const ovRemaining = h('dd', {}, '—');
@@ -397,7 +396,73 @@
       else if (scheduled > netValue) { paySummary.textContent = `Scheduled ${money(scheduled, cur)} is more than the net amount ${money(netValue, cur)}`; paySummary.classList.add('bad'); }
       else if (scheduled === netValue) { paySummary.textContent = `All ${money(netValue, cur)} is scheduled`; paySummary.classList.add('good'); }
       else paySummary.textContent = `Scheduled ${money(scheduled, cur)} of ${money(netValue, cur)}. ${money(netValue - scheduled, cur)} is not scheduled yet.`;
+    }
 
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save payment schedule');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { payments: payments() } });
+          toast('Payment schedule saved');
+          window.location.hash = `#p${P.id}`;
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          const first = showFieldErrors(form, err.fields);
+          (first || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Payment schedule'),
+        payOverview,
+        h('p', { class: 'hint' }, 'Split the net amount into steps, for example advance, on delivery, on completion.'),
+        payRows,
+        payErr,
+        h('button', { class: 'btn small', type: 'button', onclick: () => { addPayRow(); renumberPayRows(); recalc(); payRows.lastChild.querySelector('input').focus(); } }, 'Add payment step'),
+        paySummary),
+      h('div', { class: 'form-actions' }, saveBtn));
+
+    form.addEventListener('input', (e) => {
+      // A payment message from the last save no longer applies once the amounts change.
+      if (payRows.contains(e.target)) payErr.textContent = '';
+      recalc();
+    });
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, 'payments'),
+      form));
+    recalc();
+    window.scrollTo(0, 0);
+  }
+
+  function renderDetails(data) {
+    const P = data.project;
+    const c = data.client;
+    const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
+
+    const title = text('text', P.title, { maxlength: 160, autocomplete: 'off' });
+    const statusSel = selectField(
+      data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), P.status, { title: 'Status' });
+    const woNo = text('text', P.work_order_no, { maxlength: 60, autocomplete: 'off' });
+    const woDate = dateField(P.work_order_date);
+    const startDate = dateField(P.start_date);
+    const days = text('number', P.completion_days, { min: '0', step: '1', inputmode: 'numeric' });
+    const managerSel = data.can_assign_manager
+      ? selectField(
+        [{ value: '', label: 'Not assigned' }, ...data.managers.map((m) => ({ value: m.code, label: m.name }))],
+        P.manager_code || '', { title: 'Manager', placeholder: 'Not assigned' })
+      : null;
+
+    const finish = h('p', { class: 'hint', 'aria-live': 'polite' });
+    function recalcFinish() {
       if (startDate.value && days.value !== '') {
         const [y, m, d] = startDate.value.split('-').map(Number);
         const end = new Date(Date.UTC(y, m - 1, d + toNumber(days.value)));
@@ -406,7 +471,7 @@
     }
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save project');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save details');
     const form = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
         e.preventDefault();
@@ -415,12 +480,12 @@
         saveBtn.disabled = true;
         const body = {
           title: title.value, status: statusSel.value, work_order_no: woNo.value, work_order_date: woDate.value,
-          start_date: startDate.value, completion_days: days.value, payments: payments(),
+          start_date: startDate.value, completion_days: days.value,
         };
         if (managerSel) body.manager_code = managerSel.value;
         try {
-          const saved = await api(`/api/projects/${P.id}`, { method: 'PATCH', body });
-          toast('Project saved');
+          await api(`/api/projects/${P.id}`, { method: 'PATCH', body });
+          toast('Project details saved');
           window.location.hash = `#p${P.id}`;
         } catch (err) {
           errorBox.textContent = err.message;
@@ -445,28 +510,14 @@
           field('start_date', 'Approx. start date', startDate),
           field('completion_days', 'Completion period (days)', days)),
         finish),
-      h('section', { class: 'p-section' },
-        h('h3', {}, 'Payment schedule'),
-        payOverview,
-        h('p', { class: 'hint' }, 'Split the net amount into steps, for example advance, on delivery, on completion.'),
-        payRows,
-        payErr,
-        h('button', { class: 'btn small', type: 'button', onclick: () => { addPayRow(); renumberPayRows(); recalc(); payRows.lastChild.querySelector('input').focus(); } }, 'Add payment step'),
-        paySummary),
       h('div', { class: 'form-actions' }, saveBtn));
 
-    form.addEventListener('input', (e) => {
-      // A payment message from the last save no longer applies once the amounts change.
-      if (payRows.contains(e.target)) payErr.textContent = '';
-      recalc();
-    });
+    form.addEventListener('input', recalcFinish);
 
     const site = [P.site_address, P.site_city, P.site_district, P.site_state].filter(Boolean).join(', ');
-    const c = data.client;
     clear(view).append(h('div', { class: 'project-detail' },
-      h('a', { class: 'back-link', href: `#p${P.id}` }, `← ${P.code}`),
-      h('div', { class: 'p-head' },
-        h('h2', {}, 'Edit project'), statusChip(P.status)),
+      ...projectHead(P, c),
+      projectTabs(P.id, 'details'),
       h('section', { class: 'p-client' },
         h('div', {},
           h('span', { class: 'p-label' }, 'Client'),
@@ -474,13 +525,28 @@
         c.phone ? h('a', { class: 'btn small', href: `tel:${c.phone.replace(/[^\d+]/g, '')}` }, 'Call') : null,
         site ? h('p', { class: 'hint' }, `Site: ${site}${P.site_pincode ? ` - ${P.site_pincode}` : ''}`) : null),
       form));
-    recalc();
+    recalcFinish();
+    window.scrollTo(0, 0);
+  }
+
+  function renderAttendance(data) {
+    const P = data.project;
+    const D = data.dashboard;
+    const c = data.client;
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, 'attendance'),
+      h('section', { class: 'p-section' },
+        h('div', { class: 'p-section-head' },
+          h('h3', {}, 'Attendance on this site'),
+          D.team.length ? h('span', { class: 'p-code' }, plural(D.team.length, 'person', 'people')) : null),
+        teamList(D))));
     window.scrollTo(0, 0);
   }
 
   function route() {
-    const m = /^#p(\d+)(\/edit)?$/.exec(window.location.hash);
-    if (m) return showDetail(Number(m[1]), !!m[2]);
+    const m = /^#p(\d+)(\/(payments|details|attendance))?$/.exec(window.location.hash);
+    if (m) return showDetail(Number(m[1]), m[3] || '');
     return window.location.hash === '#new' ? showNew() : showList();
   }
 
