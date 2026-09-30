@@ -59,7 +59,8 @@ def test_no_today_card_without_attendance(app, admin_client):
         db.session.get(Module, "attendance").is_active = False
         db.session.commit()
     html = admin_client.get("/me").get_data(as_text=True)
-    assert 'id="me-today"' not in html and "me.js" not in html
+    assert 'id="me-today"' not in html and "attendance-core.js" not in html
+    assert "me.js" in html                                              # still needed for the profile menu
 
 
 def test_bottom_nav_me_goes_to_the_hub(client):
@@ -67,6 +68,36 @@ def test_bottom_nav_me_goes_to_the_hub(client):
     assert 'class="bottom-nav-item" href="/me"' in html
     assert "data-open-menu" not in html
     assert "hub-back" not in html                                  # Leads has the bottom nav instead
+
+
+def test_profile_button_is_on_every_me_page(client, admin_client):
+    for c in (client, admin_client):
+        assert 'id="profile-btn"' in c.get("/me").get_data(as_text=True)
+
+
+def test_api_me_reports_name_userid_designation_and_phone(client, user):
+    data = client.get("/api/me").get_json()
+    assert data["name"] == user.name and data["userid"] == user.userid and data["phone"] == ""
+    assert data["designation"] == (user.role.name if user.role else None)
+
+
+def test_api_me_requires_sign_in(anon):
+    assert anon.get("/api/me").status_code == 401
+
+
+def test_a_person_can_set_their_own_phone(client):
+    res = client.patch("/api/me", json={"phone": "9876543210"})
+    assert res.status_code == 200 and res.get_json()["phone"] == "9876543210"
+    assert client.get("/api/me").get_json()["phone"] == "9876543210"
+
+
+def test_phone_is_too_long_is_rejected(client):
+    res = client.patch("/api/me", json={"phone": "9" * 41})
+    assert res.status_code == 400 and "fields" in res.get_json()
+
+
+def test_api_me_patch_requires_a_phone_key(client):
+    assert client.patch("/api/me", json={}).status_code == 400
 
 
 def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):

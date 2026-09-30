@@ -40,6 +40,7 @@ class User(db.Model):
     name = db.Column(db.String(60), nullable=False)
     is_admin = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
+    phone = db.Column(EncryptedText, nullable=True)
     password_hash = db.Column(db.String(255), nullable=True)
     setup_code_hash = db.Column(db.String(255), nullable=True)
     setup_code_expires = db.Column(db.DateTime, nullable=True)

@@ -5,10 +5,11 @@ base.html, like on every other page."""
 
 from datetime import timedelta
 
-from flask import Blueprint, g, render_template
+from flask import Blueprint, g, jsonify, render_template, request
 
 from .auth import visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
+from .extensions import db
 from .models import Attendance, Lead, Project
 from .modules import modules_for
 from .timeutil import today_local
@@ -46,3 +47,23 @@ def page():
     keys = {m.key for m in modules_for(g.user)}
     return render_template("me.html", heading="Me", heading_href="/me", summaries=_summaries(keys),
                            has_attendance="attendance" in keys and not g.user.is_admin)   # no check-in card for the admin
+
+
+@bp.get("/api/me")
+def profile():
+    u = g.user
+    return jsonify(name=u.name, userid=u.userid, designation=u.role.name if u.role else None, phone=u.phone or "")
+
+
+@bp.patch("/api/me")
+def update_profile():
+    """The only thing a signed-in person can change about themselves here: their own contact number."""
+    data = request.get_json(silent=True) or {}
+    if "phone" not in data:
+        return jsonify(error="Nothing to update."), 400
+    phone = (data["phone"] or "").strip()
+    if len(phone) > 40:
+        return jsonify(error="Phone number is too long.", fields={"phone": "Too long"}), 400
+    g.user.phone = phone
+    db.session.commit()
+    return jsonify(phone=g.user.phone)

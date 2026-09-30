@@ -838,6 +838,11 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .icon-btn:hover { background: var(--hover); }
 .sb-head .icon-btn:hover { background: rgba(255, 255, 255, 0.16); }     /* on the gradient */
 
+.avatar-btn span {
+  display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent-tint); color: var(--accent-dark); font: 600 14px/1 var(--font-display);
+}
+
 .menu-overlay {
   position: fixed;
   inset: 0;
@@ -1135,6 +1140,12 @@ a.p-client-name { color: var(--accent-dark); }
 .confirm-card p { margin: 0 0 18px; color: var(--muted); overflow-wrap: anywhere; }
 .confirm-actions { display: flex; gap: 10px; }
 .confirm-actions .btn { flex: 1; min-height: var(--tap); padding: 8px 10px; line-height: 1.2; white-space: normal; text-align: center; }
+
+.profile-card { text-align: left; }
+.profile-row { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: inherit; }
+.profile-row span:first-child { color: var(--muted); }
+.profile-row span:last-child { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.profile-card .field { margin: 4px 0 18px; }
 
 .btn.danger-solid { background: var(--signal); border-color: var(--signal); color: #fff; }
 .btn.danger-solid:hover { background: #8e1d2e; border-color: #8e1d2e; }
