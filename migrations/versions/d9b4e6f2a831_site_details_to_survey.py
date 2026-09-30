@@ -29,6 +29,10 @@ SITE_COLUMNS = [
 ]
 
 
+def _columns(conn, table):
+    return {row[1] for row in conn.execute(sa.text(f"PRAGMA table_info({table})"))}
+
+
 def upgrade():
     # SQLite's batch recreate rebuilds the whole table (drop + recreate), and with FK enforcement on
     # (this app turns it on for every connection - see app/extensions.py) that drop cascades through
@@ -36,12 +40,24 @@ def upgrade():
     # rows that have nothing to do with the columns being touched. Off for the duration of this
     # migration only.
     op.execute("PRAGMA foreign_keys=OFF")
-
-    with op.batch_alter_table('lead_surveys', schema=None) as batch_op:
-        for name, col_type in SITE_COLUMNS:
-            batch_op.add_column(sa.Column(name, col_type, server_default='', nullable=False))
-
     conn = op.get_bind()
+
+    # Defensive: an interrupted earlier attempt (killed mid-batch, or a name collision) can leave a
+    # stale temp table behind, or the lead_surveys columns already added - either would make a retry
+    # fail immediately without this. Safe to re-run from any of those partial states.
+    conn.execute(sa.text("DROP TABLE IF EXISTS _alembic_tmp_leads"))
+    conn.execute(sa.text("DROP TABLE IF EXISTS _alembic_tmp_lead_surveys"))
+
+    missing = [(name, col_type) for name, col_type in SITE_COLUMNS if name not in _columns(conn, 'lead_surveys')]
+    if missing:
+        with op.batch_alter_table('lead_surveys', schema=None) as batch_op:
+            for name, col_type in missing:
+                batch_op.add_column(sa.Column(name, col_type, server_default='', nullable=False))
+
+    if 'site_category' not in _columns(conn, 'leads'):
+        op.execute("PRAGMA foreign_keys=ON")
+        return                                          # a previous attempt already finished this part
+
     leads = conn.execute(sa.text(
         "SELECT id, site_category, site_pincode, site_state, site_district, site_city, site_address "
         "FROM leads"
