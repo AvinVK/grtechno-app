@@ -4,6 +4,9 @@
 
 {% block page_title %}{{ page_title }}{% endblock %}
 {% block tabs %}{% with active = 'clients' %}{% include "_seg.html" %}{% endwith %}{% endblock %}
+{# A way back to Me only when there's no bottom nav to provide one (no Leads access) - otherwise Clients
+   is its own tab and the back chevron is redundant. #}
+{% block hub_back %}{% if not bottom_nav %}{{ super() }}{% endif %}{% endblock %}
 
 {% block content %}
 <main id="view" class="view" tabindex="-1" data-projects="{{ 1 if nav_modules|selectattr('key', 'equalto', 'projects')|list else 0 }}"><p class="loading">Loading clients…</p></main>

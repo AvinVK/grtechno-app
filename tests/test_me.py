@@ -102,14 +102,16 @@ def test_api_me_patch_requires_a_phone_key(client):
 
 
 def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
-    # Clients/Projects claim their own tab as current; every other pushed screen defaults to Me.
+    # Clients/Projects claim their own tab as current, and skip the back chevron since the tabs already
+    # get you back; every other pushed screen defaults to Me and keeps the chevron alongside the tabs.
     current_tab = {"/clients": '/clients" aria-current="page"', "/projects": '/projects" aria-current="page"'}
+    no_back = {"/clients", "/projects"}
     for who, url in ((client, "/attendance"), (admin_client, "/users"), (admin_client, "/workforce"),
                      (admin_client, "/attendance-sheet"), (admin_client, "/clients"), (admin_client, "/projects")):
         html = who.get(url).get_data(as_text=True)
         assert 'class="bottom-nav"' in html and current_tab.get(url, 'href="/me" aria-current="page"') in html, url
         assert 'href="/#active"' in html and "has-bottom-nav" in html, url
-        assert 'id="appbar-back"' in html, url                     # the appbar's own way back, alongside the tabs
+        assert ('id="appbar-back"' in html) == (url not in no_back), url
 
 
 def test_without_leads_other_pages_get_a_back_arrow_instead(manager_client):

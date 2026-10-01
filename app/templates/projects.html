@@ -4,6 +4,9 @@
 
 {% block page_title %}{{ page_title }}{% endblock %}
 {% block tabs %}{% with active = 'projects' %}{% include "_seg.html" %}{% endwith %}{% endblock %}
+{# A way back to Me only when there's no bottom nav to provide one (no Leads access) - otherwise Projects
+   is its own tab and the back chevron is redundant. #}
+{% block hub_back %}{% if not bottom_nav %}{{ super() }}{% endif %}{% endblock %}
 
 {% block actions %}
   <a class="btn primary appbar-primary" href="/projects#new">+ Project</a>
