@@ -1,24 +1,24 @@
 /* Leads - fire protection lead management.
-   "Cool slate": a transparent top bar over a cool slate-grey page, white cards on it. The accent is flame
-   red-orange; crimson (--signal) is kept for overdue and delete so it never reads as a plain action colour.
-   Radii come from three tokens: controls, cards and pills. */
+   "Warm stone": a warm, paper-like grey page (not a cool slate) under white-but-warm cards. The accent is
+   flame red-orange; crimson (--signal) is kept for overdue and delete so it never reads as a plain action
+   colour. Radii come from three tokens: controls, cards and pills. */
 
 :root {
-  --paper: #f1f3f5;
-  --panel: #ffffff;
-  --ink: #1b2128;
-  --muted: #5c6772;
-  --line: #dde2e7;
-  --line-strong: #c5ccd3;
-  --track: #e6eaee;
+  --paper: #e9e4dc;
+  --panel: #fffdf9;
+  --ink: #231f19;
+  --muted: #6b6255;
+  --line: #dad2c4;
+  --line-strong: #c7bcaa;
+  --track: #e1dac9;
 
-  --nav: #ffffff;
-  --nav-ink: #6b7682;
+  --nav: #fffdf9;
+  --nav-ink: #78705f;
   --nav-active: #c8261e;
 
   --accent: #d9391f;
   --accent-dark: #b42d16;
-  --accent-tint: #fbe3dc;
+  --accent-tint: #f6e1d5;
 
   --signal: #b3263a;
   --signal-tint: #f7dde1;
@@ -1373,7 +1373,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .me { display: grid; gap: 18px; max-width: 560px; margin: 0 auto; }
 
 /* Today: a dark card with the check-in state and its one button. */
-.me-today { display: grid; gap: 6px; padding: 16px 18px 18px; border-radius: var(--r-card); background: #1b2128; color: #fff; }
+.me-today { display: grid; gap: 6px; padding: 16px 18px 18px; border-radius: var(--r-card); background: var(--ink); color: #fff; }
 .me-today-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .me-today-label { font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; }
 .me-today-link {
