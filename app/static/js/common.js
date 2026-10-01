@@ -340,21 +340,22 @@ window.LD = (() => {
   }, { rootMargin: '-48px 0px 0px 0px' }).observe(sentinel);
 })();
 
-/* Pushed screens' "‹ Me" appbar back link, for a page whose own client-side routing goes deeper than one
-   level (a person's detail under Manpower & staff, say) - the nearer place (LD.setAppbarBack) is more
-   useful there than jumping straight back to Me, which is already one tap further via the link it
-   replaces. LD.resetAppbarBack puts it back once that page returns to its own top-level view. */
+/* Pushed screens' "‹" appbar back link (the label is spoken, not shown - see app.css), for a page whose
+   own client-side routing goes deeper than one level (a person's detail under Manpower & staff, say) -
+   the nearer place (LD.setAppbarBack) is more useful there than jumping straight back to Me, which is
+   already one tap further via the link it replaces. LD.resetAppbarBack puts it back once that page
+   returns to its own top-level view. */
 (() => {
   'use strict';
   const link = document.getElementById('appbar-back');
   if (!link) return;
-  const original = { text: link.textContent, href: link.getAttribute('href') };
+  const original = { label: link.getAttribute('aria-label'), href: link.getAttribute('href') };
   window.LD.setAppbarBack = (label, href) => {
-    link.textContent = `‹ ${label}`;
+    link.setAttribute('aria-label', `Back to ${label}`);
     link.setAttribute('href', href);
   };
   window.LD.resetAppbarBack = () => {
-    link.textContent = original.text;
+    link.setAttribute('aria-label', original.label);
     link.setAttribute('href', original.href);
   };
 })();

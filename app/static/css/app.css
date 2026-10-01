@@ -133,7 +133,8 @@ a { color: var(--accent-dark); }
 }
 /* Title, primary action and the back link all share this one row - see base.html. */
 .appbar-row { display: flex; align-items: center; gap: 10px; min-height: 44px; }
-.appbar-back { flex: none; display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; white-space: nowrap; }
+/* Just the chevron - the place it leads to is spoken (aria-label, see base.html/common.js), not shown. */
+.appbar-back { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; font-size: 26px; font-weight: 700; }
 .appbar.pushed .appbar-actions { flex: none; margin-left: 0; }
 .appbar.pushed .appbar-actions .btn { min-height: 40px; padding: 0 14px; font-size: 14px; white-space: nowrap; }
 .appbar-title-pushed { flex: 1; min-width: 0; margin: 0; font: 700 22px/1.2 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
