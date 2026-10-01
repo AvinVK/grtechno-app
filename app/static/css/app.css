@@ -1459,7 +1459,6 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .me-row:hover { background: var(--hover); }
 .me-row .sb-icon { color: var(--muted); }
 .me-chevron { margin-left: auto; color: var(--muted); font-size: 22px; line-height: 1; }
-.me-signout > .me-row { border: 0; color: var(--signal); }            /* a <button>: no border of its own */
 
 /* ---------- Clients & Projects: switch, grouping by area, rows ---------- */
 
