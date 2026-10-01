@@ -65,6 +65,28 @@ window.LD = (() => {
     toastTimer = setTimeout(hide, o.ms || (o.error ? 4500 : o.onAction ? 6000 : 2600));
   }
 
+  /* Makes the phone's back gesture/button close a custom overlay (confirm box, picker, the lead drawer...)
+     the same way tapping its own close control does, instead of leaving it open while the page underneath
+     navigates away. Call right after the overlay is shown, with its own no-argument-aware close function;
+     use the function this returns as that overlay's "I'm done" path everywhere (button clicks, outside
+     click, Escape) instead of the raw one - it's safe to call more than once or from both paths at once. */
+  let backSeq = 0;
+  function closeOnBack(rawFinish) {
+    const id = ++backSeq;
+    let settled = false;
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('popstate', onPop);
+      rawFinish(result);
+      if (history.state && history.state.ldOverlay === id) history.back();
+    }
+    function onPop() { finish(undefined); }
+    window.addEventListener('popstate', onPop);
+    history.pushState({ ldOverlay: id }, '', location.href);
+    return finish;
+  }
+
   /* An in-app "are you sure?" box, used instead of the browser's own popup. Resolves true or false.
      Cancel has the focus to begin with, so pressing Enter by mistake never confirms a delete. */
   function confirmBox(message, { ok = 'Yes', title = 'Confirm', danger = false } = {}) {
@@ -78,13 +100,13 @@ window.LD = (() => {
         titleEl, h('p', { id: 'confirm-message' }, message), h('div', { class: 'confirm-actions' }, cancelBtn, okBtn));
       const overlay = h('div', { class: 'confirm-overlay' }, card);
 
-      function finish(result) {
+      const finish = closeOnBack((result) => {
         window.removeEventListener('keydown', onKey, true);
         overlay.remove();
         if (!lockedBefore) document.body.classList.remove('locked');
         if (previous && previous.isConnected) previous.focus();
-        resolve(result);
-      }
+        resolve(result ?? false);
+      });
       function onKey(e) {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); return; }
         if (e.key === 'Tab') {                                            // keep focus inside the box
@@ -107,11 +129,11 @@ window.LD = (() => {
      value, or undefined if closed without choosing. `items` is [{value, label}, ...]. */
   function pickList(items, selectedValue, { title = 'Choose an option' } = {}) {
     return new Promise((resolve) => {
-      const finish = (result) => {
+      const finish = closeOnBack((result) => {
         window.removeEventListener('keydown', onKey);
         overlay.remove();
         resolve(result);
-      };
+      });
       const list = h('ul', { class: 'picker-list', role: 'radiogroup', 'aria-label': title });
       items.forEach((opt) => {
         const selected = String(selectedValue ?? '') === String(opt.value);
@@ -177,11 +199,11 @@ window.LD = (() => {
       const toIso = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const todayIso = toIso(today.getFullYear(), today.getMonth(), today.getDate());
 
-      const finish = (result) => {
+      const finish = closeOnBack((result) => {
         window.removeEventListener('keydown', onKey);
         overlay.remove();
         resolve(result);
-      };
+      });
       const grid = h('div', { class: 'cal-grid' });
       const monthLabel = h('span', { class: 'cal-month-label' });
       const prevBtn = h('button', { type: 'button', class: 'cal-nav', 'aria-label': 'Previous month' }, '‹');
@@ -319,7 +341,7 @@ window.LD = (() => {
 
   return {
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
-    pickList, selectField, pickDate, dateField,
+    pickList, selectField, pickDate, dateField, closeOnBack,
   };
 })();
 

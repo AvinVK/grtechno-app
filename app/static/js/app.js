@@ -261,7 +261,7 @@
         h('div', { class: 'filter-modal-body' }, catList, optionsPane),
         h('div', { class: 'confirm-actions' }, exportLink, doneBtn));
       const overlay = h('div', { class: 'confirm-overlay filter-overlay', onclick: (e) => { if (e.target === overlay) finish(); } }, card);
-      function finish() { overlay.remove(); resolve(); }
+      const finish = LD.closeOnBack(() => { overlay.remove(); resolve(); });
       doneBtn.onclick = finish;
       window.addEventListener('keydown', function onKey(e) {
         if (e.key !== 'Escape') return;
@@ -511,6 +511,11 @@
   const drawer = $('#drawer');
   const overlay = $('#overlay');
 
+  // closeDrawer is passed around as a stable callback (buildLeadForm's onSaved, the overlay's click
+  // listener, swipeToClose...), so it can never itself be swapped out - the back-gesture hookup instead
+  // lives in this one flag, set each time a drawer opens and consulted each time one closes.
+  let drawerPopHandler = null;
+
   function openDrawer(id) {
     const lead = S.leads.find((l) => l.id === id);
     if (!lead) return;
@@ -522,9 +527,12 @@
     document.body.classList.add('locked');
     $('#drawer-title').focus();
     loadActivity(lead.id);
+    drawerPopHandler = () => closeDrawer(true);
+    window.addEventListener('popstate', drawerPopHandler);
+    history.pushState({ ldOverlay: 'drawer' }, '', location.href);
   }
 
-  function closeDrawer() {
+  function closeDrawer(fromPopstate) {
     if (openId === undefined) return;
     openId = undefined;
     drawer.hidden = true;
@@ -532,6 +540,13 @@
     overlay.hidden = true;
     document.body.classList.remove('locked');
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+    if (drawerPopHandler) {
+      window.removeEventListener('popstate', drawerPopHandler);
+      drawerPopHandler = null;
+      // closeDrawer is also used directly as a DOM event handler (the overlay's click, the × button), so
+      // an Event object can land here as this argument - only the popstate path itself passes true.
+      if (fromPopstate !== true) history.back();
+    }
   }
 
   function buildLeadForm(lead, onSaved) {
@@ -1117,11 +1132,11 @@
       cancel);
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' }, card);
     function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); finish(); } }
-    function finish() {
+    const finish = LD.closeOnBack(() => {
       window.removeEventListener('keydown', onKey, true);
       overlay.remove();
       if (previous && previous.isConnected) previous.focus();
-    }
+    });
     cancel.onclick = finish;
     overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(); });
     window.addEventListener('keydown', onKey, true);
