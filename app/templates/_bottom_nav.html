@@ -15,9 +15,9 @@
     <span>Clients</span>
   </a>
   {% endif %}
-  <a class="bottom-nav-item add" href="{{ leads_url }}#add" data-view="add">
+  <a class="bottom-nav-item add" href="{{ leads_url }}#add" data-view="add" aria-label="Add lead">
     <span class="add-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
-    <span class="visually-hidden">Add lead</span>
+    <span aria-hidden="true">Add lead</span>
   </a>
   {% if nav_modules|selectattr('key', 'equalto', 'projects')|list %}
   <a class="bottom-nav-item" href="{{ url_for('projects.page') }}"{% if request.endpoint == 'projects.page' %} aria-current="page"{% endif %}>

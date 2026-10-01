@@ -515,7 +515,7 @@ a.stat:hover, button.stat:hover { border-color: var(--line-strong); cursor: poin
 .bottom-nav-item svg { width: 22px; height: 22px; }
 .bottom-nav-item span { letter-spacing: 0.02em; white-space: nowrap; }
 .bottom-nav-item[aria-current="page"] { color: var(--nav-active); }
-/* Add: a raised tile in the middle of the bar, its label read out but not shown. */
+/* Add: a raised tile in the middle of the bar, its circle poking up above the others. */
 .bottom-nav-item.add { justify-content: flex-start; }
 .add-tile {
   display: grid;
