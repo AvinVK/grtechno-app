@@ -369,6 +369,18 @@
         h('dt', {}, 'Negotiated amount'), ovNegotiated,
         h('dt', {}, 'Advance payment'), ovAdvance,
         h('dt', {}, 'Remaining'), ovRemaining));
+
+    // A quick read of how each step was actually paid - mode, date, any note - as it stands saved on the
+    // server, separate from the edit fields below (which only reflect the server once Save is pressed).
+    const paidSteps = P.payments.filter((p) => p.mode || p.paid_date || p.comments);
+    const payReceipts = paidSteps.length ? h('div', { class: 'pay-receipts' },
+      paidSteps.map((p) => h('div', { class: 'pay-receipt' },
+        h('p', { class: 'pay-receipt-head' },
+          h('span', {}, p.label), h('span', {}, money(p.amount, cur))),
+        h('p', { class: 'pay-receipt-meta' },
+          [p.mode, p.paid_date ? fmtDate(p.paid_date) : null].filter(Boolean).join(' · ')),
+        p.comments ? h('p', { class: 'pay-receipt-comments' }, p.comments) : null))) : null;
+
     const payRows = h('div', { class: 'pay-rows' });
     const paySummary = h('p', { class: 'pay-summary', 'aria-live': 'polite' });
     const payErr = h('p', { class: 'err', id: 'err-payments', role: 'alert' });
@@ -465,6 +477,7 @@
       h('section', { class: 'p-section' },
         h('h3', {}, 'Payment timeline'),
         payOverview,
+        payReceipts,
         h('p', { class: 'hint' }, 'Split the net amount into steps, each tied to its own site milestone.'),
         payRows,
         payErr,

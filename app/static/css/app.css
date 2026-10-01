@@ -978,6 +978,13 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-overview-grid dt { color: var(--muted); }
 .pay-overview-grid dd { margin: 0; text-align: right; font-weight: 600; font-family: var(--font-num); }
 
+/* How each step was actually paid, read straight off what's saved - a receipt, not another editable row. */
+.pay-receipts { display: grid; gap: 10px; margin-bottom: 14px; }
+.pay-receipt { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-control); }
+.pay-receipt-head { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-weight: 600; }
+.pay-receipt-meta { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.pay-receipt-comments { margin: 4px 0 0; font-size: 14px; overflow-wrap: anywhere; }
+
 .pay-rows { display: grid; gap: 16px; }
 .pay-row {
   display: grid;
