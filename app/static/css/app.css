@@ -46,7 +46,7 @@
   --r-control: 10px;
   --r-card: 14px;
   --r-pill: 999px;
-  --hover: #f6f8fa;
+  --hover: color-mix(in srgb, var(--ink) 6%, var(--panel));
   --focus: color-mix(in srgb, var(--accent) 40%, transparent);
   --tap: 48px;
   --gap: 16px;
@@ -873,6 +873,36 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
   display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
   background: var(--accent-tint); color: var(--accent-dark); font: 600 14px/1 var(--font-display);
 }
+
+/* The avatar's own menu (View profile / Sign out) - position:fixed, computed fresh on each open, so it's
+   never clipped by an ancestor's overflow:hidden and follows the button if the layout shifts. */
+.profile-menu-wrap { position: relative; }
+.profile-menu {
+  position: fixed;
+  min-width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  box-shadow: 0 10px 30px rgba(27, 33, 40, 0.14);
+  padding: 6px;
+  z-index: 50;
+}
+.profile-menu-item {
+  background: none;
+  border: 0;
+  text-align: left;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-control);
+  font: 600 14px/1.2 var(--font-body);
+  color: var(--ink);
+  cursor: pointer;
+}
+.profile-menu-item:hover { background: var(--hover); }
+.profile-menu-item-danger { color: var(--signal); }
 
 .sb-icon { flex: none; width: 24px; height: 24px; }
 .sb-empty { margin: 8px; color: var(--muted); }

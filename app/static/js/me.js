@@ -16,7 +16,9 @@
   }
 })();
 
-/* The avatar button in the top bar: a menu for View profile / Sign out. View profile shows the read-only
+/* The avatar button in the top bar: a small menu anchored under it (View profile / Sign out), not a
+   full-screen picker - there are only two options, and this reads at a glance as "the account menu"
+   instead of looking like a list of equal choices to pick from. View profile shows the read-only
    name/userid/designation and the one thing a person can change about themselves here - their own phone
    number, so it's on hand for teammates without an admin having to set it up front. */
 (() => {
@@ -24,7 +26,8 @@
 
   const btn = document.getElementById('profile-btn');
   if (!btn) return;
-  const { h, api, toast, pickList, field, showFieldErrors } = window.LD;
+  const { h, api, toast, closeOnBack, field, showFieldErrors } = window.LD;
+  const menu = document.getElementById('profile-menu');
 
   async function openProfile() {
     let me;
@@ -69,12 +72,40 @@
     phoneInput.focus();
   }
 
-  btn.addEventListener('click', async () => {
-    const choice = await pickList(
-      [{ value: 'profile', label: 'View profile' }, { value: 'signout', label: 'Sign out' }],
-      undefined, { title: 'Account' },
-    );
-    if (choice === 'profile') openProfile();
-    else if (choice === 'signout') document.getElementById('signout-form').requestSubmit();
+  // position:fixed (not CSS-anchored absolute), computed fresh on each open, so the menu is never clipped
+  // by an ancestor's overflow:hidden and follows the button if the layout shifted since last time.
+  let finishMenu = null;
+  function openMenu() {
+    const rect = btn.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 8}px`;
+    menu.style.right = `${window.innerWidth - rect.right}px`;
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    finishMenu = closeOnBack(() => {
+      menu.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+    });
+  }
+  function closeMenu() {
+    if (menu.hidden || !finishMenu) return;
+    finishMenu();
+    finishMenu = null;
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu.hidden) openMenu(); else closeMenu();
   });
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openMenu(); }
+  });
+  document.getElementById('profile-menu-view-btn').addEventListener('click', () => { closeMenu(); openProfile(); });
+  document.getElementById('profile-menu-signout-btn').addEventListener('click', () => {
+    closeMenu();
+    document.getElementById('signout-form').requestSubmit();
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) closeMenu();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 })();
