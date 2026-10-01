@@ -39,9 +39,9 @@
   --st-won: #1f7a5e;
   --st-lost: #8a939c;
 
-  --font-body: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-num: "DM Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-body: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
 
   --r-control: 10px;
   --r-card: 14px;
