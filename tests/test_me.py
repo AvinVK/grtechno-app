@@ -102,10 +102,12 @@ def test_api_me_patch_requires_a_phone_key(client):
 
 
 def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
+    # Clients/Projects claim their own tab as current; every other pushed screen defaults to Me.
+    current_tab = {"/clients": '/clients" aria-current="page"', "/projects": '/projects" aria-current="page"'}
     for who, url in ((client, "/attendance"), (admin_client, "/users"), (admin_client, "/workforce"),
                      (admin_client, "/attendance-sheet"), (admin_client, "/clients"), (admin_client, "/projects")):
         html = who.get(url).get_data(as_text=True)
-        assert 'class="bottom-nav"' in html and 'href="/me" aria-current="page"' in html, url
+        assert 'class="bottom-nav"' in html and current_tab.get(url, 'href="/me" aria-current="page"') in html, url
         assert 'href="/#active"' in html and "has-bottom-nav" in html, url
         assert 'id="appbar-back"' in html, url                     # the appbar's own way back, alongside the tabs
 
@@ -118,7 +120,7 @@ def test_without_leads_other_pages_get_a_back_arrow_instead(manager_client):
 
 def test_hub_keeps_the_bottom_tabs_leading_back_into_leads(client):
     html = client.get("/me").get_data(as_text=True)
-    for view in ("active", "closed", "add", "status"):
+    for view in ("active", "add"):
         assert f'href="/#{view}"' in html
     assert 'href="/me" aria-current="page"' in html and "has-bottom-nav" in html
 

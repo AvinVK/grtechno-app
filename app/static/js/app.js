@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const VIEWS = ['active', 'add', 'closed', 'status'];
+  const VIEWS = ['active', 'add'];
   const CLOSED_STAGES = ['Won', 'Lost'];
   const STAGE_ORDER = ['New enquiry', 'Site survey', 'Quote sent', 'Negotiation', 'Work order & advance'];
 
@@ -21,10 +21,11 @@
   let view = 'active';
   let openId;                   // undefined = drawer closed, otherwise the id of the open lead
   let lastFocus = null;
-  const filters = {
-    active: { q: '', stage: '', area: '', service: '', source: '', from: '', to: '' },
-    closed: { q: '', stage: '' },
-  };
+  // One list now covers everything - Won and Lost are just two more stage chips rather than a separate
+  // tab, so there's one filter state instead of a per-tab one.
+  const filters = { leads: { q: '', stage: '', area: '', service: '', source: '', from: '', to: '' } };
+  // Collapsed by default so Active still opens straight to the follow-up list; expand for the dashboard.
+  let statusOpen = false;
 
   const { $, h, clear, api, toast, plural, selectField, dateField } = window.LD;
 
@@ -97,15 +98,17 @@
 
   /* ---------- summary and navigation ---------- */
 
-  // Set by the overdue card's "Open": after switching to Active, scroll to the Overdue group.
+  // Set by the overdue card's "Open": scroll to the Overdue group once the list below re-renders.
   let scrollToGroup = null;
 
-  function statusView() {
+  // The old Status tab's dashboard, now a collapsible section above the list instead of its own tab -
+  // Won/Lost and "your status" were never different destinations, just different views of the same
+  // pipeline. `goToStage` points a tile at a stage chip (null clears it, i.e. "All") instead of a hash.
+  function statusSummary(goToStage) {
     const s = S.summary;
     const open = S.leads.filter(isOpen);
     const openValue = open.reduce((sum, l) => sum + (l.est_value || 0), 0);
 
-    // Hero: the whole open pipeline, with a bar split by how many leads sit at each open stage.
     const byStage = S.open_stages.map((stage) => ({ stage, n: open.filter((l) => l.stage === stage).length }));
     const bar = h('div', { class: 'hero-bar', 'aria-hidden': 'true' },
       byStage.filter((b) => b.n).map((b) => {
@@ -124,9 +127,9 @@
     // Overdue follow-ups, if any: how many, and the one that has waited longest.
     const overdue = open.filter((l) => l.follow_up_date && l.follow_up_date < S.today)
       .sort((a, b) => a.follow_up_date.localeCompare(b.follow_up_date));
-    const overdueCard = overdue.length ? h('a', {
-      class: 'status-alert', href: '#active',
-      onclick: () => { filters.active.stage = ''; scrollToGroup = 'overdue'; },
+    const overdueCard = overdue.length ? h('button', {
+      class: 'status-alert', type: 'button',
+      onclick: () => { scrollToGroup = 'overdue'; goToStage(null); },
     },
     h('span', { class: 'alert-count' }, overdue.length),
     h('span', { class: 'alert-text' },
@@ -138,15 +141,17 @@
     const dueToday = open.filter((l) => l.follow_up_date === S.today).length;
     const weekStart = addDays(S.today, -((parseISO(S.today).getUTCDay() + 6) % 7));
     const newThisWeek = S.leads.filter((l) => l.created_at.slice(0, 10) >= weekStart).length;
-    const tile = (label, value, note, href) => {
+    const tile = (label, value, note, onclick) => {
       const body = [h('span', { class: 'stat-label' }, label), h('span', { class: 'stat-value' }, value),
         note ? h('span', { class: 'stat-note' }, note) : null];
-      return href ? h('a', { class: 'stat', href }, body) : h('div', { class: 'stat' }, body);
+      return onclick ? h('button', { class: 'stat', type: 'button', onclick }, body) : h('div', { class: 'stat' }, body);
     };
     const grid = h('div', { class: 'status-grid' },
-      tile('Due today', String(dueToday), s.due_count > dueToday ? `${s.due_count} due incl. overdue` : 'Follow-ups', '#active'),
+      tile('Due today', String(dueToday), s.due_count > dueToday ? `${s.due_count} due incl. overdue` : 'Follow-ups',
+        () => { scrollToGroup = dueToday ? 'today' : 'overdue'; goToStage(null); }),
       tile('New this week', String(newThisWeek), 'Leads added since Monday'),
-      tile('Won this month', String(s.won_month_count), s.won_month_count ? `Worth ${fmtCompact(s.won_month_value)}` : 'No wins yet', '#closed'),
+      tile('Won this month', String(s.won_month_count), s.won_month_count ? `Worth ${fmtCompact(s.won_month_value)}` : 'No wins yet',
+        () => goToStage('Won')),
       tile('Win rate', s.win_rate === null ? '—' : `${s.win_rate}%`, s.win_rate === null ? 'No closed leads yet' : 'Of all closed leads'));
 
     return h('div', { class: 'status-cards' },
@@ -157,7 +162,7 @@
         S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads'));
   }
 
-  const VIEW_TITLE = { active: 'Active leads', closed: 'Won / Lost', add: 'New lead', status: 'Your status' };
+  const VIEW_TITLE = { active: 'Active leads', add: 'New lead' };
 
   function renderNav() {
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
@@ -181,8 +186,7 @@
   }
 
   function renderMain() {
-    const screens = { status: statusView, add: addView };
-    clear($('#view')).append(screens[view] ? screens[view]() : listView(view));
+    clear($('#view')).append(view === 'add' ? addView() : listView());
     if (view === 'active' && scrollToGroup) {
       $(`#view .group-${scrollToGroup}`)?.scrollIntoView({ block: 'start' });
       scrollToGroup = null;
@@ -321,17 +325,30 @@
   const closedMonth = (l) => (l.closed_at ? l.closed_at.slice(0, 7) : '');
   const monthLabel = (ym) => (ym ? `${MONTH_NAMES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}` : 'No closing date');
 
-  function listView(kind) {
-    const isActive = kind === 'active';
-    const stages = isActive ? S.open_stages : CLOSED_STAGES;
-    const f = filters[kind];
-    const pool = S.leads.filter((l) => stages.includes(l.stage));
+  // The one Leads list - what used to be three tabs (Active, Won/Lost, Status). Won and Lost are two more
+  // stage chips rather than a separate screen; "All" still means the open pipeline, same as the old
+  // Active tab's All did, so picking Won or Lost is always an explicit choice, not something "All" buries
+  // leads in. The status dashboard collapses above the list instead of living on its own tab.
+  function listView() {
+    const f = filters.leads;
+    const isClosed = f.stage === 'Won' || f.stage === 'Lost';
+    const pool = isClosed ? S.leads.filter((l) => l.stage === f.stage) : S.leads.filter(isOpen);
 
     const wrap = h('div', { class: 'lead-list' });
+    const summaryBox = h('div', {});
     const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter by stage' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
     const activeFilters = h('div', { class: 'active-filters' });
     const results = h('div', { class: 'lead-groups' });
+
+    function renderSummary() {
+      clear(summaryBox).append(h('details', {
+        class: 'status-summary', open: statusOpen || undefined,
+        ontoggle: (e) => { statusOpen = e.target.open; },
+      },
+      h('summary', { class: 'status-summary-title' }, 'Status'),
+      statusSummary((stage) => { f.stage = stage || ''; renderChips(); refresh(); })));
+    }
 
     const search = h('input', {
       type: 'search', placeholder: 'Search name, phone, site, notes', 'aria-label': 'Search leads',
@@ -341,8 +358,9 @@
     const searchRow = h('div', { class: 'search-row' }, search);
 
     // Area/service/source/date filters - mainly useful for triaging fresh New enquiry leads, but they
-    // apply across whichever stage chip is selected on the Active tab. Picked in a popup (openFilterPicker)
-    // rather than shown inline; the ones in use show as removable chips under the count.
+    // apply across whichever open-stage chip is selected; Won/Lost have no use for them, same as the old
+    // Won/Lost tab never had them. Picked in a popup (openFilterPicker) rather than shown inline; the
+    // ones in use show as removable chips under the count.
     let filterButton = null;
     let areas = [];
     const filterCount = () => [f.area, f.service, f.source, f.from || f.to].filter(Boolean).length;
@@ -351,10 +369,10 @@
       const n = filterCount();
       clear(filterButton).append(...[icon(...FILTER_ICON), 'Filters', n ? h('span', { class: 'filter-count' }, n) : null].filter(Boolean));
     }
-    if (isActive) {
+    if (!isClosed) {
       areas = [...new Set(pool.map((l) => l.survey?.site_district).filter(Boolean))].sort();
-      // A filter left over from an earlier visit (this view's state persists across tab switches) can
-      // point at a value that no longer applies here - drop it instead of silently hiding everything.
+      // A filter left over from an earlier visit (this state persists across stage chips) can point at a
+      // value that no longer applies here - drop it instead of silently hiding everything.
       if (f.area && !areas.includes(f.area)) f.area = '';
       if (f.service && !S.settings.services.includes(f.service)) f.service = '';
       if (f.source && !S.settings.sources.includes(f.source)) f.source = '';
@@ -370,7 +388,7 @@
 
     function renderActiveFilters() {
       clear(activeFilters);
-      if (!isActive) return;
+      if (isClosed) return;
       const range = (f.from || f.to) ? `${f.from ? fmtDate(f.from) : '…'} – ${f.to ? fmtDate(f.to) : '…'}` : '';
       [['area', f.area], ['service', f.service], ['source', f.source], ['date', range]].forEach(([key, text]) => {
         if (!text) return;
@@ -387,7 +405,10 @@
 
     function renderChips() {
       clear(chips);
-      const options = [['', 'All', pool.length], ...stages.map((s) => [s, s, pool.filter((l) => l.stage === s).length])];
+      const openPool = S.leads.filter(isOpen);
+      const options = [['', 'All', openPool.length],
+        ...S.open_stages.map((s) => [s, s, openPool.filter((l) => l.stage === s).length]),
+        ...CLOSED_STAGES.map((s) => [s, s, S.leads.filter((l) => l.stage === s).length])];
       for (const [value, label, n] of options) {
         const short = SHORT_STAGE[label];
         chips.append(h('button', {
@@ -408,7 +429,7 @@
       const q = f.q.trim().toLowerCase();
       const items = pool.filter((l) => {
         if (f.stage && l.stage !== f.stage) return false;
-        if (isActive) {
+        if (!isClosed) {
           if (f.area && l.survey?.site_district !== f.area) return false;
           if (f.service && !(l.services.includes(f.service) || l.service === f.service)) return false;
           if (f.source && l.source !== f.source) return false;
@@ -422,45 +443,47 @@
           sv.site_address, sv.site_category, serviceLabel(l), l.notes]
           .some((v) => (v || '').toLowerCase().includes(q));
       });
-      items.sort(isActive ? byFollowUp : (a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
+      items.sort(isClosed ? (a, b) => (b.closed_at || '').localeCompare(a.closed_at || '') : byFollowUp);
 
-      count.textContent = `${plural(items.length, 'lead', 'leads')} · ${isActive ? 'by follow-up' : 'by closing date'}`;
+      count.textContent = `${plural(items.length, 'lead', 'leads')} · ${isClosed ? 'by closing date' : 'by follow-up'}`;
       renderActiveFilters();
       clear(results);
       if (!items.length) {
         results.append(pool.length
           ? emptyState('No leads match this search.')
-          : isActive
-            ? emptyState('No active leads yet.', h('a', { class: 'btn primary', href: '#add' }, 'Add lead'))
-            : emptyState('Nothing won or lost yet. Open a lead and tap Mark won or Mark lost.'));
+          : isClosed
+            ? emptyState('Nothing won or lost yet. Open a lead and tap Mark won or Mark lost.')
+            : emptyState('No active leads yet.', h('a', { class: 'btn primary', href: '#add' }, 'Add lead')));
         return;
       }
 
-      // Active: grouped by how urgent the follow-up is. Won / Lost: by the month it closed, newest first.
-      const groups = isActive
-        ? FOLLOW_GROUPS.map((g) => ({ ...g, items: items.filter((l) => followBucket(l) === g.key) }))
-        : [...new Set(items.map(closedMonth))].map((ym) => ({ key: 'month', label: monthLabel(ym), items: items.filter((l) => closedMonth(l) === ym) }));
+      // Open stages: grouped by how urgent the follow-up is. Won / Lost: by the month it closed, newest first.
+      const groups = isClosed
+        ? [...new Set(items.map(closedMonth))].map((ym) => ({ key: 'month', label: monthLabel(ym), items: items.filter((l) => closedMonth(l) === ym) }))
+        : FOLLOW_GROUPS.map((g) => ({ ...g, items: items.filter((l) => followBucket(l) === g.key) }));
       groups.filter((g) => g.items.length).forEach((g) => results.append(h('section', { class: 'lead-group' },
         h('h3', { class: `group-head group-${g.key}` }, g.label, h('span', { class: 'group-count' }, g.items.length)),
-        h('ul', { class: 'card-group rows' }, g.items.map((l) => h('li', {}, leadRow(l, isActive)))))));
+        h('ul', { class: 'card-group rows' }, g.items.map((l) => h('li', {}, leadRow(l, !isClosed)))))));
     }
 
     // Column headers for the wide-screen row layout only - the phone layout below 820px stacks each
     // row's pieces instead, where a header naming six "columns" wouldn't line up with anything.
     const rowHead = h('div', { class: 'row-head', 'aria-hidden': 'true' },
       h('span', {}, 'Lead'), h('span', {}, 'Service'), h('span', {}, 'Stage'),
-      h('span', {}, 'Value / round'), h('span', {}, 'Follow-up'), isActive ? h('span', {}, 'Added') : null);
+      h('span', {}, 'Value / round'), h('span', {}, 'Follow-up'), !isClosed ? h('span', {}, 'Added') : null);
 
     wrap.append(...[
+      summaryBox,
       searchRow,
       chips,
       h('div', { class: 'list-meta' }, count, filterButton),
       activeFilters,
       rowHead,
       results].filter(Boolean));
-    if (!isActive) {
+    if (isClosed) {
       wrap.append(h('p', { class: 'export-note' }, h('a', { href: $('#view').dataset.exportUrl }, 'Export all leads as CSV')));
     }
+    renderSummary();
     renderChips();
     refresh();
     return wrap;

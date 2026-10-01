@@ -1,26 +1,33 @@
-{# The bottom tabs, on every signed-in page for people with the Leads service (base.html). On the Leads
-   page (leads_url '') they switch views in place and app.js keeps the current tab and the due badge up to
-   date; on any other page they lead back into Leads, the badge comes from the server (due_count), and Me
-   shows as the current tab - those pages are all reached from the hub. #}
+{# The bottom tabs, on every signed-in page for people with the Leads service (base.html). Active and Add
+   switch the Leads app's own views in place (app.js keeps the current tab and the due badge up to date);
+   Clients, Projects and Me are their own pages, so "current" there is worked out here from the endpoint.
+   Clients/Projects only show for a role that actually has those modules - same check _seg.html uses - so
+   there's never a tab here that just 403s. #}
 <nav class="bottom-nav" aria-label="Main">
-  <a class="bottom-nav-item" href="{{ leads_url }}#active" data-view="active" aria-label="Active leads">
+  <a class="bottom-nav-item" href="{{ leads_url }}#active" data-view="active" aria-label="Active leads"{% if request.endpoint == 'views.index' %} aria-current="page"{% endif %}>
     <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
     <span aria-hidden="true">Active</span>
     <b class="nav-badge"{% if not due_count %} hidden{% endif %}>{{ due_count or '' }}</b>
   </a>
-  <a class="bottom-nav-item" href="{{ leads_url }}#closed" data-view="closed">
-    <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-    <span>Won / Lost</span>
+  {% if nav_modules|selectattr('key', 'equalto', 'clients')|list %}
+  <a class="bottom-nav-item" href="{{ url_for('clients.page') }}"{% if request.endpoint == 'clients.page' %} aria-current="page"{% endif %}>
+    <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V7l8-4v18"/><path d="M11 9l10 4v8"/><path d="M2 21h20M7 9h.01M7 13h.01M7 17h.01M16 17h.01M16 13h.01"/></svg></span>
+    <span>Clients</span>
   </a>
+  {% endif %}
   <a class="bottom-nav-item add" href="{{ leads_url }}#add" data-view="add">
     <span class="add-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
     <span class="visually-hidden">Add lead</span>
   </a>
-  <a class="bottom-nav-item" href="{{ leads_url }}#status" data-view="status" aria-label="Your status">
-    <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
-    <span aria-hidden="true">Status</span>
+  {% if nav_modules|selectattr('key', 'equalto', 'projects')|list %}
+  <a class="bottom-nav-item" href="{{ url_for('projects.page') }}"{% if request.endpoint == 'projects.page' %} aria-current="page"{% endif %}>
+    <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13h8"/></svg></span>
+    <span>Projects</span>
   </a>
-  <a class="bottom-nav-item" href="{{ url_for('me.page') }}"{% if request.endpoint != 'views.index' %} aria-current="page"{% endif %}>
+  {% endif %}
+  {# Every other pushed screen (attendance, users, workforce...) is reached from the Me hub too, so it stays
+     "current" there by default - only Active/Clients/Projects claim their own tab explicitly. #}
+  <a class="bottom-nav-item" href="{{ url_for('me.page') }}"{% if request.endpoint not in ('views.index', 'clients.page', 'projects.page') %} aria-current="page"{% endif %}>
     <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
     <span>Me</span>
   </a>
