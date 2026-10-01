@@ -134,7 +134,8 @@ def test_project_details_validation_and_payment_schedule(client, admin_client):
         "completion_days": 90, "discount_amount": 50000, "status": "running",
         "payment_terms": "30% advance", "special_terms": "Site access by 8 am",
         "payments": [
-            {"label": "Advance", "amount": 300000, "due_date": "2026-09-05"},
+            {"label": "Advance", "amount": 300000, "due_date": "2026-09-05",
+             "mode": "Bank transfer", "paid_date": "2026-09-04", "comments": "Paid by the client's office"},
             {"label": "On delivery", "amount": 400000, "due_date": None},
         ]})
     assert ok.status_code == 200
@@ -142,6 +143,9 @@ def test_project_details_validation_and_payment_schedule(client, admin_client):
     assert p["work_order_no"] == "WO/2026/041" and p["start_date"] == "2026-09-15" and p["completion_days"] == 90
     assert p["net_amount"] == 950000 and p["status"] == "running"
     assert [x["label"] for x in p["payments"]] == ["Advance", "On delivery"] and p["payments"][0]["due_date"] == "2026-09-05"
+    assert p["payments"][0]["mode"] == "Bank transfer" and p["payments"][0]["paid_date"] == "2026-09-04"
+    assert p["payments"][0]["comments"] == "Paid by the client's office"
+    assert p["payments"][1]["mode"] == "" and p["payments"][1]["paid_date"] is None     # left blank: fine, not required
 
     replaced = admin_client.patch(url, json={"payments": [{"label": "Final", "amount": 950000}]}).get_json()["project"]
     assert [x["label"] for x in replaced["payments"]] == ["Final"]                           # the schedule is replaced, not added to
@@ -159,6 +163,7 @@ def test_project_details_validation_and_payment_schedule(client, admin_client):
     assert "payments" in bad({"payments": [{"label": "Too much", "amount": 960000}]})       # more than the net amount
     assert "payments" in bad({"payments": [{"label": "", "amount": 1}]})
     assert "payments" in bad({"payments": "nope"})
+    assert "payments" in bad({"payments": [{"label": "Advance", "amount": 1, "mode": "Bitcoin"}]})
     assert "site_pincode" in bad({"site_pincode": "4110"})
 
 

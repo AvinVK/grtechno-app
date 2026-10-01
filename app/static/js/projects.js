@@ -391,6 +391,14 @@
         type: 'text', class: 'pay-milestone', maxlength: 120,
         placeholder: 'Milestone, for example: Material delivery, Site handover', 'aria-label': 'Milestone', value: p.label ?? '',
       });
+      const modeSel = selectField(
+        [{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
+        p.mode || '', { title: 'Mode of payment', placeholder: 'Mode of payment' });
+      modeSel.classList.add('pay-mode');
+      const paidDateInput = dateField(p.paid_date || '', { placeholder: 'Date of payment' });
+      paidDateInput.classList.add('pay-paid-date');
+      const commentsInput = h('textarea', { class: 'pay-comments', rows: 2, placeholder: 'Comments', 'aria-label': 'Comments' });
+      commentsInput.value = p.comments ?? '';
       const row = h('div', { class: 'pay-row' },
         labelEl,
         milestoneInput,
@@ -398,7 +406,8 @@
         h('button', {
           class: 'icon-x', type: 'button', 'aria-label': 'Remove this payment step',
           onclick: () => { row.remove(); payErr.textContent = ''; renumberPayRows(); recalc(); },
-        }, '×'));
+        }, '×'),
+        modeSel, paidDateInput, commentsInput);
       row._labelEl = labelEl;
       payRows.append(row);
     }
@@ -410,6 +419,9 @@
     const payments = () => [...payRows.querySelectorAll('.pay-row')].map((r, i) => ({
       label: r.querySelector('.pay-milestone').value.trim() || labelFor(i),
       amount: r.querySelector('.pay-amount').value === '' ? 0 : r.querySelector('.pay-amount').value,
+      mode: r.querySelector('.pay-mode').value,
+      paid_date: r.querySelector('.pay-paid-date').value || null,
+      comments: r.querySelector('.pay-comments').value.trim(),
     }));
 
     function recalc() {

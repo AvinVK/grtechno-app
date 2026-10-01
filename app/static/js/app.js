@@ -901,7 +901,9 @@
         wrapField('work_order_date', 'Work order date', dateField(L.work_order_date), '', true),
         wrapField('advance_amount', `Advance received (${S.settings.currency})`,
           text('number', L.advance_amount, { min: '0', step: 'any', inputmode: 'decimal' }), '', true),
-        wrapField('advance_date', 'Advance date', dateField(L.advance_date), '', true));
+        wrapField('advance_date', 'Date of payment', dateField(L.advance_date), '', true),
+        wrapField('advance_mode', 'Mode of payment', choice(S.payment_modes, L.advance_mode, 'Choose how it was paid'), '', true),
+        wrapField('advance_comments', 'Comments', area(2, L.advance_comments), 'wide'));
       workOrderSectionNode = h('details', { class: `stage-section${negotiationFinalized ? '' : ' locked'}`, open: negotiationFinalized && expand === 4 },
         h('summary', { class: 'stage-section-title' }, 'Work order & advance'),
         h('div', { class: 'stage-section-body' }, workOrderFields));
@@ -909,14 +911,14 @@
       if (!negotiationFinalized) {
         // Nothing here can be entered before a negotiation round is finalized - lock the fields and
         // explain why, same as the quote section does while the survey is still open.
-        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date'].forEach((name) => { inputs[name].disabled = true; });
+        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode', 'advance_comments'].forEach((name) => { inputs[name].disabled = true; });
         workOrderSectionNode.querySelector('summary').addEventListener('click', (e) => {
           e.preventDefault();
           toast('Finalize a negotiation round first', true);
         });
       } else if (isPastStage('Work order & advance')) {
         // The lead is Won or Lost - viewable, but read only, same as the earlier stages once passed.
-        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date'].forEach((name) => { inputs[name].disabled = true; });
+        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode', 'advance_comments'].forEach((name) => { inputs[name].disabled = true; });
       } else if (lead.stage === 'Negotiation' && !lead.work_order_no) {
         const woInput = inputs.work_order_no;
         const updateSaveLabel = () => {
@@ -1018,11 +1020,12 @@
           }
           // Work order & advance: same all-or-nothing rule, once negotiation has been finalized.
           if (!isNew && !inputs.work_order_no.disabled
-            && (body.work_order_no || body.work_order_date || body.advance_amount !== null || body.advance_date || lead.work_order_no)) {
+            && (body.work_order_no || body.work_order_date || body.advance_amount !== null || body.advance_date || body.advance_mode || lead.work_order_no)) {
             if (!body.work_order_no) missing.work_order_no = 'This field is required';
             if (!body.work_order_date) missing.work_order_date = 'This field is required';
             if (body.advance_amount === null) missing.advance_amount = 'This field is required';
             if (!body.advance_date) missing.advance_date = 'This field is required';
+            if (!body.advance_mode) missing.advance_mode = 'This field is required';
           }
           const stageOk = requireFilled([...surveyCheck(), ...negotiationCheck()]);
           if (Object.keys(missing).length || !stageOk) {

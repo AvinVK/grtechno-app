@@ -87,6 +87,8 @@ class Lead(db.Model):
     work_order_date = db.Column(db.Date, nullable=True)
     advance_amount = db.Column(db.Numeric(14, 2), nullable=True)
     advance_date = db.Column(db.Date, nullable=True)
+    advance_mode = db.Column(db.String(40), nullable=False, default="", server_default="")
+    advance_comments = db.Column(db.Text, nullable=False, default="", server_default="")
     enquired_by_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True)
 
     owner = db.relationship("User")
@@ -133,6 +135,8 @@ class Lead(db.Model):
             "work_order_date": self.work_order_date.isoformat() if self.work_order_date else None,
             "advance_amount": float(self.advance_amount) if self.advance_amount is not None else None,
             "advance_date": self.advance_date.isoformat() if self.advance_date else None,
+            "advance_mode": self.advance_mode,
+            "advance_comments": self.advance_comments,
             "enquired_by_id": self.enquired_by_id,
             "enquired_by_name": self.enquired_by.name if self.enquired_by else None,
             "survey": self.survey.to_dict() if self.survey else None,
@@ -405,6 +409,9 @@ class ProjectPayment(db.Model):
     amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     due_date = db.Column(db.Date, nullable=True)
     position = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    mode = db.Column(db.String(40), nullable=False, default="", server_default="")
+    paid_date = db.Column(db.Date, nullable=True)
+    comments = db.Column(db.Text, nullable=False, default="", server_default="")
 
     project = db.relationship("Project", back_populates="payments")
 
@@ -412,6 +419,9 @@ class ProjectPayment(db.Model):
         return {
             "label": self.label, "amount": float(self.amount),
             "due_date": self.due_date.isoformat() if self.due_date else None,
+            "mode": self.mode,
+            "paid_date": self.paid_date.isoformat() if self.paid_date else None,
+            "comments": self.comments,
         }
 
 

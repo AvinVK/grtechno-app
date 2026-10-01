@@ -10,7 +10,7 @@ from werkzeug.exceptions import HTTPException, abort
 from .auth import visible_clients, visible_leads
 from .modules import check_module, modules_for
 from .projects import ProjectError, create_project_from_lead
-from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, STAGES, WON
+from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, PAYMENT_MODES, STAGES, WON
 from .extensions import db
 from .models import (
     Activity, Client, Lead, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
@@ -30,6 +30,7 @@ TEXT_LIMITS = {
     "source": 120,
     "notes": 5000,
     "work_order_no": 60,
+    "advance_comments": 2000,
 }
 MAX_VALUE = Decimal("99999999999")
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
@@ -142,6 +143,15 @@ def _validate(payload: dict) -> tuple[dict, dict]:
     _parse_date_field(payload, data, errors, "advance_date")
     _parse_amount_field(payload, data, errors, "advance_amount")
 
+    if "advance_mode" in payload:
+        raw = payload["advance_mode"]
+        if raw in (None, ""):
+            data["advance_mode"] = ""
+        elif raw in PAYMENT_MODES:
+            data["advance_mode"] = raw
+        else:
+            errors["advance_mode"] = "Choose one of the payment modes"
+
     if "client_id" in payload:
         raw = payload["client_id"]
         if raw in (None, ""):
@@ -220,7 +230,7 @@ def _stage_gate_error(lead: Lead, new_stage: str):
         return "Send a quote first"
     if new_stage == "Work order & advance" and not any(n.finalized for n in lead.negotiations):
         return "Finalize a negotiation round first"
-    if new_stage == WON and not (lead.work_order_no and lead.work_order_date and lead.advance_amount is not None and lead.advance_date):
+    if new_stage == WON and not (lead.work_order_no and lead.work_order_date and lead.advance_amount is not None and lead.advance_date and lead.advance_mode):
         return "Enter the work order and advance details first"
     return None
 
@@ -327,6 +337,7 @@ def state():
         },
         today=today.isoformat(),
         stages=STAGES,
+        payment_modes=PAYMENT_MODES,
         open_stages=OPEN_STAGES,
         settings=settings_for_client(),
         service_options=[{"id": s.id, "name": s.name} for s in Service.query.filter_by(is_active=True).order_by(Service.sort_order, Service.name)],

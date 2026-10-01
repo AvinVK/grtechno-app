@@ -104,7 +104,7 @@ def test_only_the_admin_can_mark_a_lead_won(client, admin_client):
     advance_to_negotiation(client, lead["id"])
     client.patch(f"/api/leads/{lead['id']}", json={
         "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
-        "advance_amount": 100000, "advance_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer",
     })
     assert client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).status_code == 403
     assert admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"}).status_code == 200
@@ -179,12 +179,21 @@ def test_won_requires_the_work_order_and_advance(admin_client):
     blocked = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
     assert blocked.status_code == 422 and "work order" in blocked.get_json()["error"].lower()
 
+    # Amount and date alone aren't enough either - how it was paid is part of "the advance details".
     admin_client.patch(f"/api/leads/{lead['id']}", json={
         "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
         "advance_amount": 100000, "advance_date": "2026-09-23",
     })
+    still_blocked = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
+    assert still_blocked.status_code == 422
+
+    bad_mode = admin_client.patch(f"/api/leads/{lead['id']}", json={"advance_mode": "Bitcoin"})
+    assert bad_mode.status_code == 422 and "advance_mode" in bad_mode.get_json()["fields"]
+
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"advance_mode": "Bank transfer", "advance_comments": "Via office account"})
     ok = admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
     assert ok.status_code == 200
+    assert admin_client.get(f"/api/leads/{lead['id']}").get_json()["advance_comments"] == "Via office account"
 
 
 def test_entering_the_work_order_advances_negotiation_to_work_order_stage(admin_client):
@@ -198,7 +207,7 @@ def test_entering_the_work_order_advances_negotiation_to_work_order_stage(admin_
 
     advanced = admin_client.patch(f"/api/leads/{lead['id']}", json={
         "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
-        "advance_amount": 100000, "advance_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer",
     })
     assert advanced.get_json()["stage"] == "Work order & advance"        # not skipped straight to Won
     assert any("Work order & advance" in a["text"] for a in advanced.get_json()["activities"])
@@ -345,7 +354,7 @@ def test_negotiation_rounds_added_edited_and_used_as_the_project_estimate(admin_
 
     admin_client.patch(f"/api/leads/{lead['id']}", json={
         "work_order_no": "WO-1001", "work_order_date": "2026-09-25",
-        "advance_amount": 100000, "advance_date": "2026-09-25",
+        "advance_amount": 100000, "advance_date": "2026-09-25", "advance_mode": "Bank transfer",
     })
     admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
     project_id = admin_client.get(f"/api/leads/{lead['id']}").get_json()["project_id"]
@@ -390,7 +399,7 @@ def test_client_total_estimated_value_across_projects(admin_client):
     })
     admin_client.patch(f"/api/leads/{lead['id']}", json={
         "work_order_no": "WO-1002", "work_order_date": "2026-09-23",
-        "advance_amount": 50000, "advance_date": "2026-09-23",
+        "advance_amount": 50000, "advance_date": "2026-09-23", "advance_mode": "Cash",
     })
     admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won", "client_id": first["client_id"]})
 

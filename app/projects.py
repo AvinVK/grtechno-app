@@ -10,6 +10,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from .auth import visible_clients, visible_projects
+from .constants import PAYMENT_MODES
 from .extensions import db
 from .models import Activity, Attendance, Client, Project, ProjectPayment, User, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
@@ -77,7 +78,10 @@ def create_project_from_lead(lead, user):
     # The advance that won the lead is the project's first payment step, already received - it carries
     # over so the project doesn't start its payment schedule from a blank page.
     if lead.advance_amount is not None:
-        project.payments.append(ProjectPayment(label="Advance", amount=lead.advance_amount, due_date=lead.advance_date, position=1))
+        project.payments.append(ProjectPayment(
+            label="Advance", amount=lead.advance_amount, due_date=lead.advance_date, position=1,
+            mode=lead.advance_mode, paid_date=lead.advance_date, comments=lead.advance_comments,
+        ))
     db.session.add(project)
     db.session.flush()
     lead.activities.insert(0, Activity(kind="project", text=f"Project {project.code} created"))
@@ -132,12 +136,20 @@ def _payments(raw, errors):
         f = Fields(item if isinstance(item, dict) else {})
         f.text("label", 120, required=True, label="a name for each payment step")
         f.date("due_date")
+        f.date("paid_date")
+        f.text("comments", 2000)
+        if isinstance(item, dict) and item.get("mode") not in (None, "", *PAYMENT_MODES):
+            f.errors["mode"] = "Choose one of the payment modes"
         problems = dict(f.errors)
         amount = parse_money(item.get("amount", 0) if isinstance(item, dict) else 0, problems, "amount")
         if problems:
             errors["payments"] = f"Payment step {i}: {next(iter(problems.values()))}"
             return None
-        rows.append({"label": f.data["label"], "amount": amount, "due_date": f.data.get("due_date")})
+        rows.append({
+            "label": f.data["label"], "amount": amount, "due_date": f.data.get("due_date"),
+            "mode": (item.get("mode") or "") if isinstance(item, dict) else "",
+            "paid_date": f.data.get("paid_date"), "comments": f.data.get("comments", ""),
+        })
     return rows
 
 
@@ -214,6 +226,7 @@ def _detail(project):
         "client": {"id": client.id, "name": client.name, "contact_name": client.contact_name, "phone": client.phone},
         "statuses": PROJECT_STATUSES,
         "currency": settings_for_client()["currency"],
+        "payment_modes": PAYMENT_MODES,
         "can_assign_manager": can_assign,
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
@@ -301,7 +314,10 @@ def update_project(project_id):
         project.completed_at = None
     if payments is not None:
         project.payments = [
-            ProjectPayment(label=p["label"], amount=p["amount"], due_date=p["due_date"], position=i)
+            ProjectPayment(
+                label=p["label"], amount=p["amount"], due_date=p["due_date"], position=i,
+                mode=p["mode"], paid_date=p["paid_date"], comments=p["comments"],
+            )
             for i, p in enumerate(payments, start=1)
         ]
     db.session.commit()

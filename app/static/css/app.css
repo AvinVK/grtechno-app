@@ -978,19 +978,26 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-overview-grid dt { color: var(--muted); }
 .pay-overview-grid dd { margin: 0; text-align: right; font-weight: 600; font-family: var(--font-num); }
 
-.pay-rows { display: grid; gap: 10px; }
+.pay-rows { display: grid; gap: 16px; }
 .pay-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
   /* The × sits with the milestone/amount row it removes, not spanning up into the position caption too -
-     centering it across both would land it between the two, aligned with neither. */
-  grid-template-areas: "label label ." "milestone amount x";
+     centering it across both would land it between the two, aligned with neither. Once a step is paid,
+     mode/date/comments fill in below it - optional, so they don't need their own × or row label. */
+  grid-template-areas: "label label ." "milestone amount x" "mode date ." "comments comments .";
   gap: 8px;
   align-items: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
 }
+.pay-rows > .pay-row:last-child { padding-bottom: 0; border-bottom: 0; }
 .pay-label-text { grid-area: label; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .pay-milestone { grid-area: milestone; }
 .pay-amount { grid-area: amount; }
+.pay-mode { grid-area: mode; }
+.pay-paid-date { grid-area: date; }
+.pay-comments { grid-area: comments; width: 100%; min-height: 56px; resize: vertical; font: inherit; }
 .pay-row .icon-x { grid-area: x; }
 
 .negotiation-rows { display: grid; gap: 8px; }
