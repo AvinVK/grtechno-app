@@ -137,7 +137,7 @@ a { color: var(--accent-dark); }
 .appbar-back { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; font-size: 26px; font-weight: 700; }
 .appbar.pushed .appbar-actions { flex: none; margin-left: 0; }
 .appbar.pushed .appbar-actions .btn { min-height: 40px; padding: 0 14px; font-size: 14px; white-space: nowrap; }
-.appbar-title-pushed { flex: 1; min-width: 0; margin: 0; font: 700 22px/1.2 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.appbar-title-pushed { flex: 1; min-width: 0; margin: 0; font: 700 30px/1.15 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 
 /* ---------- Buttons ---------- */
 
@@ -270,9 +270,10 @@ a.stat:hover, button.stat:hover { border-color: var(--line-strong); cursor: poin
 /* ---------- Views ---------- */
 
 .view { padding: 20px; outline: none; }
-/* The large app bar already ends in its own bottom padding - adding this on top of it doubled the gap
-   above the search box/content on every Leads tab and on Me. */
-.page-app .view, .page-me .view { padding-top: 0; }
+/* The appbar (large or pushed) already ends in its own bottom padding - adding this on top of it doubled
+   the gap above the search box/content on every Leads tab, Me, and every pushed screen (Clients, Projects,
+   Users...). */
+.page-app .view, .page-me .view, .page-plain .view { padding-top: 0; }
 
 .loading, .empty-state {
   padding: 40px 0;
