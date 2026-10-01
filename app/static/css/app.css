@@ -242,6 +242,7 @@ a.stat:hover { border-color: var(--line-strong); }
   font: 500 26px/1.1 var(--font-num);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .stat-note { display: block; color: var(--muted); font-size: 15px; }
@@ -1350,7 +1351,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-site-when { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; }
 .fn-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .fn-stats > div { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-card); }
-.fn-stat-value { display: block; font: 500 22px/1.2 var(--font-num); }
+.fn-stat-value { display: block; font: 500 22px/1.2 var(--font-num); overflow-wrap: anywhere; }
 .fn-stat-note { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
 .fn-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px 4px; margin: 0; padding: 0; list-style: none; }
 .fn-cell { display: grid; justify-items: center; gap: 3px; }
@@ -1380,7 +1381,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
   color: #fff; font-size: 14px; font-weight: 600; text-decoration: none; opacity: 0.85;
 }
 .me-today-status { font-size: 15px; font-weight: 600; }
-.me-today-big { font: 500 32px/1.15 var(--font-num); }
+.me-today-big { font: 500 32px/1.15 var(--font-num); overflow-wrap: anywhere; }
 .me-today-btn { width: 100%; min-height: 52px; margin-top: 8px; font-size: 16px; }
 .btn.me-out { background: #fff; border-color: #fff; color: var(--ink); }
 .btn.me-out:hover { background: var(--track); }
