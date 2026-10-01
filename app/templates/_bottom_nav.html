@@ -1,8 +1,8 @@
 {# The bottom tabs, on every signed-in page for people with the Leads service (base.html). Active and Add
    switch the Leads app's own views in place (app.js keeps the current tab and the due badge up to date);
    Clients, Projects and Me are their own pages, so "current" there is worked out here from the endpoint.
-   Clients/Projects only show for a role that actually has those modules - same check _seg.html uses - so
-   there's never a tab here that just 403s. #}
+   Clients/Projects only show for a role that actually has those modules, so there's never a tab here that
+   just 403s. #}
 <nav class="bottom-nav" aria-label="Main">
   <a class="bottom-nav-item" href="{{ leads_url }}#active" data-view="active" aria-label="Active leads"{% if request.endpoint == 'views.index' %} aria-current="page"{% endif %}>
     <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></span>

@@ -70,10 +70,7 @@ def _project_rows(client):
 @bp.get("/clients")
 def page():
     title = "Clients" if g.user.sees_all else "My clients"
-    return render_template(
-        "clients.html", page_title=title,
-        client_count=visible_clients().count(), project_count=visible_projects().count(),
-    )
+    return render_template("clients.html", page_title=title)
 
 
 @bp.get("/api/clients")

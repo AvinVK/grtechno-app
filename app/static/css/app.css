@@ -1460,18 +1460,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .me-row .sb-icon { color: var(--muted); }
 .me-chevron { margin-left: auto; color: var(--muted); font-size: 22px; line-height: 1; }
 
-/* ---------- Clients & Projects: switch, grouping by area, rows ---------- */
-
-.seg-wrap { margin-top: 14px; }
-.seg { display: flex; max-width: 1100px; margin: 0 auto; padding: 3px; border-radius: 10px; background: var(--track); }
-.seg a {
-  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px;
-  padding: 0 12px; border-radius: 8px;
-  color: var(--muted); font: 600 14px/1.2 var(--font-body); text-align: center; text-decoration: none;
-}
-.seg a[aria-current="page"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(27, 33, 40, 0.12); }
-.seg-count { color: var(--muted); font: 500 13px/1 var(--font-num); }
-.seg a[aria-current="page"] .seg-count { color: inherit; }
+/* ---------- Clients & Projects: grouping by area, rows ---------- */
 
 /* District, then area: both collapse (native <details>/<summary>), plain headings with a turning chevron
    instead of the browser's own disclosure triangle. Each area's clients sit in one white card. */

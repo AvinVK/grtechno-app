@@ -1,7 +1,0 @@
-{# Clients | Projects switch - only when this person can open both. #}
-{% if nav_modules|selectattr('key', 'equalto', 'clients')|list and nav_modules|selectattr('key', 'equalto', 'projects')|list %}
-<div class="seg-wrap"><nav class="seg" aria-label="Clients or projects">
-  <a href="/clients"{% if active == 'clients' %} aria-current="page"{% endif %}>Clients{% if client_count is defined %} <span class="seg-count">{{ client_count }}</span>{% endif %}</a>
-  <a href="/projects"{% if active == 'projects' %} aria-current="page"{% endif %}>Projects{% if project_count is defined %} <span class="seg-count">{{ project_count }}</span>{% endif %}</a>
-</nav></div>
-{% endif %}
