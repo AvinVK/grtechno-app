@@ -1497,6 +1497,26 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 
 /* ---------- Clients & Projects: grouping by area, rows ---------- */
 
+/* State, then district, then area: all three collapse (native <details>/<summary>), plain headings with a
+   turning chevron instead of the browser's own disclosure triangle. Each area's clients sit in one white
+   card. State is the odd one out size-wise (bigger, bolder) since it's the top level now; district and
+   area keep their original look, just indented a step for the state wrapping them. */
+.state-box { max-width: 1100px; margin: 0 auto 4px; }
+.state-box-title {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin: 0; padding: 12px 34px 12px 2px; cursor: pointer; list-style: none; user-select: none; position: relative;
+  font: 700 17px/1.2 var(--font-display); color: var(--ink);
+}
+.state-box-title::-webkit-details-marker { display: none; }
+.state-box-title .p-code { margin-left: auto; color: var(--muted); font: 500 13px/1.2 var(--font-num); }
+.state-box-title::before {
+  content: ""; position: absolute; right: 10px; top: 50%; width: 8px; height: 8px; margin-top: -6px;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(45deg); transition: transform 0.15s ease;
+}
+details[open] > summary.state-box-title::before { transform: rotate(-135deg); margin-top: -3px; }
+.state-box-body { padding-left: 10px; border-left: 1px solid var(--line); }
+
 /* District, then area: both collapse (native <details>/<summary>), plain headings with a turning chevron
    instead of the browser's own disclosure triangle. Each area's clients sit in one white card. */
 .city-box { max-width: 1100px; margin: 0 auto 4px; }

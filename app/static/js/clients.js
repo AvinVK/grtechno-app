@@ -61,6 +61,16 @@
       h('div', { class: 'city-box-body' }, Object.keys(areas).sort(sortUnknownLast).map((area) => areaBlock(area, areas[area], expand))));
   }
 
+  function stateBox(state, districts, total, expand) {
+    return h('details', { class: 'state-box', open: expand || undefined },
+      h('summary', { class: 'state-box-title' }, state, h('span', { class: 'p-code', 'aria-label': plural(total, 'client', 'clients') }, total)),
+      h('div', { class: 'state-box-body' }, Object.keys(districts).sort(sortUnknownLast).map((city) => {
+        const areas = districts[city];
+        const cityTotal = Object.values(areas).reduce((n, list) => n + list.length, 0);
+        return cityBox(city, areas, cityTotal, expand);
+      })));
+  }
+
   async function showList() {
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading clients…'));
@@ -86,7 +96,7 @@
 
     function matches(c) {
       const q = filter.q.trim().toLowerCase();
-      const textOk = !q || [c.name, c.contact_name, c.phone, c.email, c.city, c.district].some((v) => (v || '').toLowerCase().includes(q));
+      const textOk = !q || [c.name, c.contact_name, c.phone, c.email, c.city, c.district, c.state].some((v) => (v || '').toLowerCase().includes(q));
       const serviceOk = !filter.service || c.services.includes(filter.service);
       return textOk && serviceOk;
     }
@@ -101,19 +111,23 @@
           : 'No clients yet. A client appears here automatically once a lead is won.'));
         return;
       }
-      const byCity = {};
+      // State, then district (the "city" box), then city (the area within it) - three levels deep, each
+      // collapsed to start with.
+      const byState = {};
       for (const c of items) {
+        const state = c.state || 'Not set';
         const city = c.district || 'Not set';
         const area = c.city || 'Not set';
-        if (!byCity[city]) byCity[city] = {};
-        if (!byCity[city][area]) byCity[city][area] = [];
-        byCity[city][area].push(c);
+        if (!byState[state]) byState[state] = {};
+        if (!byState[state][city]) byState[state][city] = {};
+        if (!byState[state][city][area]) byState[state][city][area] = [];
+        byState[state][city][area].push(c);
       }
       const expand = !!(filter.q.trim() || filter.service);       // don't leave a match hidden inside a closed box
-      results.append(...Object.keys(byCity).sort(sortUnknownLast).map((city) => {
-        const areas = byCity[city];
-        const total = Object.values(areas).reduce((n, list) => n + list.length, 0);
-        return cityBox(city, areas, total, expand);
+      results.append(...Object.keys(byState).sort(sortUnknownLast).map((state) => {
+        const districts = byState[state];
+        const total = Object.values(districts).reduce((n, areas) => n + Object.values(areas).reduce((m, list) => m + list.length, 0), 0);
+        return stateBox(state, districts, total, expand);
       }));
     }
 
