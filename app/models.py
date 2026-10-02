@@ -196,6 +196,10 @@ class LeadSurvey(db.Model):
     rep_name = db.Column(db.String(120), nullable=False, default="", server_default="")
     rep_role = db.Column(db.String(60), nullable=False, default="", server_default="")
     rep_phone = db.Column(db.String(40), nullable=False, default="", server_default="")
+    # What tells this site apart from another at the same client - a client can go on to have more than
+    # one project, each at its own site, and this is the one thing that distinguishes them anywhere a lead
+    # or project is listed (see title() in app.js and Project.title below).
+    site_name = db.Column(db.String(160), nullable=False, default="", server_default="")
     site_category = db.Column(db.String(60), nullable=False, default="", server_default="")
     site_pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
     site_state = db.Column(db.String(80), nullable=False, default="", server_default="")
@@ -217,6 +221,7 @@ class LeadSurvey(db.Model):
             "surveyor_id": self.surveyor_id,
             "surveyor_name": self.surveyor.name if self.surveyor else None,
             "rep_name": self.rep_name, "rep_role": self.rep_role, "rep_phone": self.rep_phone,
+            "site_name": self.site_name,
             "site_category": self.site_category, "site_pincode": self.site_pincode,
             "site_state": self.site_state, "site_district": self.site_district, "site_city": self.site_city,
             "site_address": self.site_address,

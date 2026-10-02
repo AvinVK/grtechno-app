@@ -62,7 +62,12 @@
 
   /* ---------- lead helpers ---------- */
 
-  const title = (l) => l.company || l.contact_name || l.client_name || 'Untitled lead';
+  // The site name disambiguates leads for the same company at different sites - two leads for the same
+  // client otherwise look identical in a list, with no way to tell which one is which without opening it.
+  const title = (l) => {
+    const base = l.company || l.contact_name || l.client_name || 'Untitled lead';
+    return l.survey?.site_name ? `${base} · ${l.survey.site_name}` : base;
+  };
   const subtitle = (l) => (l.company && l.contact_name ? l.contact_name : '');
   const isOpen = (l) => S.open_stages.includes(l.stage);
   const telNumber = (p) => p.replace(/[^\d+]/g, '');
@@ -439,7 +444,7 @@
         }
         if (!q) return true;
         const sv = l.survey || {};
-        return [l.company, l.contact_name, l.phone, l.email, sv.site_pincode, sv.site_city, sv.site_district, sv.site_state,
+        return [l.company, l.contact_name, l.phone, l.email, sv.site_name, sv.site_pincode, sv.site_city, sv.site_district, sv.site_state,
           sv.site_address, sv.site_category, serviceLabel(l), l.notes]
           .some((v) => (v || '').toLowerCase().includes(q));
       });
@@ -499,7 +504,8 @@
   }
 
   function leadRow(l, showCreated) {
-    const sub = [subtitle(l), S.me.is_admin && l.owner_name ? `Owner: ${l.owner_name}` : ''].filter(Boolean).join(' · ');
+    const sub = [subtitle(l), l.enquired_by_name ? `Brought by: ${l.enquired_by_name}` : '', S.me.is_admin && l.owner_name ? `Owner: ${l.owner_name}` : '']
+      .filter(Boolean).join(' · ');
     // The figure to show next to the original estimate - not below it - so a lead being negotiated
     // down (or up) is visible without opening it, in the same single-line cell rather than growing the
     // row onto a second line. Once a round is marked Finalized that's the number that matters, even if
@@ -712,6 +718,9 @@
       const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });
 
       // Site details - captured here, not at New enquiry, since they're what the survey itself confirms.
+      // Site name is what tells this site apart from another one at the same client - shown everywhere
+      // this lead (and the project it becomes) is listed, see title() above.
+      const siteNameInput = h('input', { type: 'text', value: sv.site_name || '', maxlength: 160, autocomplete: 'off' });
       const siteCategorySel = choice(S.settings.site_categories, sv.site_category, 'Not set');
       const siteState = h('input', { type: 'text', value: sv.site_state || '', maxlength: 80, autocomplete: 'off' });
       const siteDistrict = h('input', { type: 'text', value: sv.site_district || '', maxlength: 80, autocomplete: 'off' });
@@ -746,12 +755,13 @@
       const surveyErr = h('p', { class: 'err', role: 'alert' });
       // Once any part of the survey is entered (or it was already saved), every survey box must be filled.
       // Surveyed by is left out of "started" since it's prefilled with whoever took the enquiry.
-      const siteControls = [siteCategorySel, pinInput, siteState, siteDistrict, siteCity, siteAddress];
+      const siteControls = [siteNameInput, siteCategorySel, pinInput, siteState, siteDistrict, siteCity, siteAddress];
       surveyCheck = () => (sv.survey_date || [surveyDateInput, repName, repRole, repPhone, ...siteControls].some((c) => c.value.trim())
         ? [surveyDateInput, surveyorSel, repName, repRole, repPhone, ...siteControls] : []);
       surveyBody = () => ({
         survey_date: surveyDateInput.value || null, surveyor_id: surveyorSel.value || null,
         rep_name: repName.value, rep_role: repRole.value, rep_phone: repPhone.value,
+        site_name: siteNameInput.value,
         site_category: siteCategorySel.value, site_pincode: pinInput.value, site_state: siteState.value,
         site_district: siteDistrict.value, site_city: siteCity.value, site_address: siteAddress.value,
       });
@@ -807,6 +817,7 @@
         h('div', { class: 'stage-section-body' },
           h('div', { class: 'form-grid' },
             reqField('Survey date', surveyDateInput), reqField('Surveyed by', surveyorSel),
+            (() => { const f = reqField('Site name', siteNameInput); f.classList.add('wide'); return f; })(),
             reqField('Site representative', repName), reqField('Role (manager, guard, ...)', repRole),
             reqField('Representative phone', repPhone),
             reqField('Site category', siteCategorySel), pinField,

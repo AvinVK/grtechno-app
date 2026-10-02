@@ -228,11 +228,13 @@ def test_survey_upsert_and_surveyor_must_be_staff(admin_client):
     ok = admin_client.put(f"/api/leads/{lead['id']}/survey", json={
         "survey_date": "2026-09-20", "surveyor_id": staff.id,
         "rep_name": "Site Manager", "rep_role": "Manager", "rep_phone": "9900000000",
+        "site_name": "Tower B, 4th floor",
     })
     assert ok.status_code == 200
     survey = ok.get_json()["survey"]
     assert survey["survey_date"] == "2026-09-20" and survey["surveyor_name"] == "Ramesh Surveyor"
     assert survey["rep_name"] == "Site Manager" and survey["rep_phone"] == "9900000000"
+    assert survey["site_name"] == "Tower B, 4th floor"
 
     # upsert again - same row, not a second one
     admin_client.put(f"/api/leads/{lead['id']}/survey", json={"survey_date": "2026-09-21"})

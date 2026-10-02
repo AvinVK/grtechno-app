@@ -522,11 +522,13 @@
     function recalc() {
       const rows = toPayload(steps);
       const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
+      // What's actually been paid, not just scheduled - a future step can sit there unpaid.
+      const paidSoFar = rows.reduce((sum, p) => sum + (p.paid_date ? toNumber(p.amount) : 0), 0);
       // The advance is always the first step, by position - not by matching what its milestone says.
       const advanceAmt = rows.length ? toNumber(rows[0].amount) : 0;
       ovNegotiated.textContent = netValue === null ? '—' : money(netValue, cur);
       ovAdvance.textContent = rows.length ? money(advanceAmt, cur) : '—';
-      ovRemaining.textContent = netValue === null ? '—' : money(netValue - scheduled, cur);
+      ovRemaining.textContent = netValue === null ? '—' : money(netValue - paidSoFar, cur);
 
       paySummary.className = 'pay-summary';
       if (!rows.length) paySummary.textContent = '';

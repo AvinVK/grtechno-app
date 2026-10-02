@@ -483,6 +483,7 @@ def upsert_survey(lead_id):
     survey.rep_name = str(payload.get("rep_name") or "").strip()[:120]
     survey.rep_role = str(payload.get("rep_role") or "").strip()[:60]
     survey.rep_phone = str(payload.get("rep_phone") or "").strip()[:40]
+    survey.site_name = str(payload.get("site_name") or "").strip()[:160]
     survey.site_category = str(payload.get("site_category") or "").strip()[:60]
     survey.site_pincode = site_pincode
     survey.site_state = str(payload.get("site_state") or "").strip()[:80]

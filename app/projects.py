@@ -62,8 +62,15 @@ def create_project_from_lead(lead, user):
         db.session.add(client)
         reused = False
 
+    # The site name is what tells this project apart from another at the same client (a client can go on
+    # to have more than one), so it leads the title whenever the survey captured one.
     service_names = [s.name for s in lead.services] if lead.services else ([lead.service] if lead.service else [])
-    title = f"{client.name} - {', '.join(service_names)}" if service_names else client.name
+    if survey and survey.site_name:
+        title = f"{client.name} - {survey.site_name}"
+    elif service_names:
+        title = f"{client.name} - {', '.join(service_names)}"
+    else:
+        title = client.name
     latest_round = max(lead.negotiations, key=lambda n: n.round_no, default=None)
     estimated_amount = (latest_round.estimate if latest_round and latest_round.estimate is not None else None) or lead.est_value
 

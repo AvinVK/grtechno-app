@@ -61,6 +61,31 @@ def test_won_lead_creates_client_and_project_with_its_data(client, admin_client,
     assert Project.query.count() == 1
 
 
+def test_project_title_leads_with_the_site_name_when_the_survey_has_one(client, admin_client):
+    # A client can go on to have more than one project - the site name is what tells them apart anywhere
+    # a lead or project is listed, so it leads the title instead of the services once the survey has one.
+    # Driven by hand, not advance_to_negotiation/win_lead - either would PUT its own survey without a site
+    # name, wiping this one back out (upsert_survey replaces every field each call).
+    lead = make_lead(client)
+    client.put(f"/api/leads/{lead['id']}/survey", json={
+        "survey_date": "2026-09-20", "site_name": "Tower B, 4th floor",
+        "site_category": "Commercial complex", "site_pincode": "411001", "site_state": "Maharashtra",
+        "site_district": "Pune", "site_city": "Pune City", "site_address": "Plot 12, MIDC",
+    })
+    client.patch(f"/api/leads/{lead['id']}", json={"quote_sent_date": "2026-09-21"})
+    client.post(f"/api/leads/{lead['id']}/negotiations", json={
+        "date": "2026-09-22", "authorized_person": "Mr. Rao", "estimate": 1000000, "finalized": True,
+    })
+    client.patch(f"/api/leads/{lead['id']}", json={
+        "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
+        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer",
+    })
+    admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
+    detail = client.get(f"/api/leads/{lead['id']}").get_json()
+    project = db.session.get(Project, detail["project_id"])
+    assert project.title == "Kalyani Cold Storage - Tower B, 4th floor"
+
+
 def test_same_company_name_no_longer_auto_reuses_a_client(client, admin_client):
     # Winning no longer guesses by matching names - two enquiries that happen to share a company name
     # get two separate clients unless the admin explicitly maps the second one to the first.
