@@ -550,7 +550,13 @@
     document.body.classList.add('locked');
     $('#drawer-title').focus();
     loadActivity(lead.id);
-    drawerPopHandler = () => closeDrawer(true);
+    drawerPopHandler = () => {
+      // A field's own picker (dateField, selectField...) pushes its own history state while open and
+      // pops it on back.back() when it's done - that fires this same popstate, but it lands back on the
+      // drawer's own state rather than past it, so it isn't the drawer's own back-gesture to react to.
+      if (history.state && history.state.ldOverlay === 'drawer') return;
+      closeDrawer(true);
+    };
     window.addEventListener('popstate', drawerPopHandler);
     history.pushState({ ldOverlay: 'drawer' }, '', location.href);
   }
