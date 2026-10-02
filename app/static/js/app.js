@@ -684,6 +684,7 @@
     let negotiationSectionNode = null;
     let negotiationBody = null;         // set only when this is the lead's first (stage-advancing) round
     let workOrderSectionNode = null;
+    let woServiceBoxes = null;          // set only once Work order & advance exists - read by the submit handler
     if (!lead) {
       // Creating: one flat form, same as always - the stage accordion only makes sense once a lead exists.
       form = h('form', { novalidate: true, id: 'lead-form' },
@@ -902,7 +903,22 @@
       // Work order & advance: a single one-time set of fields, not a repeatable list like negotiation -
       // entering them is what completes Negotiation's own step, once a round has been finalized.
       const negotiationFinalized = (lead.negotiations || []).some((n) => n.finalized);
+
+      // Scope often shifts right here - "can you knock off this service" or "add one more" - once the
+      // client has seen a number. A second, editable checklist rather than reopening New enquiry's (long
+      // since locked) one, since that's not where this conversation is actually happening.
+      woServiceBoxes = S.service_options.map((opt) => {
+        const cb = h('input', { type: 'checkbox', value: String(opt.id) });
+        cb.checked = (lead.services || []).includes(opt.name);
+        return { id: opt.id, box: h('label', { class: 'check-row' }, cb, h('span', {}, opt.name)) };
+      });
+      const woServiceField = h('div', { class: 'field wide' },
+        h('label', {}, 'Services', h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')),
+        h('div', { class: 'check-grid' }, woServiceBoxes.map((s) => s.box)),
+        h('p', { class: 'err', id: 'err-wo_service_ids', role: 'alert' }));
+
       const workOrderFields = h('div', { class: 'form-grid' },
+        woServiceField,
         wrapField('work_order_no', 'Work order no.', text('text', L.work_order_no, { maxlength: 60, autocomplete: 'off' }), '', true),
         wrapField('work_order_date', 'Work order date', dateField(L.work_order_date), '', true),
         wrapField('advance_amount', `Advance received (${S.settings.currency})`,
@@ -917,6 +933,7 @@
       if (!negotiationFinalized) {
         // Nothing here can be entered before a negotiation round is finalized - lock the fields and
         // explain why, same as the quote section does while the survey is still open.
+        woServiceBoxes.forEach((s) => { s.box.querySelector('input').disabled = true; });
         ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode', 'advance_comments'].forEach((name) => { inputs[name].disabled = true; });
         workOrderSectionNode.querySelector('summary').addEventListener('click', (e) => {
           e.preventDefault();
@@ -924,6 +941,7 @@
         });
       } else if (isPastStage('Work order & advance')) {
         // The lead is Won or Lost - viewable, but read only, same as the earlier stages once passed.
+        woServiceBoxes.forEach((s) => { s.box.querySelector('input').disabled = true; });
         ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode', 'advance_comments'].forEach((name) => { inputs[name].disabled = true; });
       } else if (lead.stage === 'Negotiation' && !lead.work_order_no) {
         const woInput = inputs.work_order_no;
@@ -994,7 +1012,11 @@
       if (!body.follow_up_date) body.follow_up_date = null;
       if ('quote_sent_date' in body && !body.quote_sent_date) body.quote_sent_date = null;
       body.enquired_by_id = body.enquired_by_id || null;
-      body.service_ids = serviceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.id);
+      // Once Work order & advance exists, its own services checklist is the live one - New enquiry's
+      // copy is locked read-only by then (see isPastStage('New enquiry') above), showing what the lead
+      // started as, not what it stands at now.
+      const activeServiceBoxes = woServiceBoxes || serviceBoxes;
+      body.service_ids = activeServiceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.id);
       if ('advance_amount' in body && body.advance_amount === '') body.advance_amount = null;
       if ('work_order_date' in body && !body.work_order_date) body.work_order_date = null;
       if ('advance_date' in body && !body.advance_date) body.advance_date = null;
@@ -1016,7 +1038,7 @@
           ['phone', 'source'].forEach((name) => {
             if (!body[name].trim()) missing[name] = 'This field is required';
           });
-          if (!body.service_ids.length) missing.service_ids = 'Choose at least one service';
+          if (!body.service_ids.length) missing[woServiceBoxes ? 'wo_service_ids' : 'service_ids'] = 'Choose at least one service';
           if (!body.enquired_by_id) missing.enquired_by_id = 'This field is required';
           if (!body.follow_up_date) missing.follow_up_date = 'This field is required';
           // Quote sent: once either box is filled (or the quote was already sent), both are required.
