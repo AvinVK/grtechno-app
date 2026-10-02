@@ -53,4 +53,4 @@ SERVICES = [
 # so leads that already use them keep their value.
 OLD_SERVICES = ["Sprinklers", "Hydrant and pump room", "Extinguishers", "NOC and audits"]
 
-PROJECT_STATUSES = ["planned", "running", "on_hold", "completed"]
+PROJECT_STATUSES = ["planned", "running", "on_hold", "final_estimate_sent", "completed"]

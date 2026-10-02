@@ -941,6 +941,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .chip-p-planned { background: var(--track); color: var(--muted); }
 .chip-p-running { background: var(--accent-tint); color: var(--accent-dark); }
 .chip-p-hold { background: var(--amber-tint); color: var(--amber); }
+.chip-p-sent { background: var(--soon-tint); color: var(--soon); }
 .chip-p-done { background: var(--ok-tint); color: var(--ok-ink); }
 
 .project-detail { display: grid; gap: 14px; max-width: 720px; margin: 0 auto; }

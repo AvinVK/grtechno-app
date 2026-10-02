@@ -10,6 +10,7 @@
     planned: ['Planned', 'planned'],
     running: ['Running', 'running'],
     on_hold: ['On hold', 'hold'],
+    final_estimate_sent: ['Final estimate sent', 'sent'],
     completed: ['Completed', 'done'],
   };
   const view = $('#view');

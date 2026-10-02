@@ -301,6 +301,25 @@ def test_dashboard_shows_start_brought_by_and_who_worked_on_it(app, client, admi
     assert dash["started"] == "2026-01-05" and dash["start_date_set"] is True
 
 
+def test_recording_the_final_amount_moves_status_to_final_estimate_sent(client, admin_client):
+    pid = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "status": "running"})
+
+    measured = admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "final_amount": 150000})
+    assert measured.get_json()["project"]["status"] == "final_estimate_sent"
+
+    # Already measured - a later, unrelated edit doesn't touch the status again.
+    again = admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers v2", "final_amount": 150000})
+    assert again.get_json()["project"]["status"] == "final_estimate_sent"
+
+    # An explicit status in the same request wins over the automatic move.
+    pid2 = make_project(client, admin_client, contact_name="Another Co", phone="9800000002")
+    explicit = admin_client.patch(f"/api/projects/{pid2}", json={
+        "title": "Sprinklers", "status": "on_hold", "final_amount": 90000,
+    })
+    assert explicit.get_json()["project"]["status"] == "on_hold"
+
+
 def test_brought_by_falls_back_to_whoever_entered_the_lead(client, admin_client, user):
     pid = make_project(client, admin_client)
     assert admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["brought_by"] == {"name": user.name, "how": "Entered the lead"}

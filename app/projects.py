@@ -320,6 +320,12 @@ def update_project(project_id):
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
+    # Recording the final measurement for the first time is itself a status move, same idea as entering
+    # the work order moves a lead to its own next stage - unless this same request already said otherwise.
+    newly_measured = "final_amount" in data and data["final_amount"] is not None and project.final_amount is None
+    if newly_measured and "status" not in data and project.status != "completed":
+        data["status"] = "final_estimate_sent"
+
     for key, value in data.items():
         setattr(project, key, value)
     if project.status == "completed" and project.completed_at is None:
