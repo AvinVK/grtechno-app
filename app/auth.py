@@ -15,7 +15,7 @@ from flask import (
     session,
     url_for,
 )
-from sqlalchemy import or_
+from sqlalchemy import false as sa_false, or_
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db
@@ -125,22 +125,28 @@ def visible_leads():
 
 
 def visible_projects():
-    """Projects this person may see: everything for the admin and for roles marked sees_all (Accounts),
-    otherwise only the projects they created or manage."""
+    """Projects this person may see: everything for the admin and for roles marked sees_all (Accounts), only
+    their assigned state(s) for a sub-admin, otherwise only the projects they created or manage."""
     query = Project.query
-    if not g.user.sees_all:
-        query = query.filter(or_(Project.owner_code == g.user.code, Project.manager_code == g.user.code))
-    return query
+    if g.user.sees_all:
+        return query
+    if g.user.role_key == "sub_admin":
+        states = g.user.state_names
+        return query.filter(Project.site_state.in_(states)) if states else query.filter(sa_false())
+    return query.filter(or_(Project.owner_code == g.user.code, Project.manager_code == g.user.code))
 
 
 def visible_clients():
-    """Clients this person may see: everything for sees_all, otherwise the ones they created plus the clients
-    of projects they manage."""
+    """Clients this person may see: everything for sees_all, only their assigned state(s) for a sub-admin,
+    otherwise the ones they created plus the clients of projects they manage."""
     query = Client.query
-    if not g.user.sees_all:
-        managed = db.session.query(Project.client_id).filter(Project.manager_code == g.user.code)
-        query = query.filter(or_(Client.owner_code == g.user.code, Client.id.in_(managed)))
-    return query
+    if g.user.sees_all:
+        return query
+    if g.user.role_key == "sub_admin":
+        states = g.user.state_names
+        return query.filter(Client.state.in_(states)) if states else query.filter(sa_false())
+    managed = db.session.query(Project.client_id).filter(Project.manager_code == g.user.code)
+    return query.filter(or_(Client.owner_code == g.user.code, Client.id.in_(managed)))
 
 
 def visible_attendance():

@@ -51,6 +51,7 @@ class User(db.Model):
     role_key = db.Column(db.String(30), db.ForeignKey("roles.key"), nullable=True)
 
     role = db.relationship("Role")
+    states = db.relationship("UserState", cascade="all, delete-orphan", order_by="UserState.state")
 
     @property
     def sees_all(self) -> bool:
@@ -58,10 +59,25 @@ class User(db.Model):
         return bool(self.is_admin or (self.role and self.role.sees_all))
 
     @property
+    def state_names(self) -> list:
+        return [s.state for s in self.states]
+
+    @property
     def status(self) -> str:
         if not self.is_active:
             return "off"
         return "active" if self.password_hash else "pending"
+
+
+class UserState(db.Model):
+    """One state a sub-admin can see clients and projects for (visible_clients/visible_projects in auth.py).
+    Only meaningful for role_key 'sub_admin' - a role change away just leaves these unused, not deleted,
+    in case they're moved back."""
+
+    __tablename__ = "user_states"
+
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="CASCADE"), primary_key=True)
+    state = db.Column(db.String(80), primary_key=True)
 
 
 class Lead(db.Model):

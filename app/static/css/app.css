@@ -1158,6 +1158,10 @@ a.p-client-name { color: var(--accent-dark); }
 .profile-row span:last-child { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
 .profile-card .field { margin: 4px 0 18px; }
 
+/* The state-picker checklist (sub-admin) - long enough to need its own scroll, title and buttons fixed. */
+.states-card { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+.states-grid { flex: 1; overflow-y: auto; margin: 0 0 14px; padding-right: 4px; }
+
 .btn.danger-solid { background: var(--signal); border-color: var(--signal); color: #fff; }
 .btn.danger-solid:hover { background: #8e1d2e; border-color: #8e1d2e; }
 

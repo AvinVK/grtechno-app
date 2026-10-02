@@ -116,3 +116,65 @@ def test_admin_can_give_the_new_roles_and_accounts_is_now_accountant(admin_clien
         code = make_user("Sunny Welder").code
     res = admin_client.post(f"/api/users/{code}/role", json={"role": "welder"})
     assert res.status_code == 200 and res.get_json()["user"]["role_name"] == "Welder"
+
+
+# ---------- Sub-admin: clients and projects, scoped to assigned state(s) ----------
+
+def test_states_list_is_offered_and_sub_admin_needs_at_least_one(admin_client, app):
+    from conftest import make_user
+    states = admin_client.get("/api/users").get_json()["states"]
+    assert "Jharkhand" in states and "Maharashtra" in states
+
+    # Adding one with no states: refused.
+    bad = admin_client.post("/api/users", json={"name": "No States", "role": "sub_admin"})
+    assert bad.status_code == 422
+
+    ok = admin_client.post("/api/users", json={
+        "name": "Reena Sub", "role": "sub_admin", "states": ["Jharkhand", "Jharkhand", "Not-a-state"],
+    })
+    assert ok.status_code == 201
+    assert ok.get_json()["user"]["states"] == ["Jharkhand"]                  # deduped, and junk dropped
+
+    with app.app_context():
+        code = make_user("Later Sub").code
+    assert admin_client.post(f"/api/users/{code}/role", json={"role": "sub_admin"}).status_code == 422
+    promoted = admin_client.post(f"/api/users/{code}/role", json={"role": "sub_admin", "states": ["Odisha"]})
+    assert promoted.status_code == 200 and promoted.get_json()["user"]["states"] == ["Odisha"]
+
+    changed = admin_client.post(f"/api/users/{code}/states", json={"states": ["Odisha", "Karnataka"]})
+    assert changed.status_code == 200 and sorted(changed.get_json()["user"]["states"]) == ["Karnataka", "Odisha"]
+    assert admin_client.post(f"/api/users/{code}/states", json={"states": []}).status_code == 422
+
+    with app.app_context():
+        not_sub = make_user("Not A Sub Admin", role="sales_field").code
+    assert admin_client.post(f"/api/users/{not_sub}/states", json={"states": ["Odisha"]}).status_code == 400
+
+
+def test_sub_admin_sees_only_their_assigned_states(app, admin_client):
+    from conftest import make_user
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Jharkhand Co", "status": "running"}).get_json()["project"]["id"]
+    cid = admin_client.get(f"/api/projects/{pid}").get_json()["client"]["id"]
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Jharkhand Co", "site_state": "Jharkhand"})
+    admin_client.patch(f"/api/clients/{cid}", json={"state": "Jharkhand"})
+
+    pid2 = admin_client.post("/api/projects", json={"new_client_name": "Maha Co", "status": "running"}).get_json()["project"]["id"]
+    cid2 = admin_client.get(f"/api/projects/{pid2}").get_json()["client"]["id"]
+    admin_client.patch(f"/api/projects/{pid2}", json={"title": "Maha Co", "site_state": "Maharashtra"})
+    admin_client.patch(f"/api/clients/{cid2}", json={"state": "Maharashtra"})
+
+    sub = make_user("Reena Sub", role="sub_admin")
+    sub_client = signed_in(app, sub)
+    assert sub_client.get("/api/projects").get_json()["projects"] == []      # no state assigned yet: sees nothing
+    assert sub_client.get(f"/api/projects/{pid}").status_code == 404
+
+    admin_client.post(f"/api/users/{sub.code}/states", json={"states": ["Jharkhand"]})
+    sub_client = signed_in(app, sub)
+    project_ids = {p["id"] for p in sub_client.get("/api/projects").get_json()["projects"]}
+    assert project_ids == {pid}
+    assert sub_client.get(f"/api/projects/{pid}").status_code == 200
+    assert sub_client.get(f"/api/projects/{pid2}").status_code == 404
+
+    client_ids = {c["id"] for c in sub_client.get("/api/clients").get_json()["clients"]}
+    assert client_ids == {cid}
+    assert sub_client.get(f"/api/clients/{cid}").status_code == 200
+    assert sub_client.get(f"/api/clients/{cid2}").status_code == 404

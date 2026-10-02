@@ -5,7 +5,8 @@ from werkzeug.exceptions import HTTPException, abort
 from .api import _payload
 from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code
 from .extensions import db
-from .models import Lead, Role, User, utcnow
+from .models import Lead, Role, User, UserState, utcnow
+from .reference_data import INDIAN_STATES
 
 bp = Blueprint("users", __name__, url_prefix="/api/users")
 page_bp = Blueprint("users_page", __name__)              # the /users page; the JSON API above is under /api/users
@@ -42,10 +43,24 @@ def _dict(user: User, lead_count: int = 0) -> dict:
         "is_admin": user.is_admin,
         "role": user.role_key,
         "role_name": user.role.name if user.role else "",
+        "states": user.state_names,
         "status": user.status,
         "code_expired": bool(pending and user.setup_code_expires and user.setup_code_expires < utcnow()),
         "leads": lead_count,
     }
+
+
+def _clean_states(raw) -> list:
+    if not isinstance(raw, list):
+        abort(422, "Choose at least one state.")
+    states = [s for s in dict.fromkeys(raw) if isinstance(s, str) and s in INDIAN_STATES]
+    if not states:
+        abort(422, "Choose at least one state.")
+    return states
+
+
+def _set_states(user: User, states: list) -> None:
+    user.states = [UserState(state=s) for s in states]
 
 
 def _lead_counts() -> dict:
@@ -61,6 +76,7 @@ def list_users():
     return jsonify(
         users=[_dict(u, counts.get(u.code, 0)) for u in users],
         roles=[{"key": r.key, "name": r.name} for r in roles],
+        states=INDIAN_STATES,
         code_days=SETUP_CODE_DAYS,
     )
 
@@ -74,10 +90,13 @@ def add_user():
     role = payload.get("role") or "sales_field"
     if role == "admin":
         abort(422, "There is only one admin.")
+    states = _clean_states(payload.get("states")) if role == "sub_admin" else None
     try:
         user, setup_code = create_user(name, role=role)
     except ValueError as err:
         return jsonify(error=str(err), fields={"name": str(err)}), 422
+    if states is not None:
+        _set_states(user, states)
     db.session.commit()
     return jsonify(user=_dict(user), setup_code=setup_code, code_days=SETUP_CODE_DAYS), 201
 
@@ -97,10 +116,26 @@ def set_role(code):
     user = db.get_or_404(User, code)
     if user.is_admin:
         abort(400, "The admin's role cannot be changed.")
-    role = _payload().get("role")
+    payload = _payload()
+    role = payload.get("role")
     if role == "admin" or not isinstance(role, str) or db.session.get(Role, role) is None:
         abort(422, "Choose a role from the list.")
+    # Moving someone into Sub-admin is also asking which state(s) they cover - required right here, not
+    # left for later, so nobody ends up a sub-admin who (for now) sees nothing.
+    if role == "sub_admin":
+        _set_states(user, _clean_states(payload.get("states")))
     user.role_key = role
+    db.session.commit()
+    return jsonify(user=_dict(user))
+
+
+@bp.post("/<code>/states")
+def set_states(code):
+    """Change an existing sub-admin's state(s) later, outside of a role change."""
+    user = db.get_or_404(User, code)
+    if user.role_key != "sub_admin":
+        abort(400, "This user is not a sub-admin.")
+    _set_states(user, _clean_states(_payload().get("states")))
     db.session.commit()
     return jsonify(user=_dict(user))
 

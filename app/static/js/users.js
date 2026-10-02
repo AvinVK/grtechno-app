@@ -3,9 +3,58 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, selectField } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, selectField, closeOnBack } = window.LD;
 
   const chip = (tone, text) => h('span', { class: `chip chip-${tone}` }, text);
+
+  // A tick to let an overlay that just closed (a role pickList pick, a confirm() click - both end in their
+  // own history.back()) actually finish settling before the next one pushes its own history state; opening
+  // one right in the same turn can let the first's delayed popstate land after the second has already
+  // pushed, closing it immediately (see closeOnBack in common.js - it isn't scoped to nested overlays only).
+  const nextTick = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+  /* A checklist in the same dialog shell as confirm() - which state(s) a sub-admin can see clients and
+     projects for. Resolves the chosen list, or undefined if cancelled; refuses to resolve an empty one
+     since a sub-admin with no state assigned would just see nothing. */
+  function promptStates(options, current, title) {
+    return new Promise((resolve) => {
+      const previous = document.activeElement;
+      const boxes = options.map((s) => {
+        const cb = h('input', { type: 'checkbox', value: s, checked: (current || []).includes(s) });
+        return { state: s, cb, row: h('label', { class: 'check-row' }, cb, h('span', {}, s)) };
+      });
+      const errEl = h('p', { class: 'err', role: 'alert' });
+      const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+      const okBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save');
+      const titleEl = h('h2', { id: 'states-title' }, title);
+      const card = h('div', {
+        class: 'confirm-card states-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'states-title',
+      },
+        titleEl,
+        h('div', { class: 'check-grid states-grid' }, boxes.map((b) => b.row)),
+        errEl,
+        h('div', { class: 'confirm-actions' }, cancelBtn, okBtn));
+      const overlay = h('div', { class: 'confirm-overlay' }, card);
+
+      const finish = closeOnBack((result) => {
+        window.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        if (previous && previous.isConnected) previous.focus();
+        resolve(result);
+      });
+      function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); finish(undefined); } }
+      cancelBtn.onclick = () => finish(undefined);
+      overlay.onclick = (e) => { if (e.target === overlay) finish(undefined); };
+      okBtn.onclick = () => {
+        const chosen = boxes.filter((b) => b.cb.checked).map((b) => b.state);
+        if (!chosen.length) { errEl.textContent = 'Choose at least one state.'; return; }
+        finish(chosen);
+      };
+      window.addEventListener('keydown', onKey, true);
+      document.body.append(overlay);
+      (boxes[0] ? boxes[0].cb : cancelBtn).focus();
+    });
+  }
 
   /* ---------- users (admin only) ---------- */
 
@@ -21,6 +70,8 @@
     const listBox = h('div', { class: 'user-list card-group' }, h('p', { class: 'loading' }, 'Loading users…'));
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
     let roles = [];
+    let statesOptions = [];
+    let newUserStates = [];                 // chosen for the Add user form, only while its role is Sub-admin
     const roleSelect = selectField([], '', { title: 'Role' });
     roleSelect.id = 'u-role';
     roleSelect.setAttribute('aria-label', 'Role');
@@ -52,6 +103,7 @@
       try {
         const data = await api('/api/users');
         roles = data.roles;
+        statesOptions = data.states;
         const chosen = roleSelect.value || 'sales_field';
         roleSelect.setOptions(roles.map((r) => ({ value: r.key, label: r.name })));
         roleSelect.value = chosen;
@@ -83,7 +135,16 @@
           `Change ${u.name}'s role from ${u.role_name} to ${next.name}? What they can open and see changes straight away.`,
           { title: 'Change role', ok: 'Yes, change' });
         if (!sure) { select.value = u.role; return; }                   // cancelled: put the old role back
-        act(`/api/users/${u.code}/role`, { role: next.key }, null,
+        const body = { role: next.key };
+        if (next.key === 'sub_admin') {
+          // Moving someone into Sub-admin is also asking which state(s) they cover - right here, not left
+          // for later, so nobody ends up a sub-admin who (for now) sees nothing.
+          await nextTick();
+          const states = await promptStates(statesOptions, u.states, `Which state(s) can ${u.name} see?`);
+          if (!states) { select.value = u.role; return; }               // cancelled: put the old role back
+          body.states = states;
+        }
+        act(`/api/users/${u.code}/role`, body, null,
           (data) => toast(`${u.name} is now ${data.user.role_name}`));
       });
       return select;
@@ -92,8 +153,17 @@
     function userRow(u) {
       const key = u.status === 'pending' && u.code_expired ? 'expired' : u.status;
       const [tone, label] = STATUS_CHIPS[key];
+      const statesBtn = u.role !== 'sub_admin' ? null : h('button', {
+        class: 'btn small', type: 'button',
+        onclick: async () => {
+          const states = await promptStates(statesOptions, u.states, `Which state(s) can ${u.name} see?`);
+          if (!states) return;
+          act(`/api/users/${u.code}/states`, { states }, null, () => toast(`${u.name}'s states updated`));
+        },
+      }, u.states.length ? `States: ${u.states.join(', ')}` : 'Choose states');
       const actions = u.is_admin ? null : h('div', { class: 'user-actions' },
         roleControl(u),
+        statesBtn,
         h('button', {
           class: 'btn small', type: 'button',
           onclick: () => act(`/api/users/${u.code}/reset`, {},
@@ -138,15 +208,46 @@
     const nameInput = h('input', { id: 'u-name', type: 'text', maxlength: 60, autocomplete: 'off', placeholder: 'For example: Ravi Kumar' });
     const nameErr = h('p', { class: 'err', role: 'alert' });
     const addBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add user');
+
+    // Picking Sub-admin asks straight away which state(s) they'll cover - not left for later, so nobody
+    // ends up added as a sub-admin who (for now) sees nothing. Tapping the summary re-opens the same
+    // picker, in case they want to change it before adding.
+    const statesSummary = h('button', { type: 'button', class: 'link-btn', hidden: true }, '');
+    function refreshStatesSummary() {
+      statesSummary.hidden = roleSelect.value !== 'sub_admin';
+      statesSummary.textContent = newUserStates.length ? `States: ${newUserStates.join(', ')}` : 'Choose states';
+    }
+    statesSummary.onclick = async () => {
+      const states = await promptStates(statesOptions, newUserStates, 'Which state(s) can this sub-admin see?');
+      if (states) newUserStates = states;
+      refreshStatesSummary();
+    };
+    roleSelect.addEventListener('change', async () => {
+      if (roleSelect.value !== 'sub_admin') { newUserStates = []; refreshStatesSummary(); return; }
+      await nextTick();
+      const states = await promptStates(statesOptions, newUserStates, 'Which state(s) can this sub-admin see?');
+      if (states) newUserStates = states;
+      else roleSelect.value = 'sales_field';                       // cancelled: don't leave it on Sub-admin with nothing chosen
+      refreshStatesSummary();
+    });
+
     const form = h('form', {
       class: 'add-user', novalidate: true,
       onsubmit: async (e) => {
         e.preventDefault();
         nameErr.textContent = '';
+        if (roleSelect.value === 'sub_admin' && !newUserStates.length) {
+          nameErr.textContent = 'Choose at least one state for this sub-admin.';
+          return;
+        }
         addBtn.disabled = true;
         try {
-          const data = await api('/api/users', { method: 'POST', body: { name: nameInput.value, role: roleSelect.value } });
+          const body = { name: nameInput.value, role: roleSelect.value };
+          if (roleSelect.value === 'sub_admin') body.states = newUserStates;
+          const data = await api('/api/users', { method: 'POST', body });
           nameInput.value = '';
+          newUserStates = [];
+          refreshStatesSummary();
           showCode(data, 'Setup code');
         } catch (err) {
           nameErr.textContent = err.message;
@@ -161,6 +262,7 @@
       nameErr,
       h('label', { for: 'u-role' }, 'Role'),
       roleSelect,
+      statesSummary,
       addBtn,
       h('p', { class: 'hint' }, 'The role decides which services they can open. The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
 

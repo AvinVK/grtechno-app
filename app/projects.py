@@ -120,8 +120,8 @@ def _team(project):
 
 
 def _project_or_404(project_id: int) -> Project:
-    project = db.get_or_404(Project, project_id)
-    if not g.user.sees_all and g.user.code not in (project.owner_code, project.manager_code):
+    project = visible_projects().filter(Project.id == project_id).first()
+    if project is None:
         abort(404)
     return project
 

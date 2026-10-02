@@ -14,6 +14,10 @@ ROLES = [
     ("fitter", "Fitter", False),
     ("helper", "Helper", False),
     ("alarm_technician", "Alarm technician", False),
+    # Sees clients and projects, but only for the state(s) assigned to them (see UserState) - not sees_all,
+    # which is everything everywhere. Listed last - this order must match each role's migration, since
+    # tests/test_reference_data.py checks the seeded rows in insertion order.
+    ("sub_admin", "Sub-admin", False),
 ]
 
 # Which services each role can open. The admin can open everything, so it has no rows.
@@ -25,6 +29,7 @@ ROLE_MODULES = {
     "project_manager": ["clients", "projects", "attendance"],
     "supervisor": ["attendance"],
     "accounts": ["clients", "projects", "attendance"],
+    "sub_admin": ["clients", "projects", "attendance"],
     "welder": ["attendance"],
     "fitter": ["attendance"],
     "helper": ["attendance"],
@@ -54,3 +59,14 @@ SERVICES = [
 OLD_SERVICES = ["Sprinklers", "Hydrant and pump room", "Extinguishers", "NOC and audits"]
 
 PROJECT_STATUSES = ["planned", "running", "on_hold", "final_estimate_sent", "completed"]
+
+# For picking which state(s) a sub-admin can see - fixed, not drawn from existing client/project data, so
+# a state with no clients yet can still be assigned ahead of the first one landing there.
+INDIAN_STATES = [
+    "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", "Haryana",
+    "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur",
+    "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana",
+    "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+    "Andaman and Nicobar Islands", "Chandigarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi",
+    "Jammu and Kashmir", "Ladakh", "Lakshadweep", "Puducherry",
+]
