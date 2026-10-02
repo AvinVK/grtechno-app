@@ -248,103 +248,111 @@
       h('span', { class: 'att-day-sub' }, `${m.kind} · last on ${shortDate(parseDay(m.last_day))}`))))
     : h('p', { class: 'hint' }, 'No attendance has been recorded against this project yet.'));
 
-  // Closing a project needs the same two things every time, in real life: the final on-site measurement
-  // (which can land above or below what was negotiated) and that figure being fully paid - so this sheet
-  // asks for both, the same slide-up-panel pattern the lead drawer uses elsewhere in the app, rather than
-  // a single yes/no confirm box that can't hold a form.
+  // Closing a project needs the final on-site measurement on file (it can land above or below what was
+  // negotiated) and that figure fully paid - the same slide-up-panel pattern the lead drawer uses
+  // elsewhere, rather than a single yes/no confirm box that can't hold a form. Once the amount is
+  // recorded it's locked - a real measurement isn't something to second-guess from here - so a repeat
+  // visit to this sheet only ever shows it read-only, with just Close project left to do.
   function openCloseSheet(P, cur, onClosed) {
     const overlay = h('div', { class: 'overlay' });
-    const amountInput = h('input', {
-      type: 'number', min: '0', step: 'any', inputmode: 'decimal', id: 'f-final_amount',
-      value: P.final_amount ?? '',
-    });
-    let done = P.final_amount != null;
-    const yesBtn = h('button', { type: 'button', class: 'btn small' }, 'Yes');
-    const noBtn = h('button', { type: 'button', class: 'btn small' }, 'No');
-    const amountField = h('div', { class: 'field' },
-      h('label', { for: 'f-final_amount' }, `Final amount after measurement (${cur})`),
-      amountInput,
-      h('p', { class: 'err', id: 'err-final_amount', role: 'alert' }));
-    const statusText = h('p', { class: 'hint' });
-    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn', type: 'button' }, 'Save final amount');
-    const closeBtn = h('button', { class: 'btn danger primary', type: 'button' }, 'Close project');
-
-    function refreshToggle() {
-      yesBtn.classList.toggle('primary', done);
-      noBtn.classList.toggle('primary', !done);
-      amountField.hidden = !done;
-      refreshStatus();
-    }
-    function refreshStatus() {
-      if (!done) {
-        statusText.textContent = 'Complete the final measurement before this project can close.';
-        saveBtn.hidden = true;
-        closeBtn.disabled = true;
-        return;
-      }
-      saveBtn.hidden = false;
-      const amt = amountInput.value === '' ? null : Number(amountInput.value);
-      if (amt === null) {
-        statusText.textContent = 'Enter the final amount.';
-        closeBtn.disabled = true;
-        return;
-      }
-      const remaining = amt - (P.paid_amount || 0);
-      if (remaining > 0) {
-        statusText.textContent = `${money(remaining, cur)} still to be paid before this project can close.`;
-        closeBtn.disabled = true;
-      } else {
-        statusText.textContent = 'Fully paid - ready to close.';
-        closeBtn.disabled = false;
-      }
-    }
-    yesBtn.onclick = () => { done = true; refreshToggle(); amountInput.focus(); };
-    noBtn.onclick = () => { done = false; refreshToggle(); };
-    amountInput.addEventListener('input', refreshStatus);
-
     const finish = closeOnBack(() => { overlay.remove(); drawer.remove(); });
     const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
     closeX.onclick = () => finish();
     overlay.onclick = () => finish();
+    const scroll = h('div', { class: 'drawer-scroll' });
+    const foot = h('div', { class: 'drawer-foot' });
 
-    async function saveFinalAmount() {
-      errorBox.hidden = true;
-      showFieldErrors(drawer, {});
-      const body = { final_amount: done ? (amountInput.value === '' ? null : amountInput.value) : null };
-      const saved = await api(`/api/projects/${P.id}`, { method: 'PATCH', body });
-      P.final_amount = saved.project.final_amount;
-      P.paid_amount = saved.project.paid_amount;
-      return saved;
+    // Called once up front and again, in place (no re-opening the sheet - that would mean a second
+    // closeOnBack push racing the first's history.back()), once the amount is recorded.
+    function renderContent() {
+      const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+      let body, footer;
+      if (P.final_amount != null) {
+      const remaining = P.final_amount - (P.paid_amount || 0);
+      const closeBtn = h('button', { class: 'btn danger primary', type: 'button', disabled: remaining > 0 }, 'Close project');
+      closeBtn.onclick = async () => {
+        closeBtn.disabled = true;
+        try {
+          const closed = await api(`/api/projects/${P.id}/close`, { method: 'POST' });
+          toast('Project closed');
+          finish();
+          onClosed(closed);
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          closeBtn.disabled = false;
+        }
+      };
+      body = [
+        errorBox,
+        h('div', { class: 'field' },
+          h('label', {}, 'Final amount after measurement'),
+          h('p', { class: 'stat-value is-text' }, money(P.final_amount, cur))),
+        h('p', { class: 'hint' }, remaining > 0
+          ? `${money(remaining, cur)} still to be paid before this project can close.`
+          : 'Fully paid - ready to close.'),
+      ];
+      footer = [closeBtn];
+    } else {
+      const amountInput = h('input', {
+        type: 'number', min: '0', step: 'any', inputmode: 'decimal', id: 'f-final_amount',
+      });
+      let measured = false;
+      const yesBtn = h('button', { type: 'button', class: 'btn small' }, 'Yes');
+      const noBtn = h('button', { type: 'button', class: 'btn small' }, 'No');
+      const amountField = h('div', { class: 'field' },
+        h('label', { for: 'f-final_amount' }, `Final amount after measurement (${cur})`),
+        amountInput,
+        h('p', { class: 'err', id: 'err-final_amount', role: 'alert' }));
+      const statusText = h('p', { class: 'hint' });
+      const recordBtn = h('button', { class: 'btn danger primary', type: 'button' }, 'Record final amount');
+
+      function refresh() {
+        yesBtn.classList.toggle('primary', measured);
+        noBtn.classList.toggle('primary', !measured);
+        amountField.hidden = !measured;
+        if (!measured) {
+          statusText.textContent = 'Complete the final measurement before this project can close.';
+          recordBtn.disabled = true;
+        } else {
+          statusText.textContent = '';
+          recordBtn.disabled = amountInput.value === '';
+        }
+      }
+      yesBtn.onclick = () => { measured = true; refresh(); amountInput.focus(); };
+      noBtn.onclick = () => { measured = false; refresh(); };
+      amountInput.addEventListener('input', refresh);
+      recordBtn.onclick = async () => {
+        errorBox.hidden = true;
+        showFieldErrors(scroll, {});
+        recordBtn.disabled = true;
+        try {
+          const saved = await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { final_amount: amountInput.value } });
+          P.final_amount = saved.project.final_amount;
+          P.paid_amount = saved.project.paid_amount;
+          toast('Final amount recorded');
+          renderContent();                      // swap to the read-only view, Close project now on offer
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          showFieldErrors(scroll, err.fields);
+          recordBtn.disabled = false;
+        }
+      };
+      body = [
+        errorBox,
+        h('div', { class: 'field' },
+          h('label', {}, 'Was the final measurement done?'),
+          h('div', { class: 'yes-no-row' }, yesBtn, noBtn)),
+        amountField,
+        statusText,
+      ];
+      footer = [recordBtn];
+      refresh();
     }
-    saveBtn.onclick = async () => {
-      saveBtn.disabled = true;
-      try {
-        await saveFinalAmount();
-        toast('Final amount saved');
-        refreshStatus();
-      } catch (err) {
-        errorBox.textContent = err.message;
-        errorBox.hidden = false;
-        showFieldErrors(drawer, err.fields);
-      } finally {
-        saveBtn.disabled = false;
-      }
-    };
-    closeBtn.onclick = async () => {
-      closeBtn.disabled = true;
-      try {
-        await saveFinalAmount();
-        const closed = await api(`/api/projects/${P.id}/close`, { method: 'POST' });
-        toast('Project closed');
-        finish();
-        onClosed(closed);
-      } catch (err) {
-        errorBox.textContent = err.message;
-        errorBox.hidden = false;
-        closeBtn.disabled = false;
-      }
-    };
+    clear(scroll).append(...body);
+    clear(foot).append(...footer);
+    }
 
     const drawer = h('div', { class: 'drawer' },
       h('div', { class: 'drawer-head' },
@@ -352,16 +360,10 @@
         h('div', { class: 'drawer-head-row' },
           h('div', { class: 'drawer-titles' }, h('h2', {}, 'Close project'), h('p', { class: 'drawer-sub' }, `${P.code} · ${P.title}`)),
           closeX)),
-      h('div', { class: 'drawer-scroll' },
-        errorBox,
-        h('div', { class: 'field' },
-          h('label', {}, 'Was the final measurement done?'),
-          h('div', { class: 'yes-no-row' }, yesBtn, noBtn)),
-        amountField,
-        statusText));
-    drawer.append(h('div', { class: 'drawer-foot' }, saveBtn, closeBtn));
+      scroll);
+    drawer.append(foot);
     document.body.append(overlay, drawer);
-    refreshToggle();
+    renderContent();
   }
 
   function renderDashboard(data) {
@@ -547,7 +549,7 @@
       const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
       // The advance is always the first step, by position - not by matching what its milestone says.
       const advanceAmt = rows.length ? toNumber(rows[0].amount) : 0;
-      ovNegotiated.textContent = P.estimated_amount == null ? '—' : money(P.estimated_amount, cur);
+      ovNegotiated.textContent = netValue === null ? '—' : money(netValue, cur);
       ovAdvance.textContent = rows.length ? money(advanceAmt, cur) : '—';
       ovRemaining.textContent = netValue === null ? '—' : money(netValue - scheduled, cur);
 
