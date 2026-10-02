@@ -988,27 +988,44 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-receipt-meta { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .pay-receipt-comments { margin: 4px 0 0; font-size: 14px; overflow-wrap: anywhere; }
 
-.pay-rows { display: grid; gap: 16px; }
-.pay-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
-  /* The × sits with the milestone/amount row it removes, not spanning up into the position caption too -
-     centering it across both would land it between the two, aligned with neither. Once a step is paid,
-     mode/date/comments fill in below it - optional, so they don't need their own × or row label. */
-  grid-template-areas: "label label ." "milestone amount x" "mode date ." "comments comments .";
-  gap: 8px;
-  align-items: center;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--line);
+/* ---------- Payment steps: a tap-to-edit list, each step's own sheet ---------- */
+
+.steps-label { margin: 18px 0 8px; color: var(--muted); font: 600 13px/1.2 var(--font-body); }
+.step-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 14px;
+  background: none; border: 0; text-align: left; color: inherit; font: inherit; cursor: pointer;
 }
-.pay-rows > .pay-row:last-child { padding-bottom: 0; border-bottom: 0; }
-.pay-label-text { grid-area: label; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
-.pay-milestone { grid-area: milestone; }
-.pay-amount { grid-area: amount; }
-.pay-mode { grid-area: mode; }
-.pay-paid-date { grid-area: date; }
-.pay-comments { grid-area: comments; width: 100%; min-height: 56px; resize: vertical; font: inherit; }
-.pay-row .icon-x { grid-area: x; }
+.step-row:hover { background: var(--hover); }
+.step-circle {
+  flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid var(--line-strong); color: var(--muted); font: 600 13px/1 var(--font-num);
+}
+.step-circle.paid { border-color: var(--ok); background: var(--ok); color: #fff; font-size: 15px; }
+.step-circle.dashed { border-style: dashed; color: var(--accent-dark); border-color: var(--accent-dark); }
+.step-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.step-title { font: 600 15px/1.25 var(--font-body); overflow-wrap: anywhere; }
+.step-sub { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.step-amount { flex: none; font: 600 15px/1 var(--font-num); }
+.step-add .step-title { color: var(--accent-dark); }
+
+/* The edit-step sheet - same slide-up panel as the lead drawer / close-project sheet. */
+.step-sheet-eyebrow { margin: 0; color: var(--muted); font: 600 12px/1.2 var(--font-num); text-transform: uppercase; letter-spacing: 0.04em; }
+.step-sheet-delete { color: var(--signal); font-weight: 600; }
+.amount-input-wrap { position: relative; }
+.amount-input-wrap input { padding-left: 28px; }
+.amount-prefix { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.step-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; font-weight: 600; }
+.switch { position: relative; flex: none; display: inline-block; width: 46px; height: 28px; }
+.switch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+.switch-track { position: absolute; inset: 0; border-radius: var(--r-pill); background: var(--track); transition: background 0.15s ease; pointer-events: none; }
+.switch-thumb {
+  position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.15s ease; pointer-events: none;
+}
+.switch input:checked ~ .switch-track { background: var(--accent); }
+.switch input:checked ~ .switch-thumb { transform: translateX(18px); }
+.switch input:focus-visible ~ .switch-track { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .negotiation-rows { display: grid; gap: 8px; }
 .negotiation-round { padding-bottom: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }

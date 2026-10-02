@@ -81,7 +81,14 @@ window.LD = (() => {
       rawFinish(result);
       if (history.state && history.state.ldOverlay === id) history.back();
     }
-    function onPop() { finish(undefined); }
+    function onPop() {
+      // A nested overlay (a picker opened from inside this one) closing itself also fires popstate, by
+      // the same history.back() below - but that one lands back on this overlay's own pushed state, not
+      // past it, so this isn't the back-gesture this listener exists for. Only a popstate that actually
+      // moves away from `id` means someone backed (or another finish()) out of this overlay itself.
+      if (history.state && history.state.ldOverlay === id) return;
+      finish(undefined);
+    }
     window.addEventListener('popstate', onPop);
     history.pushState({ ldOverlay: id }, '', location.href);
     return finish;

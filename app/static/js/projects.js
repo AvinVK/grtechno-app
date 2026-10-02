@@ -490,63 +490,37 @@
           [p.mode, p.paid_date ? fmtDate(p.paid_date) : null].filter(Boolean).join(' · ')),
         p.comments ? h('p', { class: 'pay-receipt-comments' }, p.comments) : null))) : null;
 
-    const payRows = h('div', { class: 'pay-rows' });
     const paySummary = h('p', { class: 'pay-summary', 'aria-live': 'polite' });
-    const payErr = h('p', { class: 'err', id: 'err-payments', role: 'alert' });
+    const stepsLabel = h('p', { class: 'steps-label' });
+    const stepsList = h('div', { class: 'card-group step-list' });
 
     // Step names are positional, not something the admin types - the first is always the advance, then
-    // "2nd payment", "3rd payment" and so on, renumbered live as rows are added or removed.
+    // "2nd payment", "3rd payment" and so on, so they shift on their own as steps are added or removed.
     function labelFor(index) {
       if (index === 0) return 'Advance';
       const n = index + 1;
       const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
       return `${n}${suffix} payment`;
     }
-    function renumberPayRows() {
-      [...payRows.children].forEach((row, i) => { row._labelEl.textContent = labelFor(i); });
-    }
 
-    function addPayRow(p = { amount: '', label: '' }) {
-      const labelEl = h('p', { class: 'pay-label-text' }, '');
-      const milestoneInput = h('input', {
-        type: 'text', class: 'pay-milestone', maxlength: 120,
-        placeholder: 'Milestone, for example: Material delivery, Site handover', 'aria-label': 'Milestone', value: p.label ?? '',
-      });
-      const modeSel = selectField(
-        [{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
-        p.mode || '', { title: 'Mode of payment', placeholder: 'Mode of payment' });
-      modeSel.classList.add('pay-mode');
-      const paidDateInput = dateField(p.paid_date || '', { placeholder: 'Date of payment' });
-      paidDateInput.classList.add('pay-paid-date');
-      const commentsInput = h('textarea', { class: 'pay-comments', rows: 2, placeholder: 'Comments', 'aria-label': 'Comments' });
-      commentsInput.value = p.comments ?? '';
-      const row = h('div', { class: 'pay-row' },
-        labelEl,
-        milestoneInput,
-        h('input', { type: 'number', class: 'pay-amount', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${cur})`, 'aria-label': 'Amount', value: p.amount ?? '' }),
-        h('button', {
-          class: 'icon-x', type: 'button', 'aria-label': 'Remove this payment step',
-          onclick: () => { row.remove(); payErr.textContent = ''; renumberPayRows(); recalc(); },
-        }, '×'),
-        modeSel, paidDateInput, commentsInput);
-      row._labelEl = labelEl;
-      payRows.append(row);
-    }
-    (P.payments.length ? P.payments : []).forEach(addPayRow);
-    renumberPayRows();
+    // In-memory working copy - each row's own sheet edits this, then PATCHes the whole array straight
+    // away (there's no separate "save the timeline" step anymore, see openStepSheet).
+    let steps = (P.payments.length ? P.payments : []).map((p) => ({ ...p }));
 
-    // The position tag (Advance, 2nd payment, ...) is always shown; the milestone is the admin's own
-    // description of what that step is tied to, and falls back to the position tag when left blank.
-    const payments = () => [...payRows.querySelectorAll('.pay-row')].map((r, i) => ({
-      label: r.querySelector('.pay-milestone').value.trim() || labelFor(i),
-      amount: r.querySelector('.pay-amount').value === '' ? 0 : r.querySelector('.pay-amount').value,
-      mode: r.querySelector('.pay-mode').value,
-      paid_date: r.querySelector('.pay-paid-date').value || null,
-      comments: r.querySelector('.pay-comments').value.trim(),
-    }));
+    // What actually goes to the server: the position tag is always there as a fallback, the milestone
+    // (if any) is the admin's own description of what the step is tied to.
+    function toPayload(arr) {
+      return arr.map((s, i) => ({
+        label: (s.label || '').trim() || labelFor(i),
+        amount: s.amount === '' || s.amount == null ? 0 : s.amount,
+        mode: s.mode || '',
+        paid_date: s.paid_date || null,
+        comments: (s.comments || '').trim(),
+      }));
+    }
 
     function recalc() {
-      const rows = payments();
+      const rows = toPayload(steps);
       const scheduled = rows.reduce((sum, p) => sum + toNumber(p.amount), 0);
       // The advance is always the first step, by position - not by matching what its milestone says.
       const advanceAmt = rows.length ? toNumber(rows[0].amount) : 0;
@@ -555,55 +529,228 @@
       ovRemaining.textContent = netValue === null ? '—' : money(netValue - scheduled, cur);
 
       paySummary.className = 'pay-summary';
-      if (!payRows.children.length) paySummary.textContent = '';
+      if (!rows.length) paySummary.textContent = '';
       else if (netValue === null) paySummary.textContent = `Scheduled: ${money(scheduled, cur)}`;
       else if (scheduled > netValue) { paySummary.textContent = `Scheduled ${money(scheduled, cur)} is more than the net amount ${money(netValue, cur)}`; paySummary.classList.add('bad'); }
       else if (scheduled === netValue) { paySummary.textContent = `All ${money(netValue, cur)} is scheduled`; paySummary.classList.add('good'); }
       else paySummary.textContent = `Scheduled ${money(scheduled, cur)} of ${money(netValue, cur)}. ${money(netValue - scheduled, cur)} is not scheduled yet.`;
     }
 
-    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save payment timeline');
-    const form = h('form', { novalidate: true, class: 'project-form',
-      onsubmit: async (e) => {
-        e.preventDefault();
+    // PATCHes the whole array (the schedule has always been saved as one list, not per-step rows on the
+    // server) and reconciles the in-memory copy with whatever the server actually stored.
+    async function persistSteps(next) {
+      const saved = await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { payments: toPayload(next) } });
+      steps = saved.project.payments.map((p) => ({ ...p }));
+      renderStepsList();
+      recalc();
+    }
+
+    function renderStepsList() {
+      stepsLabel.textContent = `Steps · ${steps.length}`;
+      clear(stepsList);
+      steps.forEach((s, i) => {
+        const paid = !!s.paid_date;
+        const circle = paid
+          ? h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓')
+          : h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(i + 1));
+        const title = (s.label || '').trim() || labelFor(i);
+        const subParts = paid
+          ? [`Paid ${fmtDate(s.paid_date)}`, s.mode || null].filter(Boolean)
+          : ['Not paid yet'];
+        let sub = subParts.join(' · ');
+        if (s.comments) sub += ' · note';
+        stepsList.append(h('button', {
+          type: 'button', class: 'step-row', 'aria-label': `${title}, ${money(toNumber(s.amount), cur)}, ${paid ? 'paid' : 'not paid'}`,
+          onclick: () => openStepSheet(i),
+        },
+          circle,
+          h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, title), h('span', { class: 'step-sub' }, sub)),
+          h('span', { class: 'step-amount' }, money(toNumber(s.amount), cur))));
+      });
+      stepsList.append(h('button', {
+        type: 'button', class: 'step-row step-add',
+        onclick: () => openStepSheet(steps.length),
+      },
+        h('span', { class: 'step-circle dashed', 'aria-hidden': 'true' }, '+'),
+        h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, '+ Add step'))));
+    }
+
+    // One step's own sheet - add (index === steps.length) or edit. Saves and deletes both PATCH the
+    // whole array immediately; there's nothing left to do from the list screen itself.
+    function openStepSheet(index) {
+      const isNew = index === steps.length;
+      const current = isNew ? { label: '', amount: '', mode: '', paid_date: null, comments: '' } : steps[index];
+      const trigger = document.activeElement;
+
+      const overlay = h('div', { class: 'overlay' });
+      const scroll = h('div', { class: 'drawer-scroll' });
+      const foot = h('div', { class: 'drawer-foot' });
+      const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+
+      function onKey(e) {
+        if (e.key === 'Escape') { e.preventDefault(); finish(); return; }
+        if (e.key !== 'Tab') return;
+        const focusables = [...drawer.querySelectorAll('button, input, select, textarea')].filter((el) => !el.disabled && el.offsetParent !== null);
+        if (!focusables.length) return;
+        const first = focusables[0], last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+      const finish = closeOnBack(() => {
+        window.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+        drawer.remove();
+        document.body.classList.remove('locked');
+        if (trigger && trigger.isConnected) trigger.focus();
+      });
+      overlay.onclick = () => finish();
+      const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
+      closeX.onclick = () => finish();
+
+      const milestoneInput = h('input', { type: 'text', maxlength: 120, value: current.label || '' });
+      const amountInput = h('input', {
+        type: 'number', id: 'f-amount', min: '0', step: 'any', inputmode: 'decimal', value: current.amount ?? '',
+        'aria-describedby': 'err-amount',
+      });
+      const chips = h('div', { class: 'step-chips' });
+      function renderChips() {
+        clear(chips);
+        if (netValue === null) return;
+        const quarter = Math.round(netValue * 0.25 * 100) / 100;
+        chips.append(h('button', {
+          type: 'button', class: 'btn small',
+          onclick: () => { amountInput.value = quarter; amountInput.dispatchEvent(new Event('input', { bubbles: true })); },
+        }, '25% of net'));
+        const otherTotal = steps.reduce((sum, s, i) => (i === index ? sum : sum + toNumber(s.amount)), 0);
+        const rest = netValue - otherTotal;
+        if (rest > 0) {
+          chips.append(h('button', {
+            type: 'button', class: 'btn small',
+            onclick: () => { amountInput.value = rest; amountInput.dispatchEvent(new Event('input', { bubbles: true })); },
+          }, `Rest · ${money(rest, cur)}`));
+        }
+      }
+      renderChips();
+
+      const modeSel = selectField(
+        [{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
+        current.mode || '', { title: 'Mode of payment', placeholder: 'Mode of payment' });
+      const paidDateInput = dateField(current.paid_date || '', { placeholder: 'Date of payment' });
+      const modeField = field('mode', 'Mode of payment', modeSel);
+      const dateFieldEl = field('paid_date', 'Date of payment', paidDateInput);
+      const paidToggleInput = h('input', { type: 'checkbox', checked: !!current.paid_date });
+      const paidToggle = h('label', { class: 'switch' },
+        paidToggleInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
+      function todayIso() {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
+      function refreshPaidFields() {
+        const on = paidToggleInput.checked;
+        modeField.hidden = !on;
+        dateFieldEl.hidden = !on;
+        if (on && !paidDateInput.value) paidDateInput.value = todayIso();
+        if (!on) { modeSel.value = ''; paidDateInput.value = ''; }
+      }
+      paidToggleInput.addEventListener('change', refreshPaidFields);
+      refreshPaidFields();
+
+      const noteTextarea = h('textarea', { rows: 2 });
+      noteTextarea.value = current.comments || '';
+      const noteField = field('comments', 'Note', noteTextarea);
+      const noteToggleBtn = h('button', { type: 'button', class: 'link-btn' }, '+ Add a note');
+      const hasNote = !!(current.comments || '').trim();
+      noteField.hidden = !hasNote;
+      noteToggleBtn.hidden = hasNote;
+      noteToggleBtn.onclick = () => { noteField.hidden = false; noteToggleBtn.hidden = true; noteTextarea.focus(); };
+
+      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save step');
+      saveBtn.onclick = async () => {
         errorBox.hidden = true;
-        showFieldErrors(form, {});
+        showFieldErrors(scroll, {});
         saveBtn.disabled = true;
+        const draft = {
+          label: milestoneInput.value, amount: amountInput.value, mode: modeSel.value,
+          paid_date: paidDateInput.value || null, comments: noteTextarea.value,
+        };
+        const next = steps.slice();
+        if (isNew) next.push(draft); else next[index] = draft;
         try {
-          await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { payments: payments() } });
-          toast('Payment timeline saved');
-          window.location.hash = `#p${P.id}`;
+          await persistSteps(next);
+          toast('Step saved');
+          finish();
         } catch (err) {
-          errorBox.textContent = err.message;
+          errorBox.textContent = (err.fields && err.fields.payments) || err.message;
           errorBox.hidden = false;
-          const first = showFieldErrors(form, err.fields);
-          (first || errorBox).focus?.();
           saveBtn.disabled = false;
         }
-      } },
-      errorBox,
+      };
+
+      let deleteBtn = null;
+      if (!isNew) {
+        deleteBtn = h('button', { type: 'button', class: 'link-btn step-sheet-delete' }, 'Delete');
+        deleteBtn.onclick = async () => {
+          const sure = await confirm(`Remove ${(current.label || '').trim() || labelFor(index)}?`, { ok: 'Delete', danger: true, title: 'Delete step' });
+          if (!sure) return;
+          deleteBtn.disabled = true;
+          const next = steps.slice();
+          next.splice(index, 1);
+          try {
+            await persistSteps(next);
+            toast('Step removed');
+            finish();
+          } catch (err) {
+            errorBox.textContent = (err.fields && err.fields.payments) || err.message;
+            errorBox.hidden = false;
+            deleteBtn.disabled = false;
+          }
+        };
+      }
+
+      const total = isNew ? steps.length + 1 : steps.length;
+      const title = (current.label || '').trim() || labelFor(index);
+      scroll.append(
+        errorBox,
+        field('label', 'Milestone', milestoneInput),
+        h('div', { class: 'field' },
+          h('label', { for: 'f-amount' }, 'Amount'),
+          h('div', { class: 'amount-input-wrap' }, h('span', { class: 'amount-prefix', 'aria-hidden': 'true' }, cur), amountInput),
+          chips,
+          h('p', { class: 'err', id: 'err-amount', role: 'alert' })),
+        h('div', { class: 'toggle-row' }, h('span', {}, 'Payment received'), paidToggle),
+        modeField, dateFieldEl,
+        noteToggleBtn, noteField);
+      foot.append(saveBtn);
+
+      const drawer = h('div', { class: 'drawer' },
+        h('div', { class: 'drawer-head' },
+          h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
+          h('div', { class: 'drawer-head-row' },
+            h('div', { class: 'drawer-titles' },
+              h('p', { class: 'step-sheet-eyebrow' }, `Step ${index + 1} of ${total}`),
+              h('h2', {}, title)),
+            deleteBtn, closeX)),
+        scroll);
+      drawer.append(foot);
+      document.body.classList.add('locked');
+      window.addEventListener('keydown', onKey, true);
+      document.body.append(overlay, drawer);
+      (isNew ? amountInput : milestoneInput).focus();
+    }
+
+    renderStepsList();
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, 'payments'),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Payment timeline'),
         payOverview,
         payReceipts,
         h('p', { class: 'hint' }, 'Split the net amount into steps, each tied to its own site milestone.'),
-        payRows,
-        payErr,
-        h('button', { class: 'btn small', type: 'button', onclick: () => { addPayRow(); renumberPayRows(); recalc(); payRows.lastChild.querySelector('input').focus(); } }, 'Add payment step'),
-        paySummary),
-      h('div', { class: 'form-actions' }, saveBtn));
-
-    form.addEventListener('input', (e) => {
-      // A payment message from the last save no longer applies once the amounts change.
-      if (payRows.contains(e.target)) payErr.textContent = '';
-      recalc();
-    });
-
-    clear(view).append(h('div', { class: 'project-detail' },
-      ...projectHead(P, c),
-      projectTabs(P.id, 'payments'),
-      form));
+        stepsLabel,
+        stepsList,
+        paySummary)));
     recalc();
     window.scrollTo(0, 0);
   }
