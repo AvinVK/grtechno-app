@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from .constants import DEFAULT_SETTINGS
 from .crypto import EncryptedText
@@ -335,6 +336,9 @@ class Project(db.Model):
     completion_days = db.Column(db.Integer, nullable=True)
     estimated_amount = db.Column(db.Numeric(14, 2), nullable=True)
     discount_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    # Set at closing time, from the final on-site measurement - once present it's the figure that counts,
+    # not the negotiated estimate (the work actually done can come in more or less than what was quoted).
+    final_amount = db.Column(db.Numeric(14, 2), nullable=True)
     payment_terms = db.Column(db.Text, nullable=False, default="", server_default="")
     special_terms = db.Column(db.Text, nullable=False, default="", server_default="")
     manager_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
@@ -359,9 +363,17 @@ class Project(db.Model):
 
     @property
     def net_amount(self):
+        if self.final_amount is not None:
+            return self.final_amount
         if self.estimated_amount is None:
             return None
         return self.estimated_amount - (self.discount_amount or 0)
+
+    @property
+    def paid_amount(self):
+        """What's actually been received - the payment steps with a date of payment recorded, not every
+        step in the schedule (a future step can sit there unpaid)."""
+        return sum((p.amount for p in self.payments if p.paid_date is not None), Decimal(0))
 
     @property
     def service_names(self) -> list:
@@ -380,7 +392,8 @@ class Project(db.Model):
             "work_category": self.work_category, "services": self.service_names,
             "client_id": self.client_id, "client_name": self.client.name,
             "estimated_amount": num(self.estimated_amount), "discount_amount": num(self.discount_amount),
-            "net_amount": num(self.net_amount), "manager_code": self.manager_code,
+            "final_amount": num(self.final_amount), "net_amount": num(self.net_amount),
+            "paid_amount": num(self.paid_amount), "manager_code": self.manager_code,
             "manager_name": self.manager.name if self.manager else None,
             "lead_id": self.lead_id,
             "site_state": self.site_state, "site_district": self.site_district, "site_city": self.site_city,

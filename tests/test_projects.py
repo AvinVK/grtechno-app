@@ -315,6 +315,20 @@ def test_only_the_admin_can_close_a_project(client, admin_client, accounts_clien
     for who in (accounts_client, manager_client):
         assert who.post(f"/api/projects/{pid}/close").status_code == 403
 
+    # Closing needs the final measurement on file and fully paid - nothing to measure yet, so this is refused.
+    blocked = admin_client.post(f"/api/projects/{pid}/close")
+    assert blocked.status_code == 422
+
+    # The won lead's advance (100000) already carried over as a paid step - measuring higher than that
+    # leaves a balance, so still refused until it's covered too.
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "final_amount": 150000})
+    still_blocked = admin_client.post(f"/api/projects/{pid}/close")
+    assert still_blocked.status_code == 422          # measured, but not fully paid
+
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "payments": [
+        {"label": "Advance", "amount": 100000, "mode": "Bank transfer", "paid_date": "2026-09-23"},
+        {"label": "Final", "amount": 50000, "mode": "Bank transfer", "paid_date": "2026-09-30"},
+    ]})
     closed = admin_client.post(f"/api/projects/{pid}/close")
     assert closed.status_code == 200
     body = closed.get_json()
@@ -325,7 +339,12 @@ def test_only_the_admin_can_close_a_project(client, admin_client, accounts_clien
 def test_completed_at_follows_the_status_when_edited(client, admin_client):
     pid = make_project(client, admin_client)
     url = f"/api/projects/{pid}"
-    assert admin_client.patch(url, json={"title": "T", "status": "completed"}).get_json()["dashboard"]["completed_at"]
+    assert admin_client.patch(url, json={"title": "T", "status": "completed"}).status_code == 422
+    done = admin_client.patch(url, json={
+        "title": "T", "status": "completed", "final_amount": 100000,
+        "payments": [{"label": "Final", "amount": 100000, "mode": "Cash", "paid_date": "2026-09-30"}],
+    })
+    assert done.get_json()["dashboard"]["completed_at"]
     assert admin_client.patch(url, json={"title": "T", "status": "running"}).get_json()["dashboard"]["completed_at"] is None
 
 
@@ -354,6 +373,10 @@ def test_only_the_admin_can_delete_a_project(client, admin_client, accounts_clie
 def test_a_closed_project_can_still_be_deleted(client, admin_client):
     """TEMPORARY - closed/completed projects need the backfill cleanup too."""
     pid = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid}", json={
+        "title": "T", "final_amount": 100000,
+        "payments": [{"label": "Final", "amount": 100000, "mode": "Cash", "paid_date": "2026-09-30"}],
+    })
     admin_client.post(f"/api/projects/{pid}/close")
     dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
     assert dash["can_delete"] is True

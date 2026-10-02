@@ -267,6 +267,7 @@ def update_project(project_id):
     f.integer("completion_days", 0, 3650)
     f.money("estimated_amount")
     f.money("discount_amount", nullable=False)
+    f.money("final_amount")
     f.text("payment_terms", 5000)
     f.text("special_terms", 5000)
     f.text("site_state", 80)
@@ -296,12 +297,25 @@ def update_project(project_id):
 
     estimated = data["estimated_amount"] if "estimated_amount" in data else project.estimated_amount
     discount = data["discount_amount"] if "discount_amount" in data else (project.discount_amount or Decimal(0))
+    final = data["final_amount"] if "final_amount" in data else project.final_amount
     if "estimated_amount" not in errors and "discount_amount" not in errors and estimated is not None:
         if discount > estimated:
             errors["discount_amount"] = "The discount cannot be more than the estimated amount"
-        elif payments is not None and "payments" not in errors:
-            if sum((p["amount"] for p in payments), Decimal(0)) > estimated - discount:
-                errors["payments"] = "The payment steps add up to more than the net amount"
+
+    # Once a final measurement is in, it's the ceiling the schedule is checked against - not the
+    # pre-measurement negotiated figure, which the final amount can come in above or below.
+    net_ceiling = final if final is not None else (estimated - discount if estimated is not None else None)
+    if "final_amount" not in errors and net_ceiling is not None and payments is not None and "payments" not in errors:
+        if sum((p["amount"] for p in payments), Decimal(0)) > net_ceiling:
+            errors["payments"] = "The payment steps add up to more than the net amount"
+
+    # Same gate as the dedicated close route (see close_project) - status is just another field here, but
+    # completing a project still needs the final measurement on file and fully paid either way.
+    if data.get("status") == "completed" and project.status != "completed" and "status" not in errors:
+        if final is None:
+            errors["status"] = "Enter the final measurement amount before closing."
+        elif project.paid_amount < final:
+            errors["status"] = "The final amount hasn't been fully paid yet."
 
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
@@ -327,12 +341,18 @@ def update_project(project_id):
 @bp.post("/api/projects/<int:project_id>/close")
 def close_project(project_id):
     """Close a project (mark it completed). Admin only - the project's own screen shows the button to the
-    admin alone, and this refuses everyone else too."""
+    admin alone, and this refuses everyone else too. Needs the final measurement's amount on file (set via
+    PATCH final_amount) and that amount fully paid - the sheet that collects both keeps this from firing
+    before either is true, but the gate lives here too since that's just the UI's say-so."""
     if not g.user.is_admin:
         abort(403, "Only the admin can close a project.")
     project = _project_or_404(project_id)
     if project.status == "completed":
         return jsonify(error="This project is already closed."), 409
+    if project.final_amount is None:
+        abort(422, "Enter the final measurement amount before closing.")
+    if project.paid_amount < project.final_amount:
+        abort(422, "The final amount hasn't been fully paid yet.")
     project.status = "completed"
     project.completed_at = utcnow()
     db.session.commit()

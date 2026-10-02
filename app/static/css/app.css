@@ -676,6 +676,8 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .check-row input { width: auto; }
 
 .quick-dates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.yes-no-row { display: flex; gap: 8px; margin-top: 4px; }
+.yes-no-row .btn { flex: 1; }
 
 .drawer-foot {
   position: sticky;
