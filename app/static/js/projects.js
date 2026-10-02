@@ -546,7 +546,7 @@
     }
 
     function renderStepsList() {
-      stepsLabel.textContent = `Steps · ${steps.length}`;
+      stepsLabel.textContent = `Payments · ${steps.length}`;
       clear(stepsList);
       steps.forEach((s, i) => {
         const paid = !!s.paid_date;
@@ -572,7 +572,7 @@
         onclick: () => openStepSheet(steps.length),
       },
         h('span', { class: 'step-circle dashed', 'aria-hidden': 'true' }, '+'),
-        h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, '+ Add step'))));
+        h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, '+ Add payment'))));
     }
 
     // One step's own sheet - add (index === steps.length) or edit. Saves and deletes both PATCH the
@@ -664,7 +664,7 @@
       noteToggleBtn.hidden = hasNote;
       noteToggleBtn.onclick = () => { noteField.hidden = false; noteToggleBtn.hidden = true; noteTextarea.focus(); };
 
-      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save step');
+      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save payment');
       saveBtn.onclick = async () => {
         errorBox.hidden = true;
         showFieldErrors(scroll, {});
@@ -677,7 +677,7 @@
         if (isNew) next.push(draft); else next[index] = draft;
         try {
           await persistSteps(next);
-          toast('Step saved');
+          toast('Payment saved');
           finish();
         } catch (err) {
           errorBox.textContent = (err.fields && err.fields.payments) || err.message;
@@ -690,14 +690,14 @@
       if (!isNew) {
         deleteBtn = h('button', { type: 'button', class: 'link-btn step-sheet-delete' }, 'Delete');
         deleteBtn.onclick = async () => {
-          const sure = await confirm(`Remove ${(current.label || '').trim() || labelFor(index)}?`, { ok: 'Delete', danger: true, title: 'Delete step' });
+          const sure = await confirm(`Remove ${(current.label || '').trim() || labelFor(index)}?`, { ok: 'Delete', danger: true, title: 'Delete payment' });
           if (!sure) return;
           deleteBtn.disabled = true;
           const next = steps.slice();
           next.splice(index, 1);
           try {
             await persistSteps(next);
-            toast('Step removed');
+            toast('Payment removed');
             finish();
           } catch (err) {
             errorBox.textContent = (err.fields && err.fields.payments) || err.message;
@@ -727,7 +727,7 @@
           h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
           h('div', { class: 'drawer-head-row' },
             h('div', { class: 'drawer-titles' },
-              h('p', { class: 'step-sheet-eyebrow' }, `Step ${index + 1} of ${total}`),
+              h('p', { class: 'step-sheet-eyebrow' }, `Payment ${index + 1} of ${total}`),
               h('h2', {}, title)),
             deleteBtn, closeX)),
         scroll);
@@ -747,7 +747,7 @@
         h('h3', {}, 'Payment timeline'),
         payOverview,
         payReceipts,
-        h('p', { class: 'hint' }, 'Split the net amount into steps, each tied to its own site milestone.'),
+        h('p', { class: 'hint' }, 'Split the net amount into payments, each tied to its own site milestone.'),
         stepsLabel,
         stepsList,
         paySummary)));
