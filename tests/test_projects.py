@@ -83,7 +83,7 @@ def test_project_title_leads_with_the_site_name_when_the_survey_has_one(client, 
     admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
     detail = client.get(f"/api/leads/{lead['id']}").get_json()
     project = db.session.get(Project, detail["project_id"])
-    assert project.title == "Kalyani Cold Storage - Tower B, 4th floor"
+    assert project.title == "Tower B, 4th floor" and project.site_name == "Tower B, 4th floor"
 
 
 def test_same_company_name_no_longer_auto_reuses_a_client(client, admin_client):

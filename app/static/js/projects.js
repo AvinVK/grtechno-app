@@ -137,7 +137,7 @@
     if (presetClientId) clientSel.disabled = true;
     const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
     const newNameField = field('new_client_name', 'New client name', newName);
-    const titleInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Optional (defaults to client and services)' });
+    const siteNameInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'For example: Tower B, 4th floor' });
     const statusSel = selectField(
       data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), 'running', { title: 'Status' });
 
@@ -182,7 +182,7 @@
         saveBtn.disabled = true;
         try {
           const saved = await api('/api/projects', { method: 'POST', body: {
-            client_id: clientSel.value || null, new_client_name: newName.value, title: titleInput.value,
+            client_id: clientSel.value || null, new_client_name: newName.value, site_name: siteNameInput.value,
             status: statusSel.value, services,
             estimated_amount: val(estimateInput), work_order_no: woNo.value, work_order_date: val(woDate),
             advance_amount: val(advanceInput), advance_date: val(advanceDate), advance_mode: val(advanceMode),
@@ -201,7 +201,7 @@
       h('div', { class: 'form-grid' },
         field('client_id', 'Client', clientSel, { wide: true }),
         newNameField,
-        field('title', 'Project title', titleInput, { wide: true }),
+        field('site_name', 'Site name', siteNameInput, { wide: true }),
         serviceField,
         field('status', 'Status', statusSel),
         field('estimated_amount', `Estimated amount (${data.currency})`, estimateInput)),

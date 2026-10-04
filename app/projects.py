@@ -66,7 +66,7 @@ def create_project_from_lead(lead, user):
     # to have more than one), so it leads the title whenever the survey captured one.
     service_names = [s.name for s in lead.services] if lead.services else ([lead.service] if lead.service else [])
     if survey and survey.site_name:
-        title = f"{client.name} - {survey.site_name}"
+        title = survey.site_name
     elif service_names:
         title = f"{client.name} - {', '.join(service_names)}"
     else:
@@ -77,6 +77,7 @@ def create_project_from_lead(lead, user):
     project = Project(
         client=client, lead=lead, title=title,
         work_category=lead.service, services=list(lead.services), estimated_amount=estimated_amount, owner_code=owner,
+        site_name=survey.site_name if survey else "",
         site_pincode=survey.site_pincode if survey else "", site_state=survey.site_state if survey else "",
         site_district=survey.site_district if survey else "", site_city=survey.site_city if survey else "",
         site_address=survey.site_address if survey else "",
@@ -190,6 +191,7 @@ def create_project():
 
     f = Fields(payload)
     f.text("title", 160)
+    f.text("site_name", 160)
     f.text("new_client_name", 160)
     f.choice("status", PROJECT_STATUSES)
     f.money("estimated_amount")
@@ -237,9 +239,10 @@ def create_project():
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
     service_names = [s.name for s in services]
-    title = f.data.get("title") or (f"{client.name} - {', '.join(service_names)}" if service_names else client.name)
+    site_name = f.data.get("site_name", "")
+    title = site_name or f.data.get("title") or (f"{client.name} - {', '.join(service_names)}" if service_names else client.name)
     project = Project(
-        client=client, title=title[:160], work_category=", ".join(service_names), services=services,
+        client=client, title=title[:160], site_name=site_name, work_category=", ".join(service_names), services=services,
         status=f.data.get("status", "running"), estimated_amount=estimated,
         work_order_no=f.data.get("work_order_no", ""), work_order_date=f.data.get("work_order_date"),
         owner_code=g.user.code,

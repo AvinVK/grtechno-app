@@ -344,6 +344,7 @@ class Project(db.Model):
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id"), nullable=False, index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey("leads.id", ondelete="SET NULL"), nullable=True, unique=True)
     title = db.Column(db.String(160), nullable=False)
+    site_name = db.Column(db.String(160), nullable=False, default="", server_default="")
     work_category = db.Column(db.String(120), nullable=False, default="", server_default="")
     status = db.Column(db.String(20), nullable=False, default="planned", server_default="planned", index=True)
     site_pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
@@ -409,7 +410,7 @@ class Project(db.Model):
             return float(v) if v is not None else None
 
         data = {
-            "id": self.id, "code": self.code, "title": self.title, "status": self.status,
+            "id": self.id, "code": self.code, "title": self.title, "site_name": self.site_name, "status": self.status,
             "work_category": self.work_category, "services": self.service_names,
             "client_id": self.client_id, "client_name": self.client.name,
             "estimated_amount": num(self.estimated_amount), "discount_amount": num(self.discount_amount),
