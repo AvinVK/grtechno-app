@@ -299,6 +299,7 @@ def update_project(project_id):
 
     f = Fields(payload)
     f.text("title", 160, required=True, label="a project title")
+    f.text("site_name", 160, required=True, label="the site name")
     f.choice("status", PROJECT_STATUSES)
     f.text("work_category", 120)
     f.text("work_order_no", 60)
@@ -366,6 +367,11 @@ def update_project(project_id):
     if newly_measured and "status" not in data and project.status != "completed":
         data["status"] = "final_estimate_sent"
 
+    # The site name is the project's title - whichever one is sent, both are set to it.
+    if "site_name" in data:
+        data["title"] = data["site_name"]
+    elif "title" in data:
+        data["site_name"] = data["title"]
     for key, value in data.items():
         setattr(project, key, value)
     if project.status == "completed" and project.completed_at is None:

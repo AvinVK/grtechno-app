@@ -152,6 +152,12 @@ def test_manager_code_must_be_a_project_manager(client, admin_client, user):
 
 
 def test_project_details_validation_and_payment_schedule(client, admin_client):
+    pid0 = make_project(client, admin_client)
+    renamed = admin_client.patch(f"/api/projects/{pid0}", json={"site_name": "Gate 3, Plant"}).get_json()["project"]
+    assert renamed["title"] == "Gate 3, Plant" and renamed["site_name"] == "Gate 3, Plant"
+    retitled = admin_client.patch(f"/api/projects/{pid0}", json={"title": "Gate 4"}).get_json()["project"]
+    assert retitled["site_name"] == "Gate 4" and retitled["title"] == "Gate 4"
+
     pid = make_project(client, admin_client)                                                 # estimated 10,00,000
     url = f"/api/projects/{pid}"
     ok = admin_client.patch(url, json={

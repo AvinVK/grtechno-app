@@ -837,7 +837,7 @@
     const c = data.client;
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
 
-    const title = text('text', P.title, { maxlength: 160, autocomplete: 'off' });
+    const siteName = text('text', P.site_name || P.title, { maxlength: 160, autocomplete: 'off' });
     const statusSel = selectField(
       data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), P.status, { title: 'Status' });
     const woNo = text('text', P.work_order_no, { maxlength: 60, autocomplete: 'off' });
@@ -868,7 +868,7 @@
         showFieldErrors(form, {});
         saveBtn.disabled = true;
         const body = {
-          title: title.value, status: statusSel.value, work_order_no: woNo.value, work_order_date: woDate.value,
+          site_name: siteName.value, status: statusSel.value, work_order_no: woNo.value, work_order_date: woDate.value,
           start_date: startDate.value, completion_days: days.value,
         };
         if (managerSel) body.manager_code = managerSel.value;
@@ -888,7 +888,7 @@
       h('section', { class: 'p-section' },
         h('h3', {}, 'Project'),
         h('div', { class: 'form-grid' },
-          field('title', 'Title', title, { wide: true }),
+          field('site_name', 'Site name', siteName, { wide: true }),
           field('status', 'Status', statusSel),
           managerSel ? field('manager_code', 'Project manager', managerSel) : null)),
       h('section', { class: 'p-section' },
