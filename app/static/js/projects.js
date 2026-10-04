@@ -516,7 +516,7 @@
     // total of their payments as it, rather than leaving Remaining stuck on a dash.
     const fillBtn = h('button', { class: 'link-btn fill-amount-btn', type: 'button', hidden: netValue !== null }, 'Fill amount');
     fillBtn.onclick = () => {
-      const overlay = h('div', { class: 'confirm-overlay' });
+      const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
       const input = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', id: 'f-negotiated_amount' });
       const errEl = h('p', { class: 'err', role: 'alert' });
       const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -537,7 +537,7 @@
           saveBtn.disabled = false;
         }
       };
-      overlay.append(h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true' },
+      overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
         h('h2', {}, 'Negotiated amount'),
         field('negotiated_amount', `Amount (${cur})`, input),
         errEl,

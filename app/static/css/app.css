@@ -678,6 +678,17 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .quick-dates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .yes-no-row { display: flex; gap: 8px; margin-top: 4px; }
 .yes-no-row .btn { flex: 1; }
+/* The one-field amount box (Negotiated amount): a bottom sheet, so the soft keyboard pushes it up rather
+   than cutting its buttons off the bottom of a centred dialog. */
+.amount-sheet {
+  display: grid; gap: 12px; width: 100%; max-width: 520px;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+  border-radius: var(--r-card) var(--r-card) 0 0;
+  background: var(--panel);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+}
+.amount-sheet h2 { margin: 0; font: 600 19px/1.2 var(--font-display); }
+.amount-sheet .confirm-actions { margin-top: 4px; }
 
 .drawer-foot {
   position: sticky;
