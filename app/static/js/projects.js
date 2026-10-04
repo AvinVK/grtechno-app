@@ -130,13 +130,20 @@
     let data;
     try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
+    // A label with the red asterisk the lead form puts on mandatory fields.
+    const req = (text) => [text, h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')];
+
     const clientSel = selectField(
       [{ value: '', label: 'A new client\u2026' }, ...data.clients.map((c) => ({ value: c.id, label: c.name }))],
       presetClientId ? String(presetClientId) : '', { title: 'Client', placeholder: 'A new client\u2026' });
     // Opened from a client's own page: that client is already the one, so there's nothing to pick.
     if (presetClientId) clientSel.disabled = true;
     const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
-    const newNameField = field('new_client_name', 'New client name', newName);
+    const newNameField = field('new_client_name', req('New client name'), newName);
+    const newContact = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const newContactField = field('new_contact_name', req('Contact person'), newContact);
+    const newPhone = h('input', { type: 'tel', maxlength: 40, autocomplete: 'off' });
+    const newPhoneField = field('new_phone', req('Phone'), newPhone);
     const siteNameInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'For example: Tower B, 4th floor' });
     const statusSel = selectField(
       data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), 'running', { title: 'Status' });
@@ -147,7 +154,7 @@
       return { name, box: h('label', { class: 'check-row' }, cb, h('span', {}, name)) };
     });
     const serviceField = h('div', { class: 'field wide' },
-      h('label', {}, 'Services', h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')),
+      h('label', {}, ...req('Services')),
       h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
       h('p', { class: 'err', id: 'err-services', role: 'alert' }));
 
@@ -164,7 +171,12 @@
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add project');
 
-    const syncClient = () => { newNameField.hidden = clientSel.value !== ''; };
+    const syncClient = () => {
+      const newOne = clientSel.value === '';
+      newNameField.hidden = !newOne;
+      newContactField.hidden = !newOne;
+      newPhoneField.hidden = !newOne;
+    };
     clientSel.addEventListener('change', syncClient);
     syncClient();
 
@@ -175,14 +187,26 @@
         errorBox.hidden = true;
         showFieldErrors(form, {});
         const services = serviceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.name);
-        if (!services.length) {
-          form.querySelector('#err-services').textContent = 'Choose at least one service';
+        // Same mandatory fields as the lead form's stages: client, site name, services, estimate, work order.
+        const missing = {};
+        const need = (name, value) => { if (!String(value ?? '').trim()) missing[name] = 'This field is required'; };
+        if (!clientSel.value) { need('new_client_name', newName.value); need('new_contact_name', newContact.value); need('new_phone', newPhone.value); }
+        need('site_name', siteNameInput.value);
+        need('estimated_amount', estimateInput.value);
+        need('work_order_no', woNo.value);
+        need('work_order_date', woDate.value);
+        if (!services.length) missing.services = 'Choose at least one service';
+        if (Object.keys(missing).length) {
+          errorBox.textContent = 'Check the highlighted fields';
+          errorBox.hidden = false;
+          (showFieldErrors(form, missing) || errorBox).focus?.();
           return;
         }
         saveBtn.disabled = true;
         try {
           const saved = await api('/api/projects', { method: 'POST', body: {
-            client_id: clientSel.value || null, new_client_name: newName.value, site_name: siteNameInput.value,
+            client_id: clientSel.value || null, new_client_name: newName.value, new_contact_name: newContact.value,
+            new_phone: newPhone.value, site_name: siteNameInput.value,
             status: statusSel.value, services,
             estimated_amount: val(estimateInput), work_order_no: woNo.value, work_order_date: val(woDate),
             advance_amount: val(advanceInput), advance_date: val(advanceDate), advance_mode: val(advanceMode),
@@ -199,17 +223,19 @@
       } },
       errorBox,
       h('div', { class: 'form-grid' },
-        field('client_id', 'Client', clientSel, { wide: true }),
+        field('client_id', req('Client'), clientSel, { wide: true }),
         newNameField,
-        field('site_name', 'Site name', siteNameInput, { wide: true }),
+        newContactField,
+        newPhoneField,
+        field('site_name', req('Site name'), siteNameInput, { wide: true }),
         serviceField,
         field('status', 'Status', statusSel),
-        field('estimated_amount', `Estimated amount (${data.currency})`, estimateInput)),
+        field('estimated_amount', req(`Estimated amount (${data.currency})`), estimateInput)),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Work order'),
         h('div', { class: 'form-grid' },
-          field('work_order_no', 'Work order number', woNo),
-          field('work_order_date', 'Work order date', woDate))),
+          field('work_order_no', req('Work order number'), woNo),
+          field('work_order_date', req('Work order date'), woDate))),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Advance received'),
         h('p', { class: 'hint' }, 'Leave blank if nothing has been received yet.'),

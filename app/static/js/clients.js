@@ -318,6 +318,9 @@
     renderNewForm(data.site_categories);
   }
 
+  // A label with the red asterisk the enquiry form puts on mandatory fields.
+  const req = (text) => [text, h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')];
+
   // The same fields as the new-enquiry form: company, contact, site and its address, notes.
   function renderNewForm(categories) {
     const text = (type, extra = {}) => h('input', { type, value: '', ...extra });
@@ -350,6 +353,17 @@
         e.preventDefault();
         errorBox.hidden = true;
         showFieldErrors(form, {});
+        // The same fields the enquiry form makes mandatory (email and notes stay optional).
+        const missing = {};
+        for (const name of ['name', 'contact_name', 'phone', 'site_name', 'site_category', 'pincode', 'state', 'district', 'city', 'address']) {
+          if (!controls[name].value.trim()) missing[name] = 'This field is required';
+        }
+        if (Object.keys(missing).length) {
+          errorBox.textContent = 'Check the highlighted fields';
+          errorBox.hidden = false;
+          (showFieldErrors(form, missing) || errorBox).focus?.();
+          return;
+        }
         saveBtn.disabled = true;
         const body = {};
         for (const [name, el] of Object.entries(controls)) body[name] = el.value;
@@ -366,17 +380,17 @@
       } },
       errorBox,
       h('div', { class: 'form-grid' },
-        field('name', 'Company', controls.name, { wide: true }),
-        field('contact_name', 'Contact person', controls.contact_name),
-        field('phone', 'Phone', controls.phone),
+        field('name', req('Company'), controls.name, { wide: true }),
+        field('contact_name', req('Contact person'), controls.contact_name),
+        field('phone', req('Phone'), controls.phone),
         field('email', 'Email', controls.email),
-        field('site_name', 'Site name', controls.site_name),
-        field('site_category', 'Site category', controls.site_category),
-        pinField,
-        field('state', 'State', controls.state),
-        field('district', 'District', controls.district),
-        field('city', 'City', controls.city),
-        field('address', 'Address', controls.address, { wide: true }),
+        field('site_name', req('Site name'), controls.site_name),
+        field('site_category', req('Site category'), controls.site_category),
+        (() => { pinField.querySelector('label').replaceWith(...req('Pincode')); return pinField; })(),
+        field('state', req('State'), controls.state),
+        field('district', req('District'), controls.district),
+        field('city', req('City'), controls.city),
+        field('address', req('Address'), controls.address, { wide: true }),
         field('notes', 'Notes', controls.notes, { wide: true })),
       h('div', { class: 'form-actions' }, saveBtn));
 

@@ -193,6 +193,8 @@ def create_project():
     f.text("title", 160)
     f.text("site_name", 160)
     f.text("new_client_name", 160)
+    f.text("new_contact_name", 120)
+    f.text("new_phone", 40)
     f.choice("status", PROJECT_STATUSES)
     f.money("estimated_amount")
     f.text("work_order_no", 60)
@@ -216,7 +218,9 @@ def create_project():
         if not name:
             errors["client_id"] = "Choose a client, or enter the name of a new one"
         else:
-            client = Client.query.filter(func.lower(Client.name) == name.lower()).first() or Client(name=name, owner_code=g.user.code)
+            client = Client.query.filter(func.lower(Client.name) == name.lower()).first() or Client(
+                name=name, owner_code=g.user.code,
+                contact_name=f.data.get("new_contact_name", ""), phone=f.data.get("new_phone", ""))
 
     raw_services = payload.get("services")
     names = [s for s in dict.fromkeys(raw_services or []) if isinstance(s, str)] if isinstance(raw_services, list) else []
