@@ -231,7 +231,8 @@ def test_client_validation(admin_client):
 # ---------- adding a project directly (work that is already running) ----------
 
 def test_admin_adds_a_project_with_a_new_client(admin_client, admin):
-    res = admin_client.post("/api/projects", json={"new_client_name": "Sunrise Hospital", "work_category": "AMC"})
+    seed_services("AMC")
+    res = admin_client.post("/api/projects", json={"new_client_name": "Sunrise Hospital", "services": ["AMC"]})
     assert res.status_code == 201
     project = res.get_json()["project"]
     assert project["code"] == "PRJ-0001" and project["client_name"] == "Sunrise Hospital"
@@ -239,6 +240,50 @@ def test_admin_adds_a_project_with_a_new_client(admin_client, admin):
     assert project["manager_code"] is None and project["lead_id"] is None
     client = Client.query.one()
     assert client.name == "Sunrise Hospital" and client.owner_code == admin.code
+
+
+def seed_services(*names):
+    from app.models import Service
+    for i, name in enumerate(names, start=1):
+        if not Service.query.filter_by(name=name).first():
+            db.session.add(Service(name=name, sort_order=i))
+    db.session.commit()
+
+
+def test_adding_a_project_takes_services_estimate_work_order_and_advance(admin_client):
+    seed_services("AMC", "Fire alarms")
+    res = admin_client.post("/api/projects", json={
+        "new_client_name": "Dhanbad Plaza", "services": ["AMC", "Fire alarms"], "estimated_amount": 250000,
+        "work_order_no": "WO-77", "work_order_date": "2026-09-30",
+        "advance_amount": 50000, "advance_date": "2026-10-01", "advance_mode": "UPI", "advance_comments": "Office account",
+    })
+    assert res.status_code == 201, res.get_json()
+    project = res.get_json()["project"]
+    assert sorted(project["services"]) == ["AMC", "Fire alarms"] and project["title"] == "Dhanbad Plaza - AMC, Fire alarms"
+    assert project["estimated_amount"] == 250000 and project["net_amount"] == 250000
+    assert project["work_order_no"] == "WO-77" and project["work_order_date"] == "2026-09-30"
+    detail = admin_client.get(f"/api/projects/{project['id']}").get_json()
+    assert [(p["label"], p["amount"], p["mode"], p["paid_date"], p["comments"]) for p in detail["project"]["payments"]] == [
+        ("Advance", 50000, "UPI", "2026-10-01", "Office account")]
+    assert detail["project"]["paid_amount"] == 50000
+
+
+def test_adding_a_project_validates_the_advance_and_services(admin_client):
+    bad = admin_client.post("/api/projects", json={
+        "new_client_name": "X Co", "services": ["Not a service"], "estimated_amount": 1000,
+        "advance_amount": 5000, "advance_mode": "Bitcoin",
+    })
+    assert bad.status_code == 422
+    fields = bad.get_json()["fields"]
+    assert "services" in fields and "advance_mode" in fields and "advance_date" in fields and "advance_amount" in fields
+
+
+def test_fill_amount_sets_negotiated_from_payment_total(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Old Work Ltd"}).get_json()["project"]["id"]
+    admin_client.patch(f"/api/projects/{pid}", json={"title": "Old Work", "payments": [
+        {"label": "Advance", "amount": 200000}, {"label": "Balance", "amount": 130000}]})
+    res = admin_client.patch(f"/api/projects/{pid}", json={"estimated_amount": 330000})
+    assert res.status_code == 200 and res.get_json()["project"]["net_amount"] == 330000
 
 
 def test_add_project_for_an_existing_client_and_custom_details(admin_client):

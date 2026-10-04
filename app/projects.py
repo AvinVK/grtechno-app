@@ -12,7 +12,7 @@ from werkzeug.exceptions import abort
 from .auth import visible_clients, visible_projects
 from .constants import PAYMENT_MODES
 from .extensions import db
-from .models import Activity, Attendance, Client, Project, ProjectPayment, User, WorkerAttendance, settings_for_client, utcnow
+from .models import Activity, Attendance, Client, Project, ProjectPayment, Service, User, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local
@@ -175,6 +175,7 @@ def list_projects():
         statuses=PROJECT_STATUSES,
         currency=settings["currency"],
         services=settings["services"],                      # for the Add project form
+        payment_modes=PAYMENT_MODES,
         clients=[{"id": c.id, "name": c.name} for c in visible_clients().order_by(Client.name)],
     )
 
@@ -189,9 +190,14 @@ def create_project():
 
     f = Fields(payload)
     f.text("title", 160)
-    f.text("work_category", 120)
     f.text("new_client_name", 160)
     f.choice("status", PROJECT_STATUSES)
+    f.money("estimated_amount")
+    f.text("work_order_no", 60)
+    f.date("work_order_date")
+    f.money("advance_amount")
+    f.date("advance_date")
+    f.text("advance_comments", 2000)
     errors = dict(f.errors)
 
     client = None
@@ -210,16 +216,40 @@ def create_project():
         else:
             client = Client.query.filter(func.lower(Client.name) == name.lower()).first() or Client(name=name, owner_code=g.user.code)
 
+    raw_services = payload.get("services")
+    names = [s for s in dict.fromkeys(raw_services or []) if isinstance(s, str)] if isinstance(raw_services, list) else []
+    services = Service.query.filter(Service.name.in_(names)).all() if names else []
+    if len(services) != len(names):
+        errors["services"] = "Choose valid services"
+
+    estimated = f.data.get("estimated_amount")
+    advance = f.data.get("advance_amount")
+    advance_mode = payload.get("advance_mode") or None
+    if advance is not None:
+        if not f.data.get("advance_date"):
+            errors["advance_date"] = "This field is required"
+        if advance_mode not in PAYMENT_MODES:
+            errors["advance_mode"] = "Choose how the advance was paid"
+        if estimated is not None and advance > estimated:
+            errors["advance_amount"] = "The advance cannot be more than the estimated amount"
+
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
-    category = f.data.get("work_category", "")
-    title = f.data.get("title") or (f"{client.name} - {category}" if category else client.name)
+    service_names = [s.name for s in services]
+    title = f.data.get("title") or (f"{client.name} - {', '.join(service_names)}" if service_names else client.name)
     project = Project(
-        client=client, title=title[:160], work_category=category, status=f.data.get("status", "running"),
+        client=client, title=title[:160], work_category=", ".join(service_names), services=services,
+        status=f.data.get("status", "running"), estimated_amount=estimated,
+        work_order_no=f.data.get("work_order_no", ""), work_order_date=f.data.get("work_order_date"),
         owner_code=g.user.code,
         manager_code=g.user.code if g.user.role_key == "project_manager" else None,   # a manager who adds it runs it
     )
+    if advance is not None:
+        project.payments.append(ProjectPayment(
+            label="Advance", amount=advance, due_date=f.data["advance_date"], paid_date=f.data["advance_date"],
+            position=1, mode=advance_mode, comments=f.data.get("advance_comments", ""),
+        ))
     db.session.add(project)
     db.session.commit()
     return jsonify(_detail(project)), 201

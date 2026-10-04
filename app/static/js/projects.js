@@ -135,12 +135,30 @@
       '', { title: 'Client', placeholder: 'A new client\u2026' });
     const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
     const newNameField = field('new_client_name', 'New client name', newName);
-    const titleInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Optional (defaults to client and work)' });
-    const category = selectField(
-      [{ value: '', label: 'Not set' }, ...data.services.map((s) => ({ value: s, label: s }))],
-      '', { title: 'Work category', placeholder: 'Not set' });
+    const titleInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Optional (defaults to client and services)' });
     const statusSel = selectField(
       data.statuses.map((s) => ({ value: s, label: STATUS[s][0] })), 'running', { title: 'Status' });
+
+    // Same services checklist as the lead form - which services the project covers.
+    const serviceBoxes = data.services.map((name) => {
+      const cb = h('input', { type: 'checkbox', value: name });
+      return { name, box: h('label', { class: 'check-row' }, cb, h('span', {}, name)) };
+    });
+    const serviceField = h('div', { class: 'field wide' },
+      h('label', {}, 'Services', h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')),
+      h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
+      h('p', { class: 'err', id: 'err-services', role: 'alert' }));
+
+    const estimateInput = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', autocomplete: 'off' });
+    const woNo = h('input', { type: 'text', maxlength: 60, autocomplete: 'off' });
+    const woDate = dateField('', { placeholder: 'Work order date' });
+    const advanceInput = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', autocomplete: 'off' });
+    const advanceDate = dateField('', { placeholder: 'Date of payment' });
+    const advanceMode = selectField(
+      [{ value: '', label: 'Choose how it was paid' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
+      '', { title: 'Mode of payment', placeholder: 'Choose how it was paid' });
+    const advanceComments = h('textarea', { rows: 2 });
+
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add project');
 
@@ -148,16 +166,25 @@
     clientSel.addEventListener('change', syncClient);
     syncClient();
 
+    const val = (el) => (el.value === '' ? null : el.value);
     const form = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
         e.preventDefault();
         errorBox.hidden = true;
         showFieldErrors(form, {});
+        const services = serviceBoxes.filter((s) => s.box.querySelector('input').checked).map((s) => s.name);
+        if (!services.length) {
+          form.querySelector('#err-services').textContent = 'Choose at least one service';
+          return;
+        }
         saveBtn.disabled = true;
         try {
           const saved = await api('/api/projects', { method: 'POST', body: {
             client_id: clientSel.value || null, new_client_name: newName.value, title: titleInput.value,
-            work_category: category.value, status: statusSel.value,
+            status: statusSel.value, services,
+            estimated_amount: val(estimateInput), work_order_no: woNo.value, work_order_date: val(woDate),
+            advance_amount: val(advanceInput), advance_date: val(advanceDate), advance_mode: val(advanceMode),
+            advance_comments: advanceComments.value,
           } });
           toast('Project added');
           window.location.hash = `#p${saved.project.id}/details`;       // straight on to the work order details
@@ -173,9 +200,22 @@
         field('client_id', 'Client', clientSel, { wide: true }),
         newNameField,
         field('title', 'Project title', titleInput, { wide: true }),
-        field('work_category', 'Work category', category),
-        field('status', 'Status', statusSel)),
-      h('p', { class: 'hint' }, 'You can add the work order details on the next screen, and the payment timeline from its own tab.'),
+        serviceField,
+        field('status', 'Status', statusSel),
+        field('estimated_amount', `Estimated amount (${data.currency})`, estimateInput)),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Work order'),
+        h('div', { class: 'form-grid' },
+          field('work_order_no', 'Work order number', woNo),
+          field('work_order_date', 'Work order date', woDate))),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Advance received'),
+        h('p', { class: 'hint' }, 'Leave blank if nothing has been received yet.'),
+        h('div', { class: 'form-grid' },
+          field('advance_amount', 'Advance amount', advanceInput),
+          field('advance_date', 'Date of payment', advanceDate),
+          field('advance_mode', 'Mode of payment', advanceMode),
+          field('advance_comments', 'Comments', advanceComments, { wide: true }))),
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
@@ -472,10 +512,26 @@
     const ovNegotiated = h('dd', {}, '—');
     const ovAdvance = h('dd', {}, '—');
     const ovRemaining = h('dd', {}, '—');
+    // Projects that didn't come from a lead have no negotiated amount to start from - offer to take the
+    // total of their payments as it, rather than leaving Remaining stuck on a dash.
+    const fillBtn = h('button', { class: 'link-btn fill-amount-btn', type: 'button', hidden: netValue !== null }, 'Fill amount');
+    fillBtn.onclick = async () => {
+      const total = steps.reduce((sum, s) => sum + toNumber(s.amount), 0);
+      if (!total) { toast('Add the payments first - their total becomes the amount', true); return; }
+      fillBtn.disabled = true;
+      try {
+        await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { estimated_amount: total } });
+        toast('Negotiated amount filled from the payments');
+        renderPayments(await api(`/api/projects/${P.id}`));
+      } catch (err) {
+        toast(err.message, true);
+        fillBtn.disabled = false;
+      }
+    };
     const payOverview = h('div', { class: 'pay-overview' },
       h('p', { class: 'pay-overview-title' }, `${P.code} · ${P.title}`),
       h('dl', { class: 'pay-overview-grid' },
-        h('dt', {}, P.final_amount != null ? 'Final amount' : 'Negotiated amount'), ovNegotiated,
+        h('dt', {}, P.final_amount != null ? 'Final amount' : 'Negotiated amount', fillBtn), ovNegotiated,
         h('dt', {}, 'Advance payment'), ovAdvance,
         h('dt', {}, 'Remaining'), ovRemaining));
 
