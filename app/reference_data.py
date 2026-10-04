@@ -51,7 +51,8 @@ SITE_CATEGORIES = [
 SERVICES = [
     "Sprinklers setup", "Fire alarms", "Hydrant system and pump house", "Supply of extinguishers",
     "Gas suppression", "Electrical panel suppression", "Provisional NOC and compliance",
-    "Final NOC and fire audits", "AMC", "Refilling of fire extinguishers", "Other",
+    "Final NOC and fire audits", "AMC", "Refilling of fire extinguishers",
+    "Fire advisory", "Final NOC", "Renewal NOC", "Other",
 ]
 
 # The first version's starting services that the list above replaces. They are switched off, not deleted,
