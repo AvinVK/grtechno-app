@@ -1603,7 +1603,7 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 .client-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .client-head h2 { font: 600 24px/1.1 var(--font-display); overflow-wrap: anywhere; }
 .client-head .hint { margin-top: 4px; }
-.add-project-btn { align-self: start; margin-top: 4px; }
+.add-project-btn, .add-client-btn { align-self: start; margin-top: 4px; }
 .client-head .btn { flex: none; text-decoration: none; }
 .client-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .client-stats .stat { padding: 14px; }

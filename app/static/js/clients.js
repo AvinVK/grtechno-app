@@ -133,8 +133,8 @@
 
     clear(view).append(h('div', {},
       h('div', { class: 'filters' }, search, serviceSel),
-      h('a', { class: 'btn small add-client-btn', href: '#new' }, '+ Add client'),
-      count, results));
+      count, results,
+      h('a', { class: 'btn primary add-project-btn add-client-btn', href: '#new' }, '+ Add client')));
     refresh();
   }
 
