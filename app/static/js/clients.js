@@ -203,9 +203,7 @@
           contact ? h('p', { class: 'hint' }, contact) : null,
           h('p', { class: 'hint client-brought' }, 'Brought by ',
             broughtBy ? [h('strong', {}, broughtBy.name), ` · ${broughtBy.how.toLowerCase()}`] : 'not recorded')),
-        h('div', { class: 'client-head-actions' },
-          canOpenProjects ? h('a', { class: 'btn small primary', href: `/projects#new/c${client.id}` }, 'Add project') : null,
-          h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details'))),
+        h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details')),
       h('div', { class: 'client-stats' },
         h('div', { class: 'stat' },
           h('span', { class: 'stat-label' }, 'Client for'),
@@ -220,7 +218,8 @@
         h('h3', {}, 'Projects'),
         projects.length
           ? h('ul', { class: 'client-projects' }, projects.map(projectRow))
-          : h('p', { class: 'hint' }, 'No projects for this client yet.'))));
+          : h('p', { class: 'hint' }, 'No projects for this client yet.'),
+        canOpenProjects ? h('a', { class: 'btn primary add-project-btn', href: `/projects#new/c${client.id}` }, '+ Add project') : null)));
   }
 
   /* ---------- one client: edit contact and site details ---------- */
