@@ -721,7 +721,7 @@
       // Site name is what tells this site apart from another one at the same client - shown everywhere
       // this lead (and the project it becomes) is listed, see title() above.
       const siteNameInput = h('input', { type: 'text', value: sv.site_name || '', maxlength: 160, autocomplete: 'off' });
-      const siteCategorySel = choice(S.settings.site_categories, sv.site_category, 'Not set');
+      const siteCategorySel = LD.categoryPicker(S.settings.site_categories, sv.site_category, { blank: 'Not set', title: 'Site category' });
       const siteState = h('input', { type: 'text', value: sv.site_state || '', maxlength: 80, autocomplete: 'off' });
       const siteDistrict = h('input', { type: 'text', value: sv.site_district || '', maxlength: 80, autocomplete: 'off' });
       const siteCity = h('input', { type: 'text', value: sv.site_city || '', maxlength: 120, autocomplete: 'off' });

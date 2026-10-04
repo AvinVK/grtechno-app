@@ -303,6 +303,7 @@ class Client(db.Model):
     contact_name = db.Column(db.String(120), nullable=False, default="", server_default="")
     phone = db.Column(EncryptedText, nullable=False, default="", server_default="")
     email = db.Column(EncryptedText, nullable=False, default="", server_default="")
+    site_name = db.Column(db.String(160), nullable=False, default="", server_default="")
     site_category = db.Column(db.String(60), nullable=False, default="", server_default="")
     pincode = db.Column(db.String(6), nullable=False, default="", server_default="")
     state = db.Column(db.String(80), nullable=False, default="", server_default="")
@@ -326,7 +327,7 @@ class Client(db.Model):
         services = sorted({name for p in self.projects for name in p.service_names})
         return {
             "id": self.id, "name": self.name, "contact_name": self.contact_name, "phone": self.phone,
-            "email": self.email, "site_category": self.site_category, "pincode": self.pincode,
+            "email": self.email, "site_name": self.site_name, "site_category": self.site_category, "pincode": self.pincode,
             "state": self.state, "district": self.district, "city": self.city, "address": self.address,
             "notes": self.notes, "owner_name": self.owner.name if self.owner else None,
             "project_count": len(self.projects), "services": services,
@@ -499,6 +500,23 @@ class LeadSource(_NamedOption):
 
 class SiteCategory(_NamedOption):
     __tablename__ = "site_categories"
+
+
+class SiteCategoryRequest(db.Model):
+    """A site category someone typed in that isn't on the list yet. It only becomes a real category once the
+    admin approves it on the Me tab; the admin can instead point it at an existing one, in which case every
+    survey and client that used the typed name is changed to that one."""
+
+    __tablename__ = "site_category_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(60), nullable=False, index=True)
+    requested_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    status = db.Column(db.String(12), nullable=False, default="pending", server_default="pending", index=True)
+    target = db.Column(db.String(60), nullable=False, default="", server_default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    requested_by = db.relationship("User")
 
 
 class Module(db.Model):

@@ -163,6 +163,37 @@ window.LD = (() => {
      and writes like an ordinary input - `.value` gets/sets the chosen value and a real change/input event
      fires on pick - so it drops into existing form code without that code needing to know the difference.
      `items` is [{value, label}, ...] (or plain strings, taken as value === label). */
+  /* A site category picker: the list, plus "+ Add a new category…", which shows a box to type the name in.
+     Reads and writes like selectField - `.value` is the chosen category, or whatever was typed for a new one -
+     so forms can use it without knowing about the extra box. The typed name only counts once the admin has
+     approved it; the server holds it until then. `names` are plain strings; `opts.blank` is the empty choice. */
+  function categoryPicker(names, value, opts = {}) {
+    const NEW = '__new__';
+    const current = value || '';
+    const items = [{ value: '', label: opts.blank || 'Not set' }, ...names.map((n) => ({ value: n, label: n }))];
+    if (current && !names.includes(current)) items.push({ value: current, label: current });
+    items.push({ value: NEW, label: '+ Add a new category…' });
+    const sel = selectField(items, current, { title: opts.title || 'Site category', placeholder: opts.blank || 'Not set' });
+    const typed = h('input', { type: 'text', maxlength: 60, autocomplete: 'off', placeholder: 'Name of the new category', hidden: true });
+    typed.setAttribute('aria-label', 'New site category name');
+    const wrap = h('div', { class: 'category-picker' }, sel, typed);
+    sel.addEventListener('change', () => {
+      typed.hidden = sel.value !== NEW;
+      if (!typed.hidden) typed.focus();
+    });
+    Object.defineProperty(wrap, 'value', {
+      get: () => (sel.value === NEW ? typed.value.trim() : sel.value),
+      set: (v) => { sel.value = v || ''; typed.hidden = true; },
+      configurable: true,
+    });
+    Object.defineProperty(wrap, 'disabled', {
+      get: () => sel.disabled,
+      set: (d) => { sel.disabled = d; typed.disabled = d; },
+      configurable: true,
+    });
+    return wrap;
+  }
+
   function selectField(items, value, opts = {}) {
     let list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
     let current = value ?? '';
@@ -348,7 +379,7 @@ window.LD = (() => {
 
   return {
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
-    pickList, selectField, pickDate, dateField, closeOnBack,
+    pickList, selectField, categoryPicker, pickDate, dateField, closeOnBack,
   };
 })();
 

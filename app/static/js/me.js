@@ -109,3 +109,60 @@
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 })();
+
+/* Admin only: site categories people typed in that aren't on the list yet. Each waits here until the
+   admin approves it (it joins the list) or points it at an existing category (every survey and client
+   using the typed name moves over). Hidden when nothing is waiting. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-approvals');
+  if (!section) return;
+  const list = document.getElementById('me-approvals-list');
+  const { h, clear, api, toast, selectField } = window.LD;
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/site-categories/requests');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = data.requests.length === 0;
+    clear(list);
+    data.requests.forEach((r) => list.append(requestRow(r, data.categories)));
+  }
+
+  function requestRow(r, categories) {
+    const target = selectField(
+      categories.map((c) => ({ value: c, label: c })),
+      categories[0] || '', { title: `Point "${r.name}" at`, placeholder: 'Choose a category' });
+    target.setAttribute('aria-label', `Existing category for ${r.name}`);
+
+    const act = async (path, body) => {
+      try {
+        await api(`/api/site-categories/requests/${r.id}/${path}`, { method: 'POST', body });
+        toast(path === 'approve' ? `"${r.name}" added to the list` : `"${r.name}" pointed at ${body.target}`);
+        load();
+      } catch (err) {
+        toast(err.message, true);
+      }
+    };
+
+    const uses = r.uses ? `used on ${r.uses} ${r.uses === 1 ? 'record' : 'records'}` : 'not used yet';
+    return h('div', { class: 'card me-row approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, r.name),
+        h('span', { class: 'hint' }, `Typed by ${r.requested_by || 'someone'} · ${uses}`)),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => act('approve', {}) }, 'Approve'),
+        target,
+        h('button', { class: 'btn small', type: 'button', onclick: () => {
+          if (!target.value) { toast('Choose a category first', true); return; }
+          act('redirect', { target: target.value });
+        } }, 'Redirect')));
+  }
+
+  load();
+})();

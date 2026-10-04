@@ -45,7 +45,8 @@ NEW_MODULES = [
 
 SITE_CATEGORIES = [
     "Hospital", "Nursing home", "Residential apartment", "Commercial complex",
-    "School", "Educational institute", "Other",
+    "School", "Educational institute", "Plant", "Industry", "Residential", "Commercial", "Multi dwelling unit",
+    "Other",
 ]
 
 SERVICES = [

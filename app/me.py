@@ -5,12 +5,13 @@ base.html, like on every other page."""
 
 from datetime import timedelta
 
-from flask import Blueprint, g, jsonify, render_template, request
+from flask import Blueprint, abort, g, jsonify, render_template, request
 
+from . import categories
 from .auth import visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
 from .extensions import db
-from .models import Attendance, Lead, Project
+from .models import Attendance, Client, Lead, LeadSurvey, Project, SiteCategory, SiteCategoryRequest
 from .modules import modules_for
 from .timeutil import today_local
 
@@ -67,3 +68,47 @@ def update_profile():
     g.user.phone = phone
     db.session.commit()
     return jsonify(phone=g.user.phone)
+
+
+def _admin_only():
+    if not g.user.is_admin:
+        abort(403, "Only the admin can approve site categories.")
+
+
+@bp.get("/api/site-categories/requests")
+def pending_categories():
+    _admin_only()
+    waiting = SiteCategoryRequest.query.filter_by(status="pending").order_by(SiteCategoryRequest.created_at).all()
+    return jsonify(
+        requests=[{
+            "id": r.id, "name": r.name,
+            "requested_by": r.requested_by.name if r.requested_by else None,
+            "uses": LeadSurvey.query.filter_by(site_category=r.name).count() + Client.query.filter_by(site_category=r.name).count(),
+        } for r in waiting],
+        categories=SiteCategory.active_names(),
+    )
+
+
+@bp.post("/api/site-categories/requests/<int:request_id>/approve")
+def approve_category(request_id):
+    _admin_only()
+    req = db.get_or_404(SiteCategoryRequest, request_id)
+    if req.status != "pending":
+        abort(409, "This one has already been dealt with.")
+    categories.approve(req)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@bp.post("/api/site-categories/requests/<int:request_id>/redirect")
+def redirect_category(request_id):
+    _admin_only()
+    req = db.get_or_404(SiteCategoryRequest, request_id)
+    if req.status != "pending":
+        abort(409, "This one has already been dealt with.")
+    target = (request.get_json(silent=True) or {}).get("target")
+    if target not in SiteCategory.active_names():
+        abort(422, "Choose an existing category.")
+    categories.redirect(req, target)
+    db.session.commit()
+    return jsonify(ok=True)

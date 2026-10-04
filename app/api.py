@@ -7,6 +7,7 @@ from urllib.request import Request, urlopen
 from flask import Blueprint, g, jsonify, request
 from werkzeug.exceptions import HTTPException, abort
 
+from . import categories
 from .auth import visible_clients, visible_leads
 from .modules import check_module, modules_for
 from .projects import ProjectError, create_project_from_lead
@@ -485,6 +486,7 @@ def upsert_survey(lead_id):
     survey.rep_phone = str(payload.get("rep_phone") or "").strip()[:40]
     survey.site_name = str(payload.get("site_name") or "").strip()[:160]
     survey.site_category = str(payload.get("site_category") or "").strip()[:60]
+    categories.note_request(survey.site_category, g.user.code)
     survey.site_pincode = site_pincode
     survey.site_state = str(payload.get("site_state") or "").strip()[:80]
     survey.site_district = str(payload.get("site_district") or "").strip()[:80]

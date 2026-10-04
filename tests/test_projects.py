@@ -221,10 +221,17 @@ def test_clients_list_and_edit(client, admin_client, manager_client, manager, ac
     assert edited.status_code == 200 and edited.get_json()["client"]["phone"] == "9811111111"
 
 
-def test_clients_are_never_created_by_hand(admin_client):
-    # No add-client endpoint any more - a client only ever comes from winning a lead (or the direct
-    # "already running" project path below, for work that predates this pipeline).
-    assert admin_client.post("/api/clients", json={"name": "Walk-in Traders"}).status_code == 405
+def test_clients_can_be_added_directly_and_deleted_when_they_have_no_projects(client, admin_client):
+    res = admin_client.post("/api/clients", json={"name": "Walk-in Traders", "site_name": "Shop 4", "site_category": "Commercial"})
+    assert res.status_code == 201 and res.get_json()["client"]["site_name"] == "Shop 4"
+    assert admin_client.post("/api/clients", json={}).status_code == 422
+    cid = res.get_json()["client"]["id"]
+    pid = admin_client.post("/api/projects", json={"client_id": cid, "title": "Work"}).get_json()["project"]["id"]
+    assert admin_client.delete(f"/api/clients/{cid}").status_code == 422          # has a project
+    admin_client.delete(f"/api/projects/{pid}")
+    assert client.delete(f"/api/clients/{cid}").status_code == 403                # admin only (no clients access either)
+    assert admin_client.delete(f"/api/clients/{cid}").status_code == 204
+    assert admin_client.get(f"/api/clients/{cid}").status_code == 404
 
 
 def test_client_validation(admin_client):

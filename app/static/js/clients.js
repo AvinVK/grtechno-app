@@ -132,7 +132,9 @@
     }
 
     clear(view).append(h('div', {},
-      h('div', { class: 'filters' }, search, serviceSel), count, results));
+      h('div', { class: 'filters' }, search, serviceSel),
+      h('a', { class: 'btn small add-client-btn', href: '#new' }, '+ Add client'),
+      count, results));
     refresh();
   }
 
@@ -160,14 +162,27 @@
     try {
       const data = await api(`/api/clients/${id}`);
       if (editing) renderForm(data.client, data.site_categories);
-      else renderSummary(data.client, data.projects, data.currency, data.brought_by);
+      else renderSummary(data.client, data.projects, data.currency, data.brought_by, data.is_admin);
     } catch (err) {
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to clients')));
     }
     window.scrollTo(0, 0);
   }
 
-  function renderSummary(client, projects, currency, broughtBy) {
+  // TEMPORARY (admin only): removes a duplicate client. The server refuses while the client has projects.
+  async function deleteClient(client) {
+    const ok = await LD.confirm(`Delete ${client.name}? This can't be undone.`, { ok: 'Delete', danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/clients/${client.id}`, { method: 'DELETE' });
+      toast('Client deleted');
+      window.location.hash = '#';
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function renderSummary(client, projects, currency, broughtBy, isAdmin) {
     LD.setAppbarBack?.('Clients', '#');
     const since = new Date(client.created_at);
     const sinceText = `Since ${since.getDate()} ${MONTHS[since.getMonth()]} ${since.getFullYear()}`;
@@ -204,6 +219,7 @@
           h('p', { class: 'hint client-brought' }, 'Brought by ',
             broughtBy ? [h('strong', {}, broughtBy.name), ` · ${broughtBy.how.toLowerCase()}`] : 'not recorded')),
         h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details')),
+      isAdmin ? h('p', { class: 'hint' }, h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteClient(client) }, 'Delete client (temporary)')) : null,
       h('div', { class: 'client-stats' },
         h('div', { class: 'stat' },
           h('span', { class: 'stat-label' }, 'Client for'),
@@ -230,9 +246,7 @@
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
     const area = (rows, value) => { const t = h('textarea', { rows }); t.value = value ?? ''; return t; };
 
-    const category = selectField(
-      [{ value: '', label: 'Not set' }, ...[...new Set([...categories, C.site_category].filter(Boolean))].map((n) => ({ value: n, label: n }))],
-      C.site_category || '', { title: 'Site category', placeholder: 'Not set' });
+    const category = LD.categoryPicker(categories, C.site_category, { blank: 'Not set', title: 'Site category' });
     const pin = text('text', C.pincode, { maxlength: 6, inputmode: 'numeric', autocomplete: 'off' });
     const state = text('text', C.state, { maxlength: 80, autocomplete: 'off' });
     const district = text('text', C.district, { maxlength: 80, autocomplete: 'off' });
@@ -247,6 +261,7 @@
       contact_name: text('text', C.contact_name, { maxlength: 120, autocomplete: 'off' }),
       phone: text('tel', C.phone, { maxlength: 40, autocomplete: 'off' }),
       email: text('email', C.email, { maxlength: 160, autocomplete: 'off' }),
+      site_name: text('text', C.site_name, { maxlength: 160, autocomplete: 'off' }),
       site_category: category, pincode: pin, state, district, city,
       address: area(2, C.address), notes: area(3, C.notes),
     };
@@ -278,6 +293,7 @@
         field('contact_name', 'Contact person', controls.contact_name),
         field('phone', 'Phone', controls.phone),
         field('email', 'Email', controls.email),
+        field('site_name', 'Site name', controls.site_name),
         field('site_category', 'Site category', controls.site_category),
         pinField,
         field('state', 'State', controls.state),
@@ -292,8 +308,86 @@
       form));
   }
 
+  /* ---------- add a client directly (old clients who never came in as a lead) ---------- */
+
+  async function showNew() {
+    LD.setAppbarBack?.('Clients', '#');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/clients'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    renderNewForm(data.site_categories);
+  }
+
+  // The same fields as the new-enquiry form: company, contact, site and its address, notes.
+  function renderNewForm(categories) {
+    const text = (type, extra = {}) => h('input', { type, value: '', ...extra });
+    const area = (rows) => h('textarea', { rows });
+
+    const category = LD.categoryPicker(categories, '', { blank: 'Not set', title: 'Site category' });
+    const pin = text('text', { maxlength: 6, inputmode: 'numeric', autocomplete: 'off' });
+    const state = text('text', { maxlength: 80, autocomplete: 'off' });
+    const district = text('text', { maxlength: 80, autocomplete: 'off' });
+    const city = text('text', { maxlength: 120, autocomplete: 'off' });
+    const pinHint = h('p', { class: 'hint', 'aria-live': 'polite' });
+    pincodeLookup(pin, { state, district, city }, pinHint);
+    const pinField = field('pincode', 'Pincode', pin);
+    pinField.append(pinHint);
+
+    const controls = {
+      name: text('text', { maxlength: 160, autocomplete: 'off' }),
+      contact_name: text('text', { maxlength: 120, autocomplete: 'off' }),
+      phone: text('tel', { maxlength: 40, autocomplete: 'off' }),
+      email: text('email', { maxlength: 160, autocomplete: 'off' }),
+      site_name: text('text', { maxlength: 160, autocomplete: 'off' }),
+      site_category: category, pincode: pin, state, district, city,
+      address: area(2), notes: area(3),
+    };
+
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add client');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        const body = {};
+        for (const [name, el] of Object.entries(controls)) body[name] = el.value;
+        try {
+          const saved = await api('/api/clients', { method: 'POST', body });
+          toast('Client added');
+          window.location.hash = `#c${saved.client.id}`;
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      h('div', { class: 'form-grid' },
+        field('name', 'Company', controls.name, { wide: true }),
+        field('contact_name', 'Contact person', controls.contact_name),
+        field('phone', 'Phone', controls.phone),
+        field('email', 'Email', controls.email),
+        field('site_name', 'Site name', controls.site_name),
+        field('site_category', 'Site category', controls.site_category),
+        pinField,
+        field('state', 'State', controls.state),
+        field('district', 'District', controls.district),
+        field('city', 'City', controls.city),
+        field('address', 'Address', controls.address, { wide: true }),
+        field('notes', 'Notes', controls.notes, { wide: true })),
+      h('div', { class: 'form-actions' }, saveBtn));
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('div', { class: 'p-head' }, h('h2', {}, 'Add client')),
+      form));
+  }
+
   function route() {
     const hash = window.location.hash;
+    if (hash === '#new') return showNew();
     const m = /^#c(\d+)(\/edit)?$/.exec(hash);
     if (m) return showDetail(Number(m[1]), !!m[2]);
     return showList();
