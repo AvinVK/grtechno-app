@@ -515,18 +515,35 @@
     // Projects that didn't come from a lead have no negotiated amount to start from - offer to take the
     // total of their payments as it, rather than leaving Remaining stuck on a dash.
     const fillBtn = h('button', { class: 'link-btn fill-amount-btn', type: 'button', hidden: netValue !== null }, 'Fill amount');
-    fillBtn.onclick = async () => {
-      const total = steps.reduce((sum, s) => sum + toNumber(s.amount), 0);
-      if (!total) { toast('Add the payments first - their total becomes the amount', true); return; }
-      fillBtn.disabled = true;
-      try {
-        await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { estimated_amount: total } });
-        toast('Negotiated amount filled from the payments');
-        renderPayments(await api(`/api/projects/${P.id}`));
-      } catch (err) {
-        toast(err.message, true);
-        fillBtn.disabled = false;
-      }
+    fillBtn.onclick = () => {
+      const overlay = h('div', { class: 'confirm-overlay' });
+      const input = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', id: 'f-negotiated_amount' });
+      const errEl = h('p', { class: 'err', role: 'alert' });
+      const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save');
+      const finish = closeOnBack(() => overlay.remove());
+      overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+      cancelBtn.onclick = () => finish();
+      saveBtn.onclick = async () => {
+        if (input.value === '') { errEl.textContent = 'Enter the negotiated amount'; return; }
+        saveBtn.disabled = true;
+        try {
+          await api(`/api/projects/${P.id}`, { method: 'PATCH', body: { estimated_amount: input.value } });
+          finish();
+          toast('Negotiated amount saved');
+          renderPayments(await api(`/api/projects/${P.id}`));
+        } catch (err) {
+          errEl.textContent = err.message;
+          saveBtn.disabled = false;
+        }
+      };
+      overlay.append(h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true' },
+        h('h2', {}, 'Negotiated amount'),
+        field('negotiated_amount', `Amount (${cur})`, input),
+        errEl,
+        h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+      document.body.append(overlay);
+      input.focus();
     };
     const payOverview = h('div', { class: 'pay-overview' },
       h('p', { class: 'pay-overview-title' }, `${P.code} · ${P.title}`),
