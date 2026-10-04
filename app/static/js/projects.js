@@ -124,15 +124,17 @@
 
   /* ---------- add a project that did not come from a lead ---------- */
 
-  async function showNew() {
-    LD.setAppbarBack?.('Clients', '/clients');
+  async function showNew(presetClientId = null) {
+    LD.setAppbarBack?.(presetClientId ? 'Client' : 'Clients', presetClientId ? `/clients#c${presetClientId}` : '/clients');
     clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
     let data;
     try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
     const clientSel = selectField(
       [{ value: '', label: 'A new client\u2026' }, ...data.clients.map((c) => ({ value: c.id, label: c.name }))],
-      '', { title: 'Client', placeholder: 'A new client\u2026' });
+      presetClientId ? String(presetClientId) : '', { title: 'Client', placeholder: 'A new client\u2026' });
+    // Opened from a client's own page: that client is already the one, so there's nothing to pick.
+    if (presetClientId) clientSel.disabled = true;
     const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
     const newNameField = field('new_client_name', 'New client name', newName);
     const titleInput = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Optional (defaults to client and services)' });
@@ -934,7 +936,9 @@
   function route() {
     const m = /^#p(\d+)(\/(payments|details|attendance))?$/.exec(window.location.hash);
     if (m) return showDetail(Number(m[1]), m[3] || '');
-    return window.location.hash === '#new' ? showNew() : showList();
+    const add = /^#new(?:\/c(\d+))?$/.exec(window.location.hash);
+    if (add) return showNew(add[1] ? Number(add[1]) : null);
+    return showList();
   }
 
   window.addEventListener('hashchange', route);
