@@ -630,19 +630,55 @@ class Worker(db.Model):
     last_seen = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
+    # HR details - optional, filled in by the admin from Employee management; blank for anyone who's only
+    # ever come in through the WhatsApp attendance import.
+    age = db.Column(db.Integer, nullable=True)
+    qualification = db.Column(db.String(160), nullable=False, default="", server_default="")
+    experience = db.Column(db.String(200), nullable=False, default="", server_default="")
+    skills = db.Column(db.String(400), nullable=False, default="", server_default="")
+    phone = db.Column(EncryptedText, nullable=True)
+    joining_date = db.Column(db.Date, nullable=True)
+    employment_type = db.Column(db.String(20), nullable=False, default="", server_default="")   # regular | daily_wages
+    wage_amount = db.Column(db.Numeric(14, 2), nullable=True)                  # salary (regular) or daily rate (daily_wages)
+    pf_number = db.Column(EncryptedText, nullable=True)
+    esic_number = db.Column(EncryptedText, nullable=True)
+    reference = db.Column(db.String(200), nullable=False, default="", server_default="")
+
     role = db.relationship("Role")
     attendance = db.relationship(
         "WorkerAttendance", back_populates="worker", cascade="all, delete-orphan",
         order_by="WorkerAttendance.work_date.desc()",
     )
+    payments = db.relationship(
+        "WorkerPayment", back_populates="worker", cascade="all, delete-orphan",
+        order_by="WorkerPayment.position, WorkerPayment.id",
+    )
 
-    def to_dict(self) -> dict:
-        return {
+    @property
+    def paid_amount(self):
+        """What's actually been paid - entries with a paid_date, not every entry in the log (a future/
+        planned one can sit there unpaid)."""
+        return sum((p.amount for p in self.payments if p.paid_date is not None), Decimal(0))
+
+    def to_dict(self, detail: bool = False) -> dict:
+        data = {
             "id": self.id, "name": self.name, "category": self.category, "source": self.source,
             "role_key": self.role_key, "role_name": self.role.name if self.role else None,
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
         }
+        if detail:
+            data.update({
+                "age": self.age, "qualification": self.qualification, "experience": self.experience,
+                "skills": self.skills, "phone": self.phone,
+                "joining_date": self.joining_date.isoformat() if self.joining_date else None,
+                "employment_type": self.employment_type,
+                "wage_amount": float(self.wage_amount) if self.wage_amount is not None else None,
+                "pf_number": self.pf_number, "esic_number": self.esic_number, "reference": self.reference,
+                "paid_amount": float(self.paid_amount),
+                "payments": [p.to_dict() for p in self.payments],
+            })
+        return data
 
 
 class WorkerAttendance(db.Model):
@@ -695,4 +731,32 @@ class WorkerAttendance(db.Model):
             "project_id": self.project_id, "project_title": self.project.title if self.project else None,
             "project_code": self.project.code if self.project else None,
             "note": self.note, "hours": self.hours,
+        }
+
+
+class WorkerPayment(db.Model):
+    """One entry in a worker's salary/wages log - the same shape as ProjectPayment, just not tied to a
+    milestone: usually one entry per pay period (a month's salary, a week's daily wages, ...)."""
+
+    __tablename__ = "worker_payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = db.Column(db.String(120), nullable=False)
+    amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    due_date = db.Column(db.Date, nullable=True)
+    position = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    mode = db.Column(db.String(40), nullable=False, default="", server_default="")
+    paid_date = db.Column(db.Date, nullable=True)
+    comments = db.Column(db.Text, nullable=False, default="", server_default="")
+
+    worker = db.relationship("Worker", back_populates="payments")
+
+    def to_dict(self) -> dict:
+        return {
+            "label": self.label, "amount": float(self.amount),
+            "due_date": self.due_date.isoformat() if self.due_date else None,
+            "mode": self.mode,
+            "paid_date": self.paid_date.isoformat() if self.paid_date else None,
+            "comments": self.comments,
         }

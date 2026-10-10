@@ -207,3 +207,99 @@ def test_adding_or_editing_an_employee_never_touches_the_legacy_category(admin_c
     wid = res.get_json()["worker"]["id"]
     with app.app_context():
         assert db.session.get(Worker, wid).category == "manpower"
+
+
+# ---------- HR details and the salary/wages log ----------
+
+def test_add_employee_captures_full_hr_details(admin_client):
+    res = admin_client.post("/api/workforce", json={
+        "name": "Full Details", "role_key": "fitter", "age": 29, "qualification": "ITI Fitter",
+        "experience": "6 years in sprinkler installation", "skills": "Welding, pipe fitting",
+        "phone": "9876543210", "joining_date": "2026-01-15", "employment_type": "regular",
+        "wage_amount": 22000, "pf_number": "PF1234567", "esic_number": "ESIC7654321",
+        "reference": "Referred by Ramesh",
+    })
+    assert res.status_code == 201
+    body = res.get_json()["worker"]
+    assert body["age"] == 29 and body["qualification"] == "ITI Fitter"
+    assert body["experience"] == "6 years in sprinkler installation"
+    assert body["skills"] == "Welding, pipe fitting" and body["phone"] == "9876543210"
+    assert body["joining_date"] == "2026-01-15" and body["employment_type"] == "regular"
+    assert body["wage_amount"] == 22000.0
+    assert body["pf_number"] == "PF1234567" and body["esic_number"] == "ESIC7654321"
+    assert body["reference"] == "Referred by Ramesh"
+
+
+def test_employment_type_must_be_regular_or_daily_wages(admin_client):
+    res = admin_client.post("/api/workforce", json={"name": "X", "employment_type": "contractor"})
+    assert res.status_code == 422 and "employment_type" in res.get_json()["fields"]
+
+
+def test_age_must_be_a_plausible_number(admin_client):
+    res = admin_client.post("/api/workforce", json={"name": "X", "age": 5})
+    assert res.status_code == 422 and "age" in res.get_json()["fields"]
+
+
+def test_a_bare_name_is_still_a_valid_employee(admin_client):
+    """Every detail field is optional - same as before this feature, a name alone is enough."""
+    res = admin_client.post("/api/workforce", json={"name": "Just A Name"})
+    assert res.status_code == 201
+    body = res.get_json()["worker"]
+    assert body["age"] is None and body["qualification"] == "" and body["wage_amount"] is None
+
+
+def test_editing_an_employee_updates_their_hr_details(admin_client, app):
+    with app.app_context():
+        wid = make("Needs Details")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={
+        "name": "Needs Details", "age": 34, "wage_amount": 500, "employment_type": "daily_wages",
+    })
+    assert res.status_code == 200
+    body = res.get_json()["worker"]
+    assert body["age"] == 34 and body["wage_amount"] == 500.0 and body["employment_type"] == "daily_wages"
+
+
+def test_employee_detail_includes_payments_and_attendance(admin_client, app):
+    with app.app_context():
+        wid = make("Has Payments", present=(0,))
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Has Payments", "payments": [
+        {"label": "October salary", "amount": 20000, "mode": "Bank transfer", "paid_date": "2026-10-05"},
+        {"label": "November salary", "amount": 20000},
+    ]})
+    assert res.status_code == 200
+    body = res.get_json()["worker"]
+    assert [p["label"] for p in body["payments"]] == ["October salary", "November salary"]
+    assert body["paid_amount"] == 20000.0            # only the one with a paid_date counts
+
+    detail = admin_client.get(f"/api/workforce/{wid}").get_json()
+    assert detail["worker"]["paid_amount"] == 20000.0
+    assert len(detail["worker"]["payments"]) == 2
+    assert detail["payment_modes"]
+
+
+def test_payments_must_have_a_label_and_a_valid_amount(admin_client, app):
+    with app.app_context():
+        wid = make("Bad Payment")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"payments": [{"label": "", "amount": 100}]})
+    assert res.status_code == 422 and "payments" in res.get_json()["fields"]
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"payments": [{"label": "X", "amount": -5}]})
+    assert res.status_code == 422 and "payments" in res.get_json()["fields"]
+
+
+def test_editing_payments_replaces_the_whole_log(admin_client, app):
+    with app.app_context():
+        wid = make("Replace Log")
+    admin_client.patch(f"/api/workforce/{wid}", json={"payments": [{"label": "A", "amount": 100}, {"label": "B", "amount": 200}]})
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"payments": [{"label": "Only one now", "amount": 300}]})
+    body = res.get_json()["worker"]
+    assert len(body["payments"]) == 1 and body["payments"][0]["label"] == "Only one now"
+
+
+def test_removing_an_employee_removes_their_payment_log_too(admin_client, app):
+    with app.app_context():
+        wid = make("Leaving With Payments")
+    admin_client.patch(f"/api/workforce/{wid}", json={"payments": [{"label": "A", "amount": 100}]})
+    assert admin_client.delete(f"/api/workforce/{wid}").status_code == 204
+    with app.app_context():
+        from app.models import WorkerPayment
+        assert WorkerPayment.query.filter_by(worker_id=wid).count() == 0

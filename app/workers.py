@@ -16,8 +16,12 @@ from flask import Blueprint, g, jsonify, redirect, render_template, request
 from sqlalchemy import func
 from werkzeug.exceptions import HTTPException, abort
 
+from .constants import PAYMENT_MODES
 from .extensions import db
-from .models import Role, Worker, WorkerAttendance
+from .models import Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
+from .validation import Fields, parse_money
+
+EMPLOYMENT_TYPES = ("regular", "daily_wages")
 
 WINDOW_DAYS = 14           # how many days back the one-off WhatsApp import covers; shown next to each count
 PERIOD_DAYS = 30           # the Attendance sheet looks back at most this far from the last day with data
@@ -190,7 +194,8 @@ def person(worker_id):
     records = [a.to_dict() for a in worker.attendance
                if own and own["start"] <= a.work_date.isoformat() <= own["end"]]
     roles = {r.key: r.name for r in Role.query.filter(Role.key != "admin").order_by(Role.name)}
-    return jsonify(worker=worker.to_dict(), period=own, attendance=records, roles=roles,
+    return jsonify(worker=worker.to_dict(detail=True), period=own, attendance=records, roles=roles,
+                   payment_modes=PAYMENT_MODES, currency=settings_for_client()["currency"],
                    today=date.today().isoformat(), data_until=data_until.isoformat() if data_until else None)
 
 
@@ -201,50 +206,113 @@ def _payload():
     return payload
 
 
-def _role_fields(payload, errors):
-    """name (required) and role_key (optional - blank/"unassigned" clears it) from a request body."""
-    name = str(payload.get("name") or "").strip()[:120]
-    if not name:
-        errors["name"] = "Enter a name"
-    raw_role = payload.get("role_key")
-    role_key = None
-    if raw_role not in (None, "", UNASSIGNED):
-        if db.session.get(Role, raw_role) is None or raw_role == "admin":
+def _employee_fields(payload):
+    """name, role_key and the full HR detail set - only the keys actually present in the request are
+    checked or returned (same partial-update rule as Fields itself), so a PATCH that only sends
+    {"payments": [...]} doesn't also have to resend the name, and doesn't blank it out either."""
+    f = Fields(payload)
+    f.text("name", 120, required=True, label="a name")
+    f.integer("age", 14, 90)
+    f.text("qualification", 160)
+    f.text("experience", 200)
+    f.text("skills", 400)
+    f.text("phone", 40)
+    f.date("joining_date")
+    f.money("wage_amount")
+    f.text("pf_number", 60)
+    f.text("esic_number", 60)
+    f.text("reference", 200)
+    data, errors = f.data, f.errors
+
+    if "role_key" in payload:
+        raw_role = payload["role_key"]
+        if raw_role in (None, "", UNASSIGNED):
+            data["role_key"] = None
+        elif db.session.get(Role, raw_role) is None or raw_role == "admin":
             errors["role_key"] = "Choose a role from the list"
         else:
-            role_key = raw_role
-    return name, role_key
+            data["role_key"] = raw_role
+
+    if "employment_type" in payload:
+        raw = payload["employment_type"]
+        if raw in (None, ""):
+            data["employment_type"] = ""
+        elif raw in EMPLOYMENT_TYPES:
+            data["employment_type"] = raw
+        else:
+            errors["employment_type"] = "Choose regular or daily wages"
+
+    return data, errors
 
 
 @workforce_bp.post("")
 def add_worker():
     """Add someone ahead of the next WhatsApp import, or someone who never comes up in it (e.g. a new
-    hire). role_key is the same role list Users & roles uses - a label here, not a login or permission."""
-    payload = _payload()
-    errors = {}
-    name, role_key = _role_fields(payload, errors)
+    hire). role_key is the same role list Users & roles uses - a label here, not a login or permission.
+    The rest is the usual HR paperwork - all optional, filled in now or later from Edit."""
+    data, errors = _employee_fields(_payload())
+    if not data.get("name") and "name" not in errors:
+        errors["name"] = "Enter a name"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    worker = Worker(name=name, role_key=role_key, source="manual")
+    worker = Worker(source="manual", **data)
     db.session.add(worker)
     db.session.commit()
-    return jsonify(worker=worker.to_dict()), 201
+    return jsonify(worker=worker.to_dict(detail=True)), 201
+
+
+def _payments(raw, errors):
+    """Check a salary/wages log from the request - same shape and the same check as a project's payment
+    schedule (see projects.py's _payments). Returns a list of dicts, or None if it has problems."""
+    if not isinstance(raw, list) or len(raw) > 60:
+        errors["payments"] = "The payment log should be a list of up to 60 entries"
+        return None
+    rows = []
+    for i, item in enumerate(raw, start=1):
+        f = Fields(item if isinstance(item, dict) else {})
+        f.text("label", 120, required=True, label="a name for each payment entry")
+        f.date("due_date")
+        f.date("paid_date")
+        f.text("comments", 2000)
+        if isinstance(item, dict) and item.get("mode") not in (None, "", *PAYMENT_MODES):
+            f.errors["mode"] = "Choose one of the payment modes"
+        problems = dict(f.errors)
+        amount = parse_money(item.get("amount", 0) if isinstance(item, dict) else 0, problems, "amount")
+        if problems:
+            errors["payments"] = f"Payment entry {i}: {next(iter(problems.values()))}"
+            return None
+        rows.append({
+            "label": f.data["label"], "amount": amount, "due_date": f.data.get("due_date"),
+            "mode": (item.get("mode") or "") if isinstance(item, dict) else "",
+            "paid_date": f.data.get("paid_date"), "comments": f.data.get("comments", ""),
+        })
+    return rows
 
 
 @workforce_bp.patch("/<int:worker_id>")
 def edit_worker(worker_id):
-    """Change a person's name or role."""
+    """Change a person's details, role, or their whole salary/wages log (sent as one list, same as a
+    project's payment schedule - see persistSteps in people.js)."""
     worker = db.session.get(Worker, worker_id)
     if worker is None:
         abort(404)
     payload = _payload()
-    errors = {}
-    name, role_key = _role_fields(payload, errors)
+    data, errors = _employee_fields(payload)
+    payments = None
+    if "payments" in payload:
+        payments = _payments(payload["payments"], errors)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    worker.name, worker.role_key = name, role_key
+    for field, value in data.items():
+        setattr(worker, field, value)
+    if payments is not None:
+        worker.payments = [
+            WorkerPayment(label=p["label"], amount=p["amount"], due_date=p["due_date"], mode=p["mode"],
+                          paid_date=p["paid_date"], comments=p["comments"], position=i)
+            for i, p in enumerate(payments, start=1)
+        ]
     db.session.commit()
-    return jsonify(worker=worker.to_dict())
+    return jsonify(worker=worker.to_dict(detail=True))
 
 
 @workforce_bp.delete("/<int:worker_id>")
