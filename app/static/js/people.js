@@ -282,9 +282,9 @@
   function employeeForm({ titleText, submitLabel, worker: w = {}, roles, onSave }) {
     const text = (name, extra = {}) => h('input', { type: 'text', value: w[name] ?? '', ...extra });
     const nameInput = text('name', { maxlength: 120, autocomplete: 'off' });
-    const roleSel = selectField(
-      [{ value: UNASSIGNED, label: 'Unassigned' }, ...Object.entries(roles).map(([k, v]) => ({ value: k, label: v }))],
-      w.role_key || UNASSIGNED, { title: 'Role' });
+    const roleSel = LD.rolePicker(
+      Object.entries(roles).map(([k, v]) => ({ value: k, label: v })), w.role_key || '',
+      { title: 'Role', blank: 'Unassigned' });
     const ageInput = text('age', { type: 'number', min: '14', max: '90', inputmode: 'numeric' });
     const qualificationInput = text('qualification', { maxlength: 160, autocomplete: 'off' });
     const experienceInput = text('experience', { maxlength: 200, autocomplete: 'off', placeholder: 'e.g. 5 years in fire systems' });
@@ -307,9 +307,24 @@
         errorBox.hidden = true;
         showFieldErrors(form, {});
         saveBtn.disabled = true;
+        if (roleSel.newRoleName) {
+          try {
+            const created = await api('/api/roles', { method: 'POST', body: { name: roleSel.newRoleName } });
+            roles[created.role.key] = created.role.name;
+            roleSel.setOptions(Object.entries(roles).map(([k, v]) => ({ value: k, label: v })));
+            roleSel.value = created.role.key;
+          } catch (err) {
+            // The role endpoint's own field is "name" (the role's name) - showFieldErrors would wrongly
+            // land that on this form's own "name" (the employee's), so it's shown as plain text instead.
+            errorBox.textContent = (err.fields && err.fields.name) || err.message;
+            errorBox.hidden = false;
+            saveBtn.disabled = false;
+            return;
+          }
+        }
         try {
           await onSave({
-            name: nameInput.value, role_key: roleSel.value, age: ageInput.value,
+            name: nameInput.value, role_key: roleSel.value || UNASSIGNED, age: ageInput.value,
             qualification: qualificationInput.value, experience: experienceInput.value, skills: skillsInput.value,
             phone: phoneInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
             wage_amount: wageInput.value === '' ? null : wageInput.value, pf_number: pfInput.value,

@@ -1,5 +1,5 @@
 from app.extensions import db
-from app.models import RoleModule, User
+from app.models import Role, RoleModule, User
 from conftest import make_user, signed_in
 
 
@@ -178,3 +178,52 @@ def test_sub_admin_sees_only_their_assigned_states(app, admin_client):
     assert client_ids == {cid}
     assert sub_client.get(f"/api/clients/{cid}").status_code == 200
     assert sub_client.get(f"/api/clients/{cid2}").status_code == 404
+
+
+# ---------- adding a role on the fly (used by Add employee and Add user) ----------
+
+def test_admin_adds_a_role(admin_client):
+    res = admin_client.post("/api/roles", json={"name": "Electrician"})
+    assert res.status_code == 201
+    role = res.get_json()["role"]
+    assert role == {"key": "electrician", "name": "Electrician"}
+    stored = db.session.get(Role, "electrician")
+    assert stored.name == "Electrician" and stored.sees_all is False
+
+
+def test_role_name_is_required(admin_client):
+    res = admin_client.post("/api/roles", json={"name": "  "})
+    assert res.status_code == 422 and "name" in res.get_json()["fields"]
+
+
+def test_role_name_cannot_duplicate_an_existing_one(admin_client):
+    admin_client.post("/api/roles", json={"name": "Electrician"})
+    res = admin_client.post("/api/roles", json={"name": "electrician"})          # case-insensitive
+    assert res.status_code == 422 and "name" in res.get_json()["fields"]
+
+
+def test_role_key_is_slugified_and_deduplicated_on_collision(admin_client, app):
+    res = admin_client.post("/api/roles", json={"name": "Site Manager!"})
+    assert res.get_json()["role"]["key"] == "site_manager"
+    with app.app_context():
+        db.session.add(Role(key="crane_op", name="Crane Operator (old)"))
+        db.session.commit()
+    res = admin_client.post("/api/roles", json={"name": "Crane Op"})
+    assert res.get_json()["role"]["key"] == "crane_op_2"
+
+
+def test_only_the_admin_can_add_a_role(client, manager_client, accounts_client):
+    for who in (client, manager_client, accounts_client):
+        assert who.post("/api/roles", json={"name": "X"}).status_code == 403
+
+
+def test_adding_a_role_never_creates_a_user_or_worker(admin_client, app):
+    """Roles are a shared label, not a bridge between the two tables - adding one here never creates a
+    user or an employee, and adding an employee never creates a user (see Worker/User in models.py)."""
+    from app.models import Worker
+    with app.app_context():
+        before_users, before_workers = User.query.count(), Worker.query.count()
+    admin_client.post("/api/roles", json={"name": "Painter"})
+    with app.app_context():
+        assert User.query.count() == before_users
+        assert Worker.query.count() == before_workers

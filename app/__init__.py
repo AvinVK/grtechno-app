@@ -37,6 +37,7 @@ def create_app(config_object=Config):
     from .attendance import bp as attendance_bp
     from .me import bp as me_bp
     from .modules import bp as modules_bp, modules_for
+    from .roles import bp as roles_bp
     from .users import bp as users_bp, page_bp as users_page_bp
     from .workers import bp as workers_bp, page_bp as workers_page_bp, staff_bp, workforce_bp
     from .uploads import bp as uploads_bp
@@ -52,6 +53,7 @@ def create_app(config_object=Config):
     app.register_blueprint(workforce_bp)
     app.register_blueprint(uploads_bp)
     app.register_blueprint(modules_bp)
+    app.register_blueprint(roles_bp)
     app.register_blueprint(clients_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(attendance_bp)

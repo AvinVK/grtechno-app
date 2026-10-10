@@ -194,6 +194,49 @@ window.LD = (() => {
     return wrap;
   }
 
+  /* A role picker: the list, plus "+ Add a new role…", which shows a box to type the name in. Unlike
+     categoryPicker, a role is a key/name pair (User.role_key and Worker.role_key are a real foreign key,
+     not a free-text string) - so a typed name isn't usable on its own. `.value` is the chosen role's key,
+     or '' while a new one is only typed, not created yet; `.newRoleName` is that typed name (trimmed), or
+     '' otherwise. The caller POSTs /api/roles with it, gets the new key back, and sets `.value` to that
+     before saving the form it's part of - see employeeForm in people.js or the Add user form in users.js
+     for the exact sequence. `items` is [{value: key, label: name}, ...]; `opts.blank` is the empty choice,
+     left out entirely (no "Not set") when the role itself is required, as it is for a user. */
+  function rolePicker(items, value, opts = {}) {
+    const NEW = '__new_role__';
+    const current = value || '';
+    let list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
+    const withExtras = () => {
+      const out = opts.blank ? [{ value: '', label: opts.blank }] : [];
+      out.push(...list, { value: NEW, label: '+ Add a new role…' });
+      return out;
+    };
+    const sel = selectField(withExtras(), current, { title: opts.title || 'Role', placeholder: opts.blank || 'Choose a role' });
+    const typed = h('input', { type: 'text', maxlength: 60, autocomplete: 'off', placeholder: 'Name of the new role', hidden: true });
+    typed.setAttribute('aria-label', 'New role name');
+    const wrap = h('div', { class: 'category-picker' }, sel, typed);
+    sel.addEventListener('change', () => {
+      typed.hidden = sel.value !== NEW;
+      if (!typed.hidden) typed.focus();
+    });
+    Object.defineProperty(wrap, 'value', {
+      get: () => (sel.value === NEW ? '' : sel.value),
+      set: (v) => { sel.value = v || ''; typed.hidden = true; },
+      configurable: true,
+    });
+    Object.defineProperty(wrap, 'newRoleName', {
+      get: () => (sel.value === NEW ? typed.value.trim() : ''),
+      configurable: true,
+    });
+    Object.defineProperty(wrap, 'disabled', {
+      get: () => sel.disabled,
+      set: (d) => { sel.disabled = d; typed.disabled = d; },
+      configurable: true,
+    });
+    wrap.setOptions = (newItems) => { list = newItems.map((i) => (typeof i === 'object' ? i : { value: i, label: i })); sel.setOptions(withExtras()); };
+    return wrap;
+  }
+
   function selectField(items, value, opts = {}) {
     let list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
     let current = value ?? '';
@@ -379,7 +422,7 @@ window.LD = (() => {
 
   return {
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
-    pickList, selectField, categoryPicker, pickDate, dateField, closeOnBack,
+    pickList, selectField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
   };
 })();
 

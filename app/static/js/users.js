@@ -3,7 +3,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, selectField, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, selectField, rolePicker, closeOnBack } = window.LD;
 
   const chip = (tone, text) => h('span', { class: `chip chip-${tone}` }, text);
 
@@ -72,7 +72,7 @@
     let roles = [];
     let statesOptions = [];
     let newUserStates = [];                 // chosen for the Add user form, only while its role is Sub-admin
-    const roleSelect = selectField([], '', { title: 'Role' });
+    const roleSelect = rolePicker([], '', { title: 'Role' });
     roleSelect.id = 'u-role';
     roleSelect.setAttribute('aria-label', 'Role');
 
@@ -241,6 +241,23 @@
           return;
         }
         addBtn.disabled = true;
+        if (roleSelect.newRoleName) {
+          try {
+            const created = await api('/api/roles', { method: 'POST', body: { name: roleSelect.newRoleName } });
+            roles.push(created.role);
+            roleSelect.setOptions(roles.map((r) => ({ value: r.key, label: r.name })));
+            roleSelect.value = created.role.key;
+          } catch (err) {
+            nameErr.textContent = (err.fields && err.fields.name) || err.message;
+            addBtn.disabled = false;
+            return;
+          }
+        }
+        if (!roleSelect.value) {
+          nameErr.textContent = 'Choose a role.';
+          addBtn.disabled = false;
+          return;
+        }
         try {
           const body = { name: nameInput.value, role: roleSelect.value };
           if (roleSelect.value === 'sub_admin') body.states = newUserStates;
