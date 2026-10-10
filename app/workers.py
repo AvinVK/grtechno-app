@@ -1,6 +1,7 @@
 """Manpower and staff (admin only): field workers and office staff who don't sign in to the app, tracked
 instead from the WhatsApp group each marks their attendance in. Same table (Worker.category tells them
-apart). Read-only for now - the data comes in through an import, not through these screens.
+apart). Attendance itself still only arrives through the WhatsApp import, but the admin can add someone
+ahead of the next import (so their attendance has somewhere to land) or remove someone who left.
 
 Two pages under Manage share one script (people.js): "Manpower & staff" (who's where, and the last week at
 a glance) and "Attendance sheet" (everyone ranked by attendance, lowest first, with each person's full
@@ -8,7 +9,7 @@ day-by-day record). The older per-category JSON APIs (/api/workers, /api/staff) 
 
 from datetime import date, timedelta
 
-from flask import Blueprint, g, jsonify, redirect, render_template
+from flask import Blueprint, g, jsonify, redirect, render_template, request
 from sqlalchemy import func
 from werkzeug.exceptions import HTTPException, abort
 
@@ -182,3 +183,42 @@ def person(worker_id):
                if own and own["start"] <= a.work_date.isoformat() <= own["end"]]
     return jsonify(worker=worker.to_dict(), period=own, attendance=records, today=date.today().isoformat(),
                    data_until=data_until.isoformat() if data_until else None)
+
+
+def _payload():
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    return payload
+
+
+@workforce_bp.post("")
+def add_worker():
+    """Add someone ahead of the next WhatsApp import, or someone who never comes up in it (e.g. a new
+    hire). category decides whether they land on the Manpower or Staff list."""
+    payload = _payload()
+    name = str(payload.get("name") or "").strip()[:120]
+    category = payload.get("category")
+    errors = {}
+    if not name:
+        errors["name"] = "Enter a name"
+    if category not in CATEGORIES:
+        errors["category"] = "Choose manpower or staff"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    worker = Worker(name=name, category=category, source="manual")
+    db.session.add(worker)
+    db.session.commit()
+    return jsonify(worker=worker.to_dict()), 201
+
+
+@workforce_bp.delete("/<int:worker_id>")
+def delete_worker(worker_id):
+    """Removes the person and their attendance history. Leads/surveys they were ever picked as the
+    enquired-by or surveyor on keep existing, just without that attribution (see models.py)."""
+    worker = db.session.get(Worker, worker_id)
+    if worker is None:
+        abort(404)
+    db.session.delete(worker)
+    db.session.commit()
+    return "", 204

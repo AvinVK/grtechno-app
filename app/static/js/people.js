@@ -11,7 +11,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, plural } = window.LD;
+  const { $, h, clear, api, plural, toast, confirm, field, showFieldErrors, selectField } = window.LD;
   const view = $('#view');
   const mode = view.dataset.mode;
   const GROUPS = { manpower: 'Manpower', staff: 'Staff' };
@@ -227,8 +227,86 @@
     closeBtn.focus();
 
     api(`/api/workforce/${p.id}`)
-      .then((data) => clear(body).append(...popupBody(p, data)))
+      .then((data) => clear(body).append(
+        ...popupBody(p, data),
+        h('button', { class: 'btn small danger fn-remove', type: 'button', onclick: () => deletePerson(p, { afterDelete: () => { close(); route(); } }) }, 'Remove person')))
       .catch((err) => clear(body).append(h('p', { class: 'empty-state' }, err.message)));
+  }
+
+  /* ---------- admin: add a person ahead of the next import, or remove one who left ---------- */
+
+  // The group list cache goes stale the moment someone is added or removed - force the next route()
+  // to reload it, same as any other data-changing action on this page.
+  function invalidateCache() { cache = null; }
+
+  function closeableModal(titleText, bodyNode) {
+    const opener = document.activeElement;
+    const closeBtn = h('button', { type: 'button', class: 'icon-x', 'aria-label': 'Close' }, '×');
+    const card = h('div', { class: 'confirm-card fn-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title' },
+      h('div', { class: 'fn-head' }, h('h2', { id: 'modal-title' }, titleText), closeBtn),
+      bodyNode);
+    const overlay = h('div', { class: 'confirm-overlay' }, card);
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    function close() {
+      window.removeEventListener('keydown', onKey);
+      overlay.remove();
+      document.body.classList.remove('locked');
+      opener?.focus?.();
+    }
+    closeBtn.onclick = close;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    window.addEventListener('keydown', onKey);
+    document.body.append(overlay);
+    document.body.classList.add('locked');
+    return close;
+  }
+
+  function openAddPerson() {
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const categorySel = selectField(
+      [{ value: 'manpower', label: 'Manpower' }, { value: 'staff', label: 'Staff' }],
+      'manpower', { title: 'Category' });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add person');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          await api('/api/workforce', { method: 'POST', body: { name: nameInput.value, category: categorySel.value } });
+          toast('Person added');
+          invalidateCache();
+          close();
+          route();
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      h('div', { class: 'form-grid' },
+        field('name', 'Name', nameInput, { wide: true }),
+        field('category', 'Category', categorySel)),
+      h('div', { class: 'form-actions' }, saveBtn));
+    const close = closeableModal('Add person', form);
+    nameInput.focus();
+  }
+
+  async function deletePerson(p, { afterDelete } = {}) {
+    const ok = await confirm(`Remove ${p.name}? This also removes their attendance history.`, { ok: 'Remove', danger: true, title: 'Remove person' });
+    if (!ok) return;
+    try {
+      await api(`/api/workforce/${p.id}`, { method: 'DELETE' });
+      toast('Person removed');
+      invalidateCache();
+      afterDelete?.();
+    } catch (err) {
+      toast(err.message, true);
+    }
   }
 
   /* ---------- Attendance sheet: lowest attendance first ---------- */
@@ -337,7 +415,10 @@
         ? h('p', { class: 'wk-legend' }, `Came ${came} of ${days} days, ${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}`)
         : null,
       ...(data.period ? weeks(data) : [h('p', { class: 'empty-state' }, 'No attendance recorded for this person.')]),
-      dataNote(data)));
+      dataNote(data),
+      h('button', { class: 'btn small danger fn-remove', type: 'button',
+        onclick: () => deletePerson(data.worker, { afterDelete: () => { window.location.hash = `#${key}`; } }) },
+        'Remove person')));
     window.scrollTo(0, 0);
   }
 
@@ -355,6 +436,8 @@
     }
     return showList(cache, hash);
   }
+
+  document.getElementById('add-person-btn')?.addEventListener('click', openAddPerson);
 
   window.addEventListener('hashchange', route);
   route();

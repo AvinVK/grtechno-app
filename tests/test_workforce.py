@@ -113,3 +113,52 @@ def test_no_data_means_no_period(admin_client, app):
     assert body["period"] is None and body["data_until"] is None
     assert body["manpower"][0]["days"] == 0 and {d["status"] for d in body["manpower"][0]["week"]} == {"none"}
     assert admin_client.get(f"/api/workforce/{wid}").get_json()["period"] is None
+
+
+# ---------- admin can add and remove a person ----------
+
+def test_admin_adds_a_person_ahead_of_the_next_import(admin_client):
+    res = admin_client.post("/api/workforce", json={"name": "New Hire", "category": "staff"})
+    assert res.status_code == 201
+    body = res.get_json()["worker"]
+    assert body["name"] == "New Hire" and body["category"] == "staff" and body["source"] == "manual"
+    listed = admin_client.get("/api/workforce").get_json()
+    assert by_name(listed["staff"])["New Hire"]["id"] == body["id"]
+
+
+def test_adding_a_person_requires_a_name_and_a_valid_category(admin_client):
+    res = admin_client.post("/api/workforce", json={"name": "", "category": "staff"})
+    assert res.status_code == 422 and "name" in res.get_json()["fields"]
+    res = admin_client.post("/api/workforce", json={"name": "Someone", "category": "manager"})
+    assert res.status_code == 422 and "category" in res.get_json()["fields"]
+
+
+def test_only_the_admin_can_add_or_remove_a_person(client, manager_client, accounts_client):
+    for who in (client, manager_client, accounts_client):
+        assert who.post("/api/workforce", json={"name": "X", "category": "staff"}).status_code == 403
+        assert who.delete("/api/workforce/1").status_code == 403
+
+
+def test_admin_removes_a_person_and_their_attendance_goes_with_them(admin_client, app):
+    with app.app_context():
+        wid = make("Leaving Soon", present=(0, 1))
+    assert admin_client.delete(f"/api/workforce/{wid}").status_code == 204
+    assert admin_client.get(f"/api/workforce/{wid}").status_code == 404
+    listed = admin_client.get("/api/workforce").get_json()
+    assert "Leaving Soon" not in by_name(listed["manpower"])
+    assert admin_client.delete("/api/workforce/9999").status_code == 404
+
+
+def test_removing_a_person_clears_their_name_from_leads_they_were_picked_on(admin_client, admin, app):
+    from app.models import Lead
+    with app.app_context():
+        wid = make("Picked On A Lead", category="staff")
+        lead = Lead(company="Some Co", contact_name="X", phone="9800000000", enquired_by_id=wid, owner_code=admin.code)
+        db.session.add(lead)
+        db.session.commit()
+        lead_id = lead.id
+
+    assert admin_client.delete(f"/api/workforce/{wid}").status_code == 204
+    with app.app_context():
+        kept = db.session.get(Lead, lead_id)
+        assert kept is not None and kept.enquired_by_id is None

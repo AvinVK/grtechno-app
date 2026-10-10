@@ -1466,6 +1466,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-section .wk-legend { margin: 10px 0 0; }
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }
+.fn-remove { align-self: start; margin-top: 4px; }
 
 /* ---------- Me hub (/me) ---------- */
 

@@ -4,6 +4,12 @@
 
 {% block page_title %}{{ page_title }}{% endblock %}
 
+{% block actions %}
+{% if mode == 'roster' %}
+  <button class="btn primary appbar-primary" type="button" id="add-person-btn">+ Person</button>
+{% endif %}
+{% endblock %}
+
 {% block content %}
 <main id="view" class="view" tabindex="-1" data-mode="{{ mode }}"><p class="loading">Loading…</p></main>
 <script src="{{ asset('js/people.js') }}" defer></script>
