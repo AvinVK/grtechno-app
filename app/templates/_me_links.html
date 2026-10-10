@@ -26,7 +26,7 @@
   <div class="card-group me-rows">
     {% for endpoint, ic, text in [
       ('users_page.page', 'user', 'Users & roles'),
-      ('workers_page.workforce_page', 'manpower', 'Manpower & staff'),
+      ('workers_page.workforce_page', 'manpower', 'Employee management'),
       ('workers_page.sheet_page', 'attendance', 'Attendance sheet'),
     ] %}
     <a class="me-row" href="{{ url_for(endpoint) }}">{{ icon(ic) }}<span>{{ text }}</span><span class="me-chevron" aria-hidden="true">›</span></a>

@@ -612,19 +612,25 @@ class Attendance(db.Model):
 
 class Worker(db.Model):
     """A field worker or office staff member who does not sign in to the app - tracked instead from the
-    WhatsApp group they mark their attendance in. category tells the two apart (Manpower list vs Staff
-    list are the same table, filtered). Separate from User: becomes a User only if ever given a login."""
+    WhatsApp group they mark their attendance in. Separate from User: becomes a User only if ever given
+    a login.
+    category (manpower/staff) still decides who the Leads module offers as a surveyor or "enquired by"
+    (see app/api.py - only "staff" shows up there) - that's a real, separate meaning from role_key, which
+    is just the Employee management page's own grouping label, the same roles table Users & roles uses
+    (minus 'admin'), and grants no sign-in or permission."""
 
     __tablename__ = "workers"
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     category = db.Column(db.String(20), nullable=False, default="manpower", server_default="manpower")   # manpower | staff
+    role_key = db.Column(db.String(30), db.ForeignKey("roles.key"), nullable=True)
     source = db.Column(db.String(30), nullable=False, default="whatsapp", server_default="whatsapp")
     first_seen = db.Column(db.Date, nullable=True)
     last_seen = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
+    role = db.relationship("Role")
     attendance = db.relationship(
         "WorkerAttendance", back_populates="worker", cascade="all, delete-orphan",
         order_by="WorkerAttendance.work_date.desc()",
@@ -633,6 +639,7 @@ class Worker(db.Model):
     def to_dict(self) -> dict:
         return {
             "id": self.id, "name": self.name, "category": self.category, "source": self.source,
+            "role_key": self.role_key, "role_name": self.role.name if self.role else None,
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
         }

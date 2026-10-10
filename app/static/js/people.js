@@ -1,9 +1,11 @@
-/* Manpower & staff, and the Attendance sheet (admin only): field workers and office staff who don't sign
-   in to the app, tracked from the WhatsApp groups they mark attendance in. Both pages open straight on
-   the list of people, with a search and chips for All and each group (Manpower, Staff):
-   - Manpower & staff (data-mode="roster"): each person, where they worked on their most recent working
-     day, and the last 7 days as green (present) / red (absent) dots. A person opens a popup: their current
-     site, average hours, and the last 2 weeks as dates circled green or red.
+/* Employee management, and the Attendance sheet (admin only): field workers and office staff who don't
+   sign in to the app, tracked from the WhatsApp groups they mark attendance in. Grouped by role - the
+   same roles table Users & roles uses (minus Admin) - not the old manpower/staff split. Both pages open
+   straight on the list of people, with a search and a chip for All and each role in use:
+   - Employee management (data-mode="roster"): each person, where they worked on their most recent
+     working day, and the last 7 days as green (present) / red (absent) dots. Edit and Remove sit beside
+     each row; + Employee (top bar) adds one. A person's name opens a popup: their current site, average
+     hours, and the last 2 weeks as dates circled green or red.
    - Attendance sheet (data-mode="sheet"): everyone ranked by attendance, lowest first.
    On the sheet, a person opens their day-by-day record, laid out like Your attendance's history.
    Workers often work Sundays, so every day counts here (unlike Your attendance, which skips Sundays). The
@@ -14,7 +16,7 @@
   const { $, h, clear, api, plural, toast, confirm, field, showFieldErrors, selectField } = window.LD;
   const view = $('#view');
   const mode = view.dataset.mode;
-  const GROUPS = { manpower: 'Manpower', staff: 'Staff' };
+  const UNASSIGNED = 'unassigned';
 
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -49,7 +51,7 @@
     return api('/api/workforce');
   }
 
-  /* ---------- Manpower & staff: where each person is, and their last 7 days ---------- */
+  /* ---------- Employee management: where each person is, and their last 7 days ---------- */
 
   const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet' };
 
@@ -59,22 +61,29 @@
       week.map((d) => h('i', { class: `wk-dot ${d.status}`, title: `${shortDate(parseDay(d.date))}: ${DOT_LABEL[d.status]}` })));
   }
 
-  function rosterRow(p, today) {
+  function rosterRow(p, today, roles, onChange) {
     const dep = p.deployed;
     const where = dep
       ? [relativeDay(dep.date, today), dep.project_code ? `${dep.project_code} · ${dep.project_title}` : 'site not recorded'].join(' · ')
       : 'No working day on record';
-    return h('li', {}, h('button', { type: 'button', class: 'att-day people-row', onclick: () => openPerson(p) },
-      h('div', { class: 'att-day-top' }, h('span', { class: 'att-day-date' }, p.name), weekDots(p.week)),
-      h('span', { class: 'att-day-sub' }, where)));
+    return h('li', { class: 'people-row-li' },
+      h('button', { type: 'button', class: 'att-day people-row', onclick: () => openPerson(p, roles, onChange) },
+        h('div', { class: 'att-day-top' }, h('span', { class: 'att-day-date' }, p.name), weekDots(p.week)),
+        h('span', { class: 'att-day-sub' }, where)),
+      h('div', { class: 'people-row-actions' },
+        h('button', { type: 'button', class: 'people-action-btn', 'aria-label': `Edit ${p.name}`, title: 'Edit',
+          onclick: () => openEditPerson(p, roles, onChange) }, '✎'),
+        h('button', { type: 'button', class: 'people-action-btn danger', 'aria-label': `Remove ${p.name}`, title: 'Remove',
+          onclick: () => deletePerson(p, { afterDelete: onChange }) }, '×')));
   }
 
-  const groupLabel = (k) => GROUPS[k] || k.charAt(0).toUpperCase() + k.slice(1);
+  const groupLabel = (k, roles) => (k === UNASSIGNED ? 'Unassigned' : roles[k] || k);
 
   // The list both pages open on: a search by name and a chip per group, taken from the groups the data
-  // actually has (not a fixed list), plus All. Manpower & staff lists by name with the week's dots; the
-  // Attendance sheet lists lowest attendance first. The chip in use goes into the address (#manpower,
-  // #staff), so coming back from a person lands on the same one.
+  // actually has (not a fixed list - whatever roles are in use, same as Users & roles), plus All.
+  // Employee management lists by name with the week's dots; the Attendance sheet lists lowest attendance
+  // first. The chip in use goes into the address (#welder, #unassigned, ...), so coming back from a
+  // person lands on the same one.
   function showList(data, key) {
     LD.resetAppbarBack?.();
     const groups = Object.keys(data).filter((k) => Array.isArray(data[k]));
@@ -91,7 +100,8 @@
     const order = sheet
       ? (a, b) => rate(a) - rate(b) || a.name.localeCompare(b.name)
       : (a, b) => a.name.localeCompare(b.name);
-    const row = sheet ? sheetRow : (p) => rosterRow(p, data.today);
+    const onChange = () => { invalidateCache(); route(); };
+    const row = sheet ? sheetRow : (p) => rosterRow(p, data.today, data.roles, onChange);
 
     const heading = h('h2', {});
     const count = h('span', { class: 'att-week-sum' });
@@ -106,10 +116,10 @@
       const pool = state.group === 'all' ? groups.flatMap((g) => data[g]) : data[state.group];
       const q = state.q.trim().toLowerCase();
       const people = pool.filter((p) => !q || p.name.toLowerCase().includes(q)).sort(order);
-      heading.textContent = state.group === 'all' ? 'Everyone' : groupLabel(state.group);
+      heading.textContent = state.group === 'all' ? 'Everyone' : groupLabel(state.group, data.roles);
       count.textContent = plural(people.length, 'person', 'people');
       clear(chips).append(...[['all', 'All', groups.reduce((n, g) => n + data[g].length, 0)],
-        ...groups.map((g) => [g, groupLabel(g), data[g].length])].map(([value, label, n]) => h('button', {
+        ...groups.map((g) => [g, groupLabel(g, data.roles), data[g].length])].map(([value, label, n]) => h('button', {
         type: 'button', class: 'filter-chip', 'aria-pressed': String(state.group === value),
         onclick: () => {
           state.group = value;
@@ -202,13 +212,13 @@
     ];
   }
 
-  function openPerson(p) {
+  function openPerson(p, roles, onChange) {
     const opener = document.activeElement;
     const body = h('div', { class: 'fn-body' }, h('p', { class: 'loading' }, 'Loading…'));
     const closeBtn = h('button', { type: 'button', class: 'icon-x', 'aria-label': 'Close' }, '×');
     const card = h('div', { class: 'confirm-card fn-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'fn-title' },
       h('div', { class: 'fn-head' },
-        h('div', {}, h('h2', { id: 'fn-title' }, p.name), h('span', { class: 'fn-group' }, GROUPS[p.category] || '')),
+        h('div', {}, h('h2', { id: 'fn-title' }, p.name), h('span', { class: 'fn-group' }, groupLabel(p.role_key, roles))),
         closeBtn),
       body);
     const overlay = h('div', { class: 'confirm-overlay' }, card);
@@ -229,7 +239,9 @@
     api(`/api/workforce/${p.id}`)
       .then((data) => clear(body).append(
         ...popupBody(p, data),
-        h('button', { class: 'btn small danger fn-remove', type: 'button', onclick: () => deletePerson(p, { afterDelete: () => { close(); route(); } }) }, 'Remove person')))
+        h('div', { class: 'fn-actions' },
+          h('button', { class: 'btn small', type: 'button', onclick: () => { close(); openEditPerson(p, roles, onChange); } }, 'Edit'),
+          h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(p, { afterDelete: () => { close(); onChange(); } }) }, 'Remove person'))))
       .catch((err) => clear(body).append(h('p', { class: 'empty-state' }, err.message)));
   }
 
@@ -261,13 +273,15 @@
     return close;
   }
 
-  function openAddPerson() {
-    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
-    const categorySel = selectField(
-      [{ value: 'manpower', label: 'Manpower' }, { value: 'staff', label: 'Staff' }],
-      'manpower', { title: 'Category' });
+  // Add and Edit share the same two fields (name, role) and the same save/error handling - just a
+  // different title, submit label, starting values and HTTP call.
+  function employeeForm({ titleText, submitLabel, name: startName, roleKey: startRole, roles, onSave }) {
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off', value: startName || '' });
+    const roleSel = selectField(
+      [{ value: UNASSIGNED, label: 'Unassigned' }, ...Object.entries(roles).map(([k, v]) => ({ value: k, label: v }))],
+      startRole || UNASSIGNED, { title: 'Role' });
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add person');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);
     const form = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
         e.preventDefault();
@@ -275,11 +289,8 @@
         showFieldErrors(form, {});
         saveBtn.disabled = true;
         try {
-          await api('/api/workforce', { method: 'POST', body: { name: nameInput.value, category: categorySel.value } });
-          toast('Person added');
-          invalidateCache();
+          await onSave({ name: nameInput.value, role_key: roleSel.value });
           close();
-          route();
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
@@ -290,18 +301,41 @@
       errorBox,
       h('div', { class: 'form-grid' },
         field('name', 'Name', nameInput, { wide: true }),
-        field('category', 'Category', categorySel)),
+        field('role_key', 'Role', roleSel)),
       h('div', { class: 'form-actions' }, saveBtn));
-    const close = closeableModal('Add person', form);
+    const close = closeableModal(titleText, form);
     nameInput.focus();
   }
 
+  function openAddPerson() {
+    employeeForm({
+      titleText: 'Add employee', submitLabel: 'Add employee', roles: cache?.roles || {},
+      onSave: async (body) => {
+        await api('/api/workforce', { method: 'POST', body });
+        toast('Employee added');
+        invalidateCache();
+        route();
+      },
+    });
+  }
+
+  function openEditPerson(p, roles, onChange) {
+    employeeForm({
+      titleText: 'Edit employee', submitLabel: 'Save', name: p.name, roleKey: p.role_key, roles,
+      onSave: async (body) => {
+        await api(`/api/workforce/${p.id}`, { method: 'PATCH', body });
+        toast('Employee updated');
+        onChange();
+      },
+    });
+  }
+
   async function deletePerson(p, { afterDelete } = {}) {
-    const ok = await confirm(`Remove ${p.name}? This also removes their attendance history.`, { ok: 'Remove', danger: true, title: 'Remove person' });
+    const ok = await confirm(`Remove ${p.name}? This also removes their attendance history.`, { ok: 'Remove', danger: true, title: 'Remove employee' });
     if (!ok) return;
     try {
       await api(`/api/workforce/${p.id}`, { method: 'DELETE' });
-      toast('Person removed');
+      toast('Employee removed');
       invalidateCache();
       afterDelete?.();
     } catch (err) {
@@ -403,22 +437,24 @@
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back')));
       return;
     }
-    const key = data.worker.category;
+    const key = data.worker.role_key || UNASSIGNED;
     const came = data.attendance.filter((a) => a.status === 'present').length;
     const days = data.period ? Math.round((parseDay(data.period.end) - parseDay(data.period.start)) / 86400000) + 1 : 0;
-    LD.setAppbarBack?.(GROUPS[key] || 'Back', `#${key}`);
+    const label = groupLabel(key, data.roles);
+    LD.setAppbarBack?.(label, `#${key}`);
+    const onChange = () => { invalidateCache(); window.location.hash = `#${key}`; };
     clear(view).append(h('div', { class: 'people' },
       h('div', { class: 'att-head' },
         h('h2', {}, data.worker.name),
-        h('span', { class: 'att-head-date' }, GROUPS[key] || '')),
+        h('span', { class: 'att-head-date' }, label)),
       data.period
         ? h('p', { class: 'wk-legend' }, `Came ${came} of ${days} days, ${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}`)
         : null,
       ...(data.period ? weeks(data) : [h('p', { class: 'empty-state' }, 'No attendance recorded for this person.')]),
       dataNote(data),
-      h('button', { class: 'btn small danger fn-remove', type: 'button',
-        onclick: () => deletePerson(data.worker, { afterDelete: () => { window.location.hash = `#${key}`; } }) },
-        'Remove person')));
+      h('div', { class: 'fn-actions fn-remove' },
+        h('button', { class: 'btn small', type: 'button', onclick: () => openEditPerson(data.worker, data.roles, onChange) }, 'Edit'),
+        h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(data.worker, { afterDelete: onChange }) }, 'Remove employee'))));
     window.scrollTo(0, 0);
   }
 

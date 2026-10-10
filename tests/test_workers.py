@@ -37,8 +37,8 @@ def test_the_old_manpower_page_lands_on_manpower_and_staff(admin_client):
 
 
 def test_worker_list_is_only_in_the_admin_menu(client, admin_client):
-    assert 'Manpower' not in client.get("/me").get_data(as_text=True)
-    assert 'Manpower' in admin_client.get("/me").get_data(as_text=True)
+    assert 'Employee management' not in client.get("/me").get_data(as_text=True)
+    assert 'Employee management' in admin_client.get("/me").get_data(as_text=True)
 
 
 # ---------- listing and detail ----------
