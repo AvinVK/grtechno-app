@@ -34,6 +34,8 @@ TEXT_LIMITS = {
     "advance_comments": 2000,
 }
 MAX_VALUE = Decimal("99999999999")
+# Who can be picked as who brought in an enquiry - sales, not every role in Employee management.
+ENQUIRY_ROLES = ("sales_field", "sales_office")
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
 PINCODE_SERVICE = "https://api.postalpincode.in/pincode/"
 
@@ -88,8 +90,11 @@ def _parse_amount_field(payload, data, errors, field):
             errors[field] = "Enter a number, 0 or more"
 
 
-def _validate(payload: dict) -> tuple[dict, dict]:
-    """Return (clean values for the fields present, errors by field)."""
+def _validate(payload: dict, current_enquired_by_id: int | None = None) -> tuple[dict, dict]:
+    """Return (clean values for the fields present, errors by field). current_enquired_by_id is the
+    lead's existing value (update only) - left alone, it's allowed through even if that person no longer
+    (or never did) has a sales role, so a lead attributed before this restriction existed - or since
+    reassigned - doesn't go blank and block every future save over it."""
     data, errors = {}, {}
 
     for field, limit in TEXT_LIMITS.items():
@@ -172,12 +177,14 @@ def _validate(payload: dict) -> tuple[dict, dict]:
         raw = payload["enquired_by_id"]
         if raw in (None, ""):
             data["enquired_by_id"] = None
+        elif str(raw).isdigit() and int(raw) == current_enquired_by_id:
+            data["enquired_by_id"] = current_enquired_by_id
         else:
             worker = None
             if str(raw).isdigit():
-                worker = Worker.query.filter_by(id=int(raw), category="staff").first()
+                worker = Worker.query.filter(Worker.id == int(raw), Worker.role_key.in_(ENQUIRY_ROLES)).first()
             if worker is None:
-                errors["enquired_by_id"] = "Choose someone from the staff list"
+                errors["enquired_by_id"] = "Choose someone from sales"
             else:
                 data["enquired_by_id"] = worker.id
 
@@ -343,6 +350,8 @@ def state():
         settings=settings_for_client(),
         service_options=[{"id": s.id, "name": s.name} for s in Service.query.filter_by(is_active=True).order_by(Service.sort_order, Service.name)],
         staff=[{"id": w.id, "name": w.name} for w in Worker.query.filter_by(category="staff").order_by(Worker.name)],
+        enquiry_staff=[{"id": w.id, "name": w.name}
+                        for w in Worker.query.filter(Worker.role_key.in_(ENQUIRY_ROLES)).order_by(Worker.name)],
         clients=[{"id": c.id, "name": c.name} for c in visible_clients().order_by(Client.name)],
         leads=[l.to_dict() for l in leads],
         summary=compute_summary(leads, today),
@@ -412,7 +421,7 @@ def get_lead(lead_id):
 @bp.patch("/leads/<int:lead_id>")
 def update_lead(lead_id):
     lead = _own_lead_or_404(lead_id)
-    data, errors = _validate(_payload())
+    data, errors = _validate(_payload(), current_enquired_by_id=lead.enquired_by_id)
 
     merged = {"company": lead.company, "contact_name": lead.contact_name, **data}
     has_client = (data["client_id"] if "client_id" in data else lead.client_id) is not None

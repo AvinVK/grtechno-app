@@ -24,6 +24,13 @@ def make_staff(name="Ramesh Surveyor"):
     return w
 
 
+def make_sales(name="Priya Frontdesk", role="sales_field"):
+    w = Worker(name=name, role_key=role)
+    db.session.add(w)
+    db.session.commit()
+    return w
+
+
 def make_lead(admin_client, **fields):
     body = {"company": "Kalyani Cold Storage", "contact_name": "R. Kulkarni", "phone": "9800000001", **fields}
     res = admin_client.post("/api/leads", json=body)
@@ -47,21 +54,52 @@ def test_service_ids_must_be_real_services(admin_client):
 
 # ---------- who took the enquiry ----------
 
-def test_enquired_by_must_be_staff_and_defaults_the_surveyor(admin_client):
-    staff = make_staff("Priya Frontdesk")
-    manpower = Worker(name="Not staff", category="manpower")
-    db.session.add(manpower)
+def test_enquired_by_must_be_sales_and_defaults_the_surveyor(admin_client):
+    sales = make_sales("Priya Frontdesk", role="sales_office")
+    welder = Worker(name="Not sales", role_key="welder")
+    db.session.add(welder)
     db.session.commit()
 
-    bad = admin_client.post("/api/leads", json={"company": "X", "enquired_by_id": manpower.id})
+    bad = admin_client.post("/api/leads", json={"company": "X", "enquired_by_id": welder.id})
     assert bad.status_code == 422 and "enquired_by_id" in bad.get_json()["fields"]
 
-    lead = make_lead(admin_client, enquired_by_id=staff.id)
-    assert lead["enquired_by_id"] == staff.id and lead["enquired_by_name"] == "Priya Frontdesk"
+    lead = make_lead(admin_client, enquired_by_id=sales.id)
+    assert lead["enquired_by_id"] == sales.id and lead["enquired_by_name"] == "Priya Frontdesk"
 
     # The survey doesn't inherit a surveyor server-side (that's a client-side default only) - it starts empty.
     detail = admin_client.get(f"/api/leads/{lead['id']}").get_json()
     assert detail["survey"] is None
+
+
+def test_editing_a_lead_keeps_an_enquired_by_set_before_the_sales_restriction(admin_client):
+    """A lead already attributed to someone who isn't (or no longer is) sales must not go blank or block
+    the next save - only a *new* pick has to be a sales person."""
+    not_sales = Worker(name="Old Attribution", role_key="welder")
+    db.session.add(not_sales)
+    db.session.commit()
+    lead = make_lead(admin_client)
+    from app.models import Lead
+    Lead.query.filter_by(id=lead["id"]).update({"enquired_by_id": not_sales.id})   # as if set before this rule
+    db.session.commit()
+
+    # Saving other changes, without touching enquired_by_id, keeps the existing value.
+    res = admin_client.patch(f"/api/leads/{lead['id']}", json={
+        "company": "Kalyani Cold Storage", "contact_name": "R. Kulkarni", "enquired_by_id": not_sales.id,
+    })
+    assert res.status_code == 200 and res.get_json()["enquired_by_id"] == not_sales.id
+
+    # Switching it to someone else still has to be a sales person.
+    bad = admin_client.patch(f"/api/leads/{lead['id']}", json={"enquired_by_id": not_sales.id + 9999})
+    assert bad.status_code == 422 and "enquired_by_id" in bad.get_json()["fields"]
+
+
+def test_enquiry_staff_list_is_sales_only(admin_client):
+    make_sales("Field Sales", role="sales_field")
+    make_sales("Office Sales", role="sales_office")
+    make_staff("Accounts Worker")           # category="staff", no sales role - not an enquiry option
+
+    names = {w["name"] for w in admin_client.get("/api/state").get_json()["enquiry_staff"]}
+    assert names == {"Field Sales", "Office Sales"}
 
 
 # ---------- mapping a won lead to a client ----------

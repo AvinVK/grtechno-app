@@ -635,10 +635,16 @@
       h('div', { class: 'check-grid' }, serviceBoxes.map((s) => s.box)),
       h('p', { class: 'err', id: 'err-service_ids', role: 'alert' }));
 
-    // Who took the call - also the default pick for "surveyed by" below, since it's usually the same
-    // person, though the survey can always be reassigned to whoever actually went out.
+    // Who took the call - sales only. Also the default pick for "surveyed by" below, since it's usually
+    // the same person, though the survey can always be reassigned to whoever actually went out. A lead
+    // already attributed to someone outside sales (set before this list existed, or since moved role)
+    // keeps showing that name rather than silently going blank - and blocking - on the next save.
+    const enquiryOptions = S.enquiry_staff.map((w) => ({ value: w.id, label: w.name }));
+    if (L.enquired_by_id && !enquiryOptions.some((o) => o.value === L.enquired_by_id)) {
+      enquiryOptions.push({ value: L.enquired_by_id, label: L.enquired_by_name || 'Previously picked' });
+    }
     const enquiredBySel = selectField(
-      [{ value: '', label: 'Not set' }, ...S.staff.map((w) => ({ value: w.id, label: w.name }))],
+      [{ value: '', label: 'Not set' }, ...enquiryOptions],
       L.enquired_by_id ?? '', { title: 'Enquired by', placeholder: 'Not set' });
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });

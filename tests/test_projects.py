@@ -356,7 +356,7 @@ def test_dashboard_shows_start_brought_by_and_who_worked_on_it(app, client, admi
     from datetime import date, timedelta
     from app.models import Attendance, Worker, WorkerAttendance
     with app.app_context():
-        staff = Worker(name="Priya Frontdesk", category="staff")
+        staff = Worker(name="Priya Frontdesk", category="staff", role_key="sales_office")
         db.session.add(staff)
         db.session.commit()
         staff_id = staff.id
