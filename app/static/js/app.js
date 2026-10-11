@@ -167,8 +167,6 @@
         S.me.is_admin ? 'Admin: you see every lead' : 'You see only your own leads'));
   }
 
-  const VIEW_TITLE = { active: 'Active leads', add: 'New lead' };
-
   function renderNav() {
     // The bottom nav has one Leads tab for both views here (active list and the add-lead form) - it reads
     // "current" if its own data-view matches, or if we're on 'add' (which has no tab of its own).
@@ -181,19 +179,12 @@
     badge.textContent = S.summary.due_count;
     badge.hidden = S.summary.due_count === 0;
 
-    const titleEl = $('#appbar-title-text');
-    const countEl = $('.appbar-count');
-    if (titleEl) titleEl.textContent = VIEW_TITLE[view] || VIEW_TITLE.active;
-    if (countEl) countEl.textContent = view === 'active' ? String(S.leads.filter(isOpen).length) : '';
-  }
-
-  // The bottom nav has one Leads tab for both views, so switching between them happens up here instead -
-  // same chip-row pattern as the stage filters below and the project section tabs (projects.js), just two
-  // options. Links, not buttons, so the browser's own back/forward and the hashchange listener drive it.
-  function viewTabs() {
-    return h('div', { class: 'stage-filter view-tabs', role: 'group', 'aria-label': 'Leads view' },
-      h('a', { class: 'filter-chip', href: '#active', 'aria-current': view === 'active' ? 'page' : null }, 'Active leads'),
-      h('a', { class: 'filter-chip', href: '#add', 'aria-current': view === 'add' ? 'page' : null }, 'Add lead'));
+    // The Active leads / Add lead toggle lives in the appbar's title row itself (index.html) - just two
+    // tabs, so this is the same current/not-current toggle as the bottom nav above, not a full rebuild.
+    const activeTab = $('#tab-active');
+    const addTab = $('#tab-add');
+    if (view === 'active') { activeTab?.setAttribute('aria-current', 'page'); addTab?.removeAttribute('aria-current'); }
+    else { addTab?.setAttribute('aria-current', 'page'); activeTab?.removeAttribute('aria-current'); }
   }
 
   function renderAll() {
@@ -203,7 +194,7 @@
   }
 
   function renderMain() {
-    clear($('#view')).append(viewTabs(), view === 'add' ? addView() : listView());
+    clear($('#view')).append(view === 'add' ? addView() : listView());
     if (view === 'active' && scrollToGroup) {
       $(`#view .group-${scrollToGroup}`)?.scrollIntoView({ block: 'start' });
       scrollToGroup = null;
