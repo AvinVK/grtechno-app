@@ -1430,9 +1430,15 @@
     const err = h('p', { class: 'err', role: 'alert' });
 
     function buildRow(round, roundNo) {
-      // A saved round is only still editable if it's the latest one and negotiation is still the current
-      // stage - every earlier round is read-only history, and once the lead has moved on, so is this one.
-      const editable = !round || (roundNo === lead.negotiations.length && lead.stage === 'Negotiation');
+      // A saved round is only still editable if it's the latest one, negotiation is still the current
+      // stage, and it isn't finalized yet - every earlier round is read-only history, and once a round is
+      // finalized, so is this one. The Finalized box itself stays the one exception: it (and only it) can
+      // still be unticked - the escape hatch below for reopening negotiation after finalizing by mistake -
+      // and saving that still goes through the same Save button.
+      const isLatest = roundNo === lead.negotiations.length;
+      const stageStillOpen = lead.stage === 'Negotiation';
+      const fieldsEditable = !round || (isLatest && stageStillOpen && !round.finalized);
+      const canReopen = !!round && isLatest && stageStillOpen && round.finalized;
       const dateInput = dateField(round ? round.date || '' : '', { placeholder: 'Round date' });
       const person = h('input', { type: 'text', value: round ? round.authorized_person || '' : '', maxlength: 120 });
       const estimate = h('input', {
@@ -1441,14 +1447,14 @@
       });
       const finalized = h('input', { type: 'checkbox' });
       finalized.checked = !!(round && round.finalized);
+      [dateInput, person, estimate].forEach((c) => { c.disabled = !fieldsEditable; });
+      finalized.disabled = !(fieldsEditable || canReopen);
       let actions = null;
-      if (!editable) {
-        [dateInput, person, estimate, finalized].forEach((c) => { c.disabled = true; });
-      } else {
+      if (fieldsEditable || canReopen) {
         const saveBtn = h('button', { class: 'btn small', type: 'button' }, round ? 'Save' : 'Save round');
         saveBtn.onclick = async () => {
           err.textContent = '';
-          if (!requireFilled([dateInput, person, estimate])) return;
+          if (fieldsEditable && !requireFilled([dateInput, person, estimate])) return;
           const body = {
             date: dateInput.value || null, authorized_person: person.value,
             estimate: estimate.value === '' ? null : estimate.value, finalized: finalized.checked,
