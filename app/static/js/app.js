@@ -170,8 +170,11 @@
   const VIEW_TITLE = { active: 'Active leads', add: 'New lead' };
 
   function renderNav() {
+    // The bottom nav has one Leads tab for both views here (active list and the add-lead form) - it reads
+    // "current" if its own data-view matches, or if we're on 'add' (which has no tab of its own).
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
-      if (a.dataset.view === view) a.setAttribute('aria-current', 'page');
+      const current = a.dataset.view === view || (a.dataset.view === 'active' && view === 'add');
+      if (current) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
     const badge = $('.bottom-nav .nav-badge');
@@ -182,6 +185,19 @@
     const countEl = $('.appbar-count');
     if (titleEl) titleEl.textContent = VIEW_TITLE[view] || VIEW_TITLE.active;
     if (countEl) countEl.textContent = view === 'active' ? String(S.leads.filter(isOpen).length) : '';
+
+    // "+ Lead" lives in the appbar now that the bottom nav has one Leads tab instead of a separate Add
+    // tab - built once and just shown/hidden per view, the same actions slot clients.html/projects.html
+    // fill server-side with their own "+ Client"/"+ Project" button.
+    const actions = $('.appbar-actions');
+    if (actions) {
+      let addBtn = actions.querySelector('.leads-add-btn');
+      if (!addBtn) {
+        addBtn = h('a', { class: 'btn primary appbar-primary leads-add-btn', href: '#add' }, '+ Lead');
+        actions.append(addBtn);
+      }
+      addBtn.hidden = view !== 'active';
+    }
   }
 
   function renderAll() {

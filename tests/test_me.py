@@ -124,8 +124,7 @@ def test_without_leads_other_pages_get_a_back_arrow_instead(manager_client):
 
 def test_hub_keeps_the_bottom_tabs_leading_back_into_leads(client):
     html = client.get("/me").get_data(as_text=True)
-    for view in ("active", "add"):
-        assert f'href="/#{view}"' in html
+    assert 'href="/#active"' in html
     assert 'href="/me" aria-current="page"' in html and "has-bottom-nav" in html
 
 
