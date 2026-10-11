@@ -185,19 +185,15 @@
     const countEl = $('.appbar-count');
     if (titleEl) titleEl.textContent = VIEW_TITLE[view] || VIEW_TITLE.active;
     if (countEl) countEl.textContent = view === 'active' ? String(S.leads.filter(isOpen).length) : '';
+  }
 
-    // "+ Lead" lives in the appbar now that the bottom nav has one Leads tab instead of a separate Add
-    // tab - built once and just shown/hidden per view, the same actions slot clients.html/projects.html
-    // fill server-side with their own "+ Client"/"+ Project" button.
-    const actions = $('.appbar-actions');
-    if (actions) {
-      let addBtn = actions.querySelector('.leads-add-btn');
-      if (!addBtn) {
-        addBtn = h('a', { class: 'btn primary appbar-primary leads-add-btn', href: '#add' }, '+ Lead');
-        actions.append(addBtn);
-      }
-      addBtn.hidden = view !== 'active';
-    }
+  // The bottom nav has one Leads tab for both views, so switching between them happens up here instead -
+  // same chip-row pattern as the stage filters below and the project section tabs (projects.js), just two
+  // options. Links, not buttons, so the browser's own back/forward and the hashchange listener drive it.
+  function viewTabs() {
+    return h('div', { class: 'stage-filter view-tabs', role: 'group', 'aria-label': 'Leads view' },
+      h('a', { class: 'filter-chip', href: '#active', 'aria-current': view === 'active' ? 'page' : null }, 'Active leads'),
+      h('a', { class: 'filter-chip', href: '#add', 'aria-current': view === 'add' ? 'page' : null }, 'Add lead'));
   }
 
   function renderAll() {
@@ -207,7 +203,7 @@
   }
 
   function renderMain() {
-    clear($('#view')).append(view === 'add' ? addView() : listView());
+    clear($('#view')).append(viewTabs(), view === 'add' ? addView() : listView());
     if (view === 'active' && scrollToGroup) {
       $(`#view .group-${scrollToGroup}`)?.scrollIntoView({ block: 'start' });
       scrollToGroup = null;
@@ -1323,13 +1319,21 @@
 
   /* ---------- add lead (a full screen, like the other tabs) ---------- */
 
+  // Built once and kept here, not rebuilt every time addView() is called - switching to Active leads and
+  // back to Add lead must not clear whatever was already typed in. Only a successful save (onSaved below)
+  // throws this away, so the next visit to Add lead starts blank again.
+  let addViewNode = null;
+
   function addView() {
-    const { form, saveBtn } = buildLeadForm(null, () => {});
-    form.append(h('div', { class: 'form-actions' }, saveBtn));
-    return h('div', { class: 'add-lead' },
-      h('h2', {}, 'Add lead'),
-      h('p', { class: 'hint' }, 'A new lead starts at New enquiry.'),
-      form);
+    if (!addViewNode) {
+      const { form, saveBtn } = buildLeadForm(null, () => { addViewNode = null; });
+      form.append(h('div', { class: 'form-actions' }, saveBtn));
+      addViewNode = h('div', { class: 'add-lead' },
+        h('h2', {}, 'Add lead'),
+        h('p', { class: 'hint' }, 'A new lead starts at New enquiry.'),
+        form);
+    }
+    return addViewNode;
   }
 
 
