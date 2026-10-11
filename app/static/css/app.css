@@ -432,6 +432,7 @@ a.stat:hover, button.stat:hover { border-color: var(--line-strong); cursor: poin
   color: inherit;
   font: inherit;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -1019,6 +1020,43 @@ a.p-client-name { color: var(--accent-dark); }
 .step-sub { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .step-amount { flex: none; font: 600 15px/1 var(--font-num); font-variant-numeric: tabular-nums; }
 .step-add .step-title { color: var(--accent-dark); }
+
+/* ---------- Lead detail: a full page with a stepper, not a side drawer ---------- */
+.lead-detail-page { display: grid; gap: 4px; max-width: 640px; margin: 0 auto; }
+.lead-back-link { display: inline-block; margin-bottom: 4px; font-size: 14px; }
+.lead-head-actions { flex: none; display: flex; gap: 8px; }
+
+.lead-progress { display: flex; gap: 4px; margin: 10px 0 4px; }
+.lead-progress i { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+.lead-progress i.done { background: var(--ok); }
+.lead-progress i.current { background: var(--accent); }
+.lead-progress.lost i.done { background: var(--st-lost); }
+.lead-step-text { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+
+.current-card { margin: 4px 0 16px; padding: 16px; border: 2px solid var(--accent); border-radius: var(--r-card); background: var(--panel); }
+.current-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.current-card-head h3 { margin: 0; font: 600 18px/1.2 var(--font-display); }
+.current-card-head .step-circle { border-color: var(--accent); color: var(--accent-dark); }
+.lead-detail-page > .btn.primary { width: 100%; min-height: 50px; margin-bottom: 16px; font-size: 16px; }
+
+.upcoming-row { display: flex; align-items: center; gap: 12px; padding: 8px 2px; opacity: 0.6; }
+.upcoming-row .step-circle { border-style: dashed; }
+.upcoming-row .step-main { flex: 1; min-width: 0; }
+
+.followup-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 10px 0 18px; padding: 14px 16px;
+  border-radius: var(--r-card); background: var(--panel); border: 1px solid var(--line);
+}
+.followup-card.late { background: var(--signal-tint); border-color: transparent; }
+.followup-card.late .followup-date { color: var(--signal); }
+.followup-label { margin: 0; color: var(--muted); font-size: 13px; }
+.followup-date { margin: 2px 0 0; font: 600 16px/1.3 var(--font-display); }
+
+.photo-add-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.note-composer { display: flex; gap: 8px; margin: 4px 0 12px; }
+.note-composer textarea { flex: 1; min-height: 44px; }
 
 /* The edit-step sheet - same slide-up panel as the lead drawer / close-project sheet. */
 .step-sheet-eyebrow { margin: 0; color: var(--muted); font: 600 12px/1.2 var(--font-num); text-transform: uppercase; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }

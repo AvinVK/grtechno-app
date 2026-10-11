@@ -19,8 +19,8 @@
 
   let S = null;                 // latest server state
   let view = 'active';
-  let openId;                   // undefined = drawer closed, otherwise the id of the open lead
-  let lastFocus = null;
+  let leadId = null;            // set only while view === 'lead' - which lead's detail is open
+  let listScrollY = 0;          // where the list was scrolled to when a lead was opened from it
   // One list now covers everything - `view` is the top-level bucket (the four chips: open, overdue, Won,
   // Lost); `stage` narrows further to one open stage, picked from the Filters sheet, and still reads the
   // way it always has for anything that sets it directly.
@@ -101,10 +101,11 @@
   /* ---------- feedback ---------- */
 
   function renderNav() {
-    // The bottom nav has one Leads tab for both views here (active list and the add-lead form) - it reads
-    // "current" if its own data-view matches, or if we're on 'add' (which has no tab of its own).
+    // The bottom nav has one Leads tab for every view here (the active list, the add-lead form, and a
+    // lead's own detail page) - it reads "current" if its own data-view matches, or for either of the
+    // other two, which have no tab of their own.
     document.querySelectorAll('.bottom-nav a[data-view]').forEach((a) => {
-      const current = a.dataset.view === view || (a.dataset.view === 'active' && view === 'add');
+      const current = a.dataset.view === view || (a.dataset.view === 'active' && (view === 'add' || view === 'lead'));
       if (current) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
@@ -113,14 +114,41 @@
     badge.hidden = S.summary.due_count === 0;
   }
 
+  // Set right before a save on the lead detail page completes, so the one renderAll() its own `load()`
+  // triggers afterwards is let through below - the guard right after it exists for an unrelated background
+  // refresh (the page regaining focus, say) landing mid-edit, not for the save that was just made.
+  let forceNextRender = false;
+
   function renderAll() {
     renderNav();
-    // Refreshing data must not wipe a half-filled Add lead form.
-    if (!(view === 'add' && $('#view .add-lead'))) renderMain();
+    if (forceNextRender) { forceNextRender = false; renderMain(); return; }
+    // Refreshing data must not wipe a half-filled Add lead form, nor rebuild the lead detail page from
+    // under someone mid-edit - but only once either is actually showing; a first load (straight to
+    // #lead/<id>, say, or a page refresh) still needs to render normally. loadActivity already keeps its
+    // own Activity list current on a background reload.
+    if ((view === 'add' && $('#view .add-lead')) || (view === 'lead' && $('#view .lead-detail-page'))) return;
+    renderMain();
   }
 
   function renderMain() {
-    clear($('#view')).append(view === 'add' ? addView() : listView());
+    if (view === 'lead') {
+      const lead = S.leads.find((l) => l.id === leadId);
+      if (!lead) {
+        clear($('#view')).append(h('p', { class: 'empty-state' }, "Can't find that lead. ", h('a', { href: '#active' }, 'Back to Leads')));
+        document.title = 'Leads';
+        return;
+      }
+      clear($('#view')).append(leadDetailView(lead));
+      loadActivity(lead.id);
+      document.title = `${title(lead)} · Leads`;
+      return;
+    }
+    if (view === 'add') { clear($('#view')).append(addView()); document.title = 'New lead · Leads'; return; }
+    document.title = 'Leads';
+    clear($('#view')).append(listView());
+    // Coming back from a lead's own page (browser back, or the back link there) lands where the list
+    // was left, not back at the top - restored after the list's own content exists to scroll within.
+    if (listScrollY) window.scrollTo(0, listScrollY);
   }
 
 
@@ -447,7 +475,7 @@
     // Where this lead stands in the 5-step pipeline, as "n / 5" - not shown once it's closed, since
     // Won/Lost aren't a position on that pipeline, they're where it ended.
     const stepNum = STAGE_ORDER.indexOf(l.stage) + 1;
-    return h('button', { class: 'row', type: 'button', onclick: () => openDrawer(l.id) },
+    return h('a', { class: 'row', href: `#lead/${l.id}` },
       h('span', { class: 'row-main' },
         h('span', { class: 'row-title' }, title(l)),
         sub ? h('span', { class: 'row-sub' }, sub) : null),
@@ -464,55 +492,6 @@
       h('span', { class: 'row-chip' }, followChip(l)),
       showCreated ? h('span', { class: 'row-created' }, fmtDateTime(l.created_at)) : null,
     );
-  }
-
-  /* ---------- drawer ---------- */
-
-  const drawer = $('#drawer');
-  const overlay = $('#overlay');
-
-  // closeDrawer is passed around as a stable callback (buildLeadForm's onSaved, the overlay's click
-  // listener, swipeToClose...), so it can never itself be swapped out - the back-gesture hookup instead
-  // lives in this one flag, set each time a drawer opens and consulted each time one closes.
-  let drawerPopHandler = null;
-
-  function openDrawer(id) {
-    const lead = S.leads.find((l) => l.id === id);
-    if (!lead) return;
-    lastFocus = document.activeElement;
-    openId = id;
-    buildDrawer(lead);
-    overlay.hidden = false;
-    drawer.hidden = false;
-    document.body.classList.add('locked');
-    $('#drawer-title').focus();
-    loadActivity(lead.id);
-    drawerPopHandler = () => {
-      // A field's own picker (dateField, selectField...) pushes its own history state while open and
-      // pops it on back.back() when it's done - that fires this same popstate, but it lands back on the
-      // drawer's own state rather than past it, so it isn't the drawer's own back-gesture to react to.
-      if (history.state && history.state.ldOverlay === 'drawer') return;
-      closeDrawer(true);
-    };
-    window.addEventListener('popstate', drawerPopHandler);
-    history.pushState({ ldOverlay: 'drawer' }, '', location.href);
-  }
-
-  function closeDrawer(fromPopstate) {
-    if (openId === undefined) return;
-    openId = undefined;
-    drawer.hidden = true;
-    clear(drawer);
-    overlay.hidden = true;
-    document.body.classList.remove('locked');
-    if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
-    if (drawerPopHandler) {
-      window.removeEventListener('popstate', drawerPopHandler);
-      drawerPopHandler = null;
-      // closeDrawer is also used directly as a DOM event handler (the overlay's click, the × button), so
-      // an Event object can land here as this argument - only the popstate path itself passes true.
-      if (fromPopstate !== true) history.back();
-    }
   }
 
   function buildLeadForm(lead, onSaved) {
@@ -623,7 +602,6 @@
     let surveyBody = null;              // set only when the survey section exists - read by the submit handler
     let surveyCheck = () => [];         // the survey controls that must be filled before saving
     let negotiationCheck = () => [];    // same, for the first negotiation round
-    let roundRequested = false;         // Save round was tapped - the first round's fields are then required
     let negotiationSectionNode = null;
     let negotiationBody = null;         // set only when this is the lead's first (stage-advancing) round
     let workOrderSectionNode = null;
@@ -730,6 +708,9 @@
       renderPhotos();
 
       const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true });
+      // Disabled (with a hint alongside) rather than letting someone pick a file and only then finding out
+      // it was refused - same rule as before (the survey must be saved first), just said up front.
+      if (!lead.survey) fileInput.disabled = true;
       fileInput.onchange = async () => {
         if (!fileInput.files.length) return;
         if (!lead.survey) { surveyErr.textContent = 'Save the survey details first'; fileInput.value = ''; return; }
@@ -762,7 +743,9 @@
             siteAddressField),
           surveyErr,
           h('p', { class: 'hint' }, 'Site photos'), photoGrid,
-          surveyLocked ? null : h('label', { class: 'btn small' }, 'Add photos', fileInput)));
+          surveyLocked ? null : h('div', { class: 'photo-add-row' },
+            h('label', { class: 'btn small' }, 'Add photos', fileInput),
+            lead.survey ? null : h('span', { class: 'hint' }, 'Save the survey to add photos'))));
 
       const quoteFields = h('div', { class: 'form-grid' },
         wrapField('quote_sent_date', 'Quote sent', dateField(L.quote_sent_date), '', true),
@@ -807,7 +790,7 @@
         const negPerson = h('input', { type: 'text', maxlength: 120 });
         const negEstimate = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: `Amount (${S.settings.currency})` });
         const negFinalized = h('input', { type: 'checkbox' });
-        const negStarted = () => roundRequested || negFinalized.checked
+        const negStarted = () => negFinalized.checked
           || [negDateInput, negPerson, negEstimate].some((c) => c.value.trim());
         negotiationCheck = () => (negStarted() ? [negDateInput, negPerson, negEstimate] : []);
         negotiationBody = () => (negStarted() ? {
@@ -820,18 +803,15 @@
           reqField('Authorized person', negPerson),
           reqField(`Estimate (${S.settings.currency})`, negEstimate),
           h('label', { class: 'check-row wide' }, negFinalized, h('span', {}, 'Finalized')));
-        // Its own Save round button, same as later rounds have - it still goes through the one Save changes
-        // submit (so the lead's other edits and the move to Negotiation land together), just with the
-        // round's fields required even if all of them were left empty.
-        const saveRoundBtn = h('button', {
-          class: 'btn small', type: 'button', onclick: () => { roundRequested = true; saveBtn.click(); },
-        }, 'Save round');
+        // No Save round button of its own any more - typing anything here already makes it required
+        // (negStarted above), so it just rides along with the one current-step Save button like every
+        // other stage's fields do.
         negotiationSectionNode = h('details', { class: `stage-section${quoteSent ? '' : ' locked'}`, open: quoteSent && expand === 3 },
           h('summary', { class: 'stage-section-title' }, 'Negotiation'),
           h('div', { class: 'stage-section-body' },
             h('div', { class: 'negotiation-round' },
               h('p', { class: 'negotiation-round-label' }, 'Round 1 (new)'),
-              negFields, h('div', { class: 'round-actions' }, saveRoundBtn))));
+              negFields)));
 
         if (!quoteSent) {
           negotiationSectionNode.querySelector('summary').addEventListener('click', (e) => {
@@ -927,16 +907,18 @@
       if (result === 'Won') {
         // Winning is the moment this lead gets mapped to a client - an existing one, or a brand-new one
         // named after it. No auto-matching by name, so the admin always makes this call on purpose.
+        // Picking an option here is the confirmation itself - there's no second "are you sure?" after it.
         const newLabel = `New client — ${L.company || L.contact_name}`;
         const choice = await LD.pickList(
           [{ value: '', label: newLabel }, ...S.clients.map((c) => ({ value: c.id, label: c.name }))],
-          '', { title: 'Map this lead to a client' });
+          '', { title: 'Mark won · map to a client' });
         if (choice === undefined) return;             // closed without choosing - don't mark it won
         clientId = choice || null;
+      } else {
+        const sure = await LD.confirm(`Mark ${title(lead)} as lost?`,
+          { title: 'Mark lost', ok: 'Yes, mark lost', danger: true });
+        if (!sure) return;
       }
-      const sure = await LD.confirm(`Mark ${title(lead)} as ${result.toLowerCase()}?`,
-        { title: `Mark ${result.toLowerCase()}`, ok: `Yes, mark ${result.toLowerCase()}`, danger: result === 'Lost' });
-      if (!sure) return;
       outcome = result;
       outcomeClientId = clientId;
       inputs.stage.addOption(result, result);
@@ -1056,29 +1038,12 @@
         (first || errorBox).focus?.();
       } finally {
         saveBtn.disabled = false;
-        roundRequested = false;
       }
     });
 
     // The save button lives outside the <form> in the drawer footer, so tie it to the form explicitly.
     saveBtn.setAttribute('form', 'lead-form');
     return { form, saveBtn, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode };
-  }
-
-  // The pipeline as five steps across the top of the sheet: done ones green, the current one in the accent.
-  const STEP_STAGES = [['New enquiry', 'New'], ['Site survey', 'Survey'], ['Quote sent', 'Quote'], ['Negotiation', 'Negot.'], ['Work order & advance', 'W.O.'], ['Won', 'Won']];
-  function stageSteps(lead) {
-    const lost = lead.stage === 'Lost';
-    const at = STEP_STAGES.findIndex(([s]) => s === lead.stage);
-    return h('ol', {
-      class: `stage-steps${lost ? ' lost' : ''}`, 'aria-label': `Stage: ${lead.stage}`,
-      style: `grid-template-columns: repeat(${STEP_STAGES.length}, minmax(0, 1fr))`,
-    },
-      STEP_STAGES.map(([stage, short], i) => {
-        const state = lost ? 'lost' : i < at || lead.stage === 'Won' ? 'done' : i === at ? 'current' : 'pending';
-        return h('li', { class: `step ${state}`, 'aria-current': state === 'current' ? 'step' : null },
-          h('i', { 'aria-hidden': 'true' }), h('span', {}, lost && i === STEP_STAGES.length - 1 ? 'Lost' : short));
-      }));
   }
 
   const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1097,31 +1062,6 @@
     return links.length ? h('div', { class: 'contact-actions' }, links) : null;
   }
 
-  // What each stage card's header says on its right: "Next step" on the one that's up next, "Done" (with a
-  // detail like the photo count) on finished ones. Locked ones stay dimmed with nothing extra.
-  function markSections(lead, sections) {
-    const next = nextStageIndex(lead);
-    const rounds = lead.negotiations || [];
-    const photos = (lead.survey?.photos || []).length;
-    const done = [
-      STAGE_ORDER.indexOf(lead.stage) > 0 || CLOSED_STAGES.includes(lead.stage),
-      !!lead.survey?.survey_date,
-      !!lead.quote_sent_date,
-      rounds.some((r) => r.finalized) || CLOSED_STAGES.includes(lead.stage),
-      !!lead.work_order_no,
-    ];
-    const detail = ['', photos ? ` · ${plural(photos, 'photo', 'photos')}` : '', '',
-      rounds.length ? ` · ${plural(rounds.length, 'round', 'rounds')}` : '', ''];
-    sections.forEach((node, i) => {
-      const summary = node && node.querySelector(':scope > summary');
-      if (!summary || node.classList.contains('locked')) return;
-      let status = null;
-      if (done[i]) status = h('span', { class: 'section-status done' }, `Done${detail[i]}`);
-      else if (i === next) status = h('span', { class: 'section-status next' }, 'Next step');
-      if (status) summary.append(status);
-    });
-  }
-
   // A small menu of the less-used, mostly destructive actions, sliding up from the bottom like the sheet.
   function actionSheet(actions) {
     const previous = document.activeElement;
@@ -1129,7 +1069,11 @@
     const card = h('div', { class: 'confirm-card action-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'More actions' },
       actions.map(({ label, danger, run }) => h('button', {
         class: `btn${danger ? ' danger' : ''}`, type: 'button',
-        onclick: () => { finish(); run(); },
+        // finish() pops this sheet's own history entry via history.back(), which resolves asynchronously;
+        // if `run` opens another back-closable overlay (a confirm, a picker...) before that pop is actually
+        // processed, the new one's own popstate listener can catch it instead and read it as "closed",
+        // resolving false before anyone touched it. A short delay lets the pop land first.
+        onclick: () => { finish(); setTimeout(run, 60); },
       }, label)),
       cancel);
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' }, card);
@@ -1146,94 +1090,286 @@
     card.querySelector('button').focus();
   }
 
-  // Dragging the sheet's handle down more than 80px closes it; less springs it back.
-  function swipeToClose(handle) {
-    let startY = null;
-    handle.addEventListener('pointerdown', (e) => {
-      startY = e.clientY;
-      handle.setPointerCapture(e.pointerId);
-      drawer.style.transition = 'none';
+  /* ---------- lead detail: a full screen with a stepper, not a side drawer ---------- */
+
+  // A self-contained slide-up sheet (its own overlay + drawer, not the old #drawer/#overlay elements -
+  // those are gone) - same pattern projects.js already uses for one payment step's own sheet.
+  function openSheet({ eyebrow, title: sheetTitle, body, foot } = {}) {
+    const previous = document.activeElement;
+    const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' });
+    const titleEl = h('h2', { tabindex: '-1' }, sheetTitle);
+    const drawerEl = h('div', { class: 'drawer' },
+      h('div', { class: 'drawer-head' },
+        h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
+        h('div', { class: 'drawer-head-row' },
+          h('div', { class: 'drawer-titles' },
+            eyebrow ? h('p', { class: 'step-sheet-eyebrow' }, eyebrow) : null, titleEl),
+          closeX)),
+      h('div', { class: 'drawer-scroll' }, body));
+    if (foot) drawerEl.append(h('div', { class: 'drawer-foot' }, foot));
+    const overlayEl = h('div', { class: 'overlay' });
+    function onKey(e) { if (e.key === 'Escape') finish(); }
+    const finish = LD.closeOnBack(() => {
+      window.removeEventListener('keydown', onKey, true);
+      overlayEl.remove();
+      drawerEl.remove();
+      document.body.classList.remove('locked');
+      if (previous && previous.isConnected) previous.focus();
     });
-    handle.addEventListener('pointermove', (e) => {
-      if (startY === null) return;
-      drawer.style.transform = `translateY(${Math.max(0, e.clientY - startY)}px)`;
-    });
-    const end = (e) => {
-      if (startY === null) return;
-      const moved = e.clientY - startY;
-      startY = null;
-      drawer.style.transition = '';
-      drawer.style.transform = '';
-      if (moved > 80) closeDrawer();
-    };
-    handle.addEventListener('pointerup', end);
-    handle.addEventListener('pointercancel', end);
+    closeX.onclick = finish;
+    overlayEl.addEventListener('click', finish);
+    window.addEventListener('keydown', onKey, true);
+    document.body.classList.add('locked');
+    document.body.append(overlayEl, drawerEl);
+    titleEl.focus();
+    return finish;
   }
 
-  function buildDrawer(lead) {
-    const { form, saveBtn, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode } = buildLeadForm(lead, closeDrawer);
-    const hasRounds = !!(lead && (lead.negotiations || []).length > 0);
+  // The action a current step's card asks for - not the stage's own name, but what finishing it means.
+  const STAGE_ACTION_TITLE = {
+    'New enquiry': 'Book the site survey',
+    'Site survey': 'Send the quote',
+    'Quote sent': 'Log a negotiation round',
+    Negotiation: 'Record the work order',
+    'Work order & advance': 'Mark won',
+  };
+  // Why a not-yet-reached step is waiting - each names the step right before it.
+  const UPCOMING_REASON = {
+    'Site survey': 'After the enquiry is logged',
+    'Quote sent': 'After the site survey',
+    Negotiation: 'After the quote',
+    'Work order & advance': 'After negotiation',
+  };
+
+  // The line a finished step's row shows on the right - a short fact about it, not the full form.
+  function finishedSummary(stageName, lead) {
+    const sv = lead.survey || {};
+    const rounds = lead.negotiations || [];
+    const shownRound = [...rounds].reverse().find((r) => r.finalized) || (rounds.length ? rounds[rounds.length - 1] : null);
+    if (stageName === 'New enquiry') return [fmtDate(lead.created_at.slice(0, 10)), lead.source].filter(Boolean).join(' · ');
+    if (stageName === 'Site survey') {
+      const photos = (sv.photos || []).length;
+      return [sv.survey_date ? fmtDate(sv.survey_date) : '', photos ? plural(photos, 'photo', 'photos') : ''].filter(Boolean).join(' · ');
+    }
+    if (stageName === 'Quote sent') {
+      return lead.est_value != null ? `Quote ${fmtShortMoney(lead.est_value)}` : (lead.quote_sent_date ? fmtDate(lead.quote_sent_date) : '');
+    }
+    if (stageName === 'Negotiation') {
+      return [plural(rounds.length, 'round', 'rounds'),
+        shownRound && shownRound.estimate != null ? `${fmtShortMoney(shownRound.estimate)}${shownRound.finalized ? ' final' : ''}` : '']
+        .filter(Boolean).join(' · ');
+    }
+    return [lead.work_order_no, lead.advance_amount != null ? `${fmtShortMoney(lead.advance_amount)} advance` : ''].filter(Boolean).join(' · ');
+  }
+
+  // A finished step: a green check, its name, and the summary above - tapping it opens the same fields
+  // in a sheet, read only if the stage is actually locked (same rule as today), still live and savable
+  // (through the one current-step Save button) if it isn't - e.g. Site survey, once done but not yet
+  // superseded by Quote sent.
+  function finishedStepRow(stageIndex, stageName, body, lead, saveBtn) {
+    let finish;
+    const row = h('button', {
+      type: 'button', class: 'step-row', id: `lead-stage-row-${stageIndex}`,
+      onclick: () => {
+        const editable = !!body && [...body.querySelectorAll('input, select, textarea, button.field-picker')].some((c) => !c.disabled);
+        const saveRow = editable
+          ? h('button', { class: 'btn primary', type: 'button', onclick: () => { finish(); saveBtn.click(); } }, 'Save changes')
+          : null;
+        finish = openSheet({
+          eyebrow: stageName, title: stageName,
+          body: body || h('p', { class: 'hint' }, 'Nothing recorded yet.'), foot: saveRow,
+        });
+      },
+    },
+      h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓'),
+      h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, stageName)),
+      h('span', { class: 'step-amount' }, finishedSummary(stageName, lead)));
+    return row;
+  }
+
+  function upcomingStepRow(stageIndex, stageName) {
+    return h('div', { class: 'upcoming-row' },
+      h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(stageIndex + 1)),
+      h('span', { class: 'step-main' },
+        h('span', { class: 'step-title' }, stageName),
+        h('span', { class: 'step-sub' }, UPCOMING_REASON[stageName] || '')));
+  }
+
+  function currentStepCard(stageIndex, stageName, body) {
+    return h('div', { class: 'current-card', id: `lead-stage-current-${stageIndex}` },
+      h('div', { class: 'current-card-head' },
+        h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(stageIndex + 1)),
+        h('h3', {}, STAGE_ACTION_TITLE[stageName] || stageName)),
+      body || h('p', { class: 'hint' }, 'Nothing to fill in here yet.'));
+  }
+
+  // The 5-part bar across the top, plus "Step n of 5 · <stage>" - done parts in --ok, the current one in
+  // --accent, the rest in --line; a closed lead fills every part (its own colour) and says Won / Lost.
+  function leadProgress(lead, next) {
+    const won = lead.stage === 'Won';
+    const lost = lead.stage === 'Lost';
+    const bar = h('div', { class: `lead-progress${lost ? ' lost' : ''}` },
+      STAGE_ORDER.map((_, i) => h('i', { class: won || lost || i < next ? 'done' : i === next ? 'current' : null })));
+    // The stage named here is the one the current card is about - lead.stage can lag behind it (e.g. a
+    // lead still sitting at "Negotiation" once its round is finalized is already working towards Work
+    // order & advance, which is what the card below actually shows).
+    const stepText = lost ? 'Lost' : won ? 'Won' : `Step ${next + 1} of ${STAGE_ORDER.length} · ${STAGE_ORDER[next] || lead.stage}`;
+    return h('div', {}, bar, h('p', { class: 'lead-step-text' }, stepText));
+  }
+
+  // The follow-up date, shown as its own card (not folded into New enquiry) since it stays live for the
+  // lead's whole open life, not just while New enquiry is the current step. Reschedule opens a small sheet
+  // (the SNOOZE buttons plus the same calendar dateField already uses) that applies straight to the real,
+  // live follow_up_date control and submits through the one shared Save button - nothing here is a second
+  // copy of that field.
+  function followupCard(lead, dateInput, saveBtn) {
+    const late = isOpen(lead) && lead.follow_up_date && diffDays(lead.follow_up_date, S.today) < 0;
+    const dateText = !lead.follow_up_date ? 'Not set'
+      : late ? `${plural(-diffDays(lead.follow_up_date, S.today), 'day', 'days')} late · ${fmtDate(lead.follow_up_date)}`
+        : fmtDate(lead.follow_up_date);
+
+    function apply(iso) {
+      dateInput.value = iso;
+      dateInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    function openReschedule() {
+      let finish;
+      const quick = h('div', { class: 'quick-dates' },
+        SNOOZE.map(([label, days]) => h('button', {
+          class: 'btn small', type: 'button',
+          onclick: () => { apply(addDays(S.today, days)); finish(); saveBtn.click(); },
+        }, label)));
+      const pickBtn = h('button', { class: 'btn', type: 'button',
+        onclick: async () => {
+          const chosen = await LD.pickDate(dateInput.value);
+          if (chosen === undefined) return;
+          apply(chosen);
+          finish();
+          saveBtn.click();
+        },
+      }, dateInput.value ? `Pick another date (now ${fmtDate(dateInput.value)})` : 'Pick a date');
+      finish = openSheet({ title: 'Reschedule follow-up', body: [quick, pickBtn] });
+    }
+
+    return h('div', { class: `followup-card${late ? ' late' : ''}` },
+      h('div', {}, h('p', { class: 'followup-label' }, 'Follow up'), h('p', { class: 'followup-date' }, dateText)),
+      isOpen(lead) ? h('button', { class: 'btn small', type: 'button', onclick: openReschedule }, 'Reschedule') : null);
+  }
+
+  // A note just logs an activity entry (kind "note") - there's no separate Lead.notes field to edit.
+  function noteComposer(lead) {
+    const text = h('textarea', { rows: 2, placeholder: 'Add a note…', maxlength: 2000 });
+    const err = h('p', { class: 'err', role: 'alert' });
+    const btn = h('button', { class: 'btn small', type: 'button' }, 'Add note');
+    btn.onclick = async () => {
+      if (!text.value.trim()) { err.textContent = 'Write a note first'; return; }
+      err.textContent = '';
+      btn.disabled = true;
+      try {
+        const res = await api(`/api/leads/${lead.id}/notes`, { method: 'POST', body: { text: text.value } });
+        text.value = '';
+        renderTimeline(res.activities);
+        toast('Note added');
+      } catch (e) { err.textContent = e.message; } finally { btn.disabled = false; }
+    };
+    return h('div', {}, h('div', { class: 'note-composer' }, text, btn), err);
+  }
+
+  function leadDetailView(lead) {
+    // onSaved: stay on this page and let the forced re-render below show the lead's new state, instead of
+    // navigating anywhere - closeDrawer (the old side-drawer's onSaved) made sense for a modal; it doesn't
+    // for a page of its own.
+    const { form, saveBtn, markOutcome, quoteSection, surveySectionNode, negotiationSectionNode, workOrderSectionNode }
+      = buildLeadForm(lead, () => { forceNextRender = true; });
+    const hasRounds = (lead.negotiations || []).length > 0;
     const negotiation = hasRounds ? negotiationSection(lead) : negotiationSectionNode;
-    markSections(lead, [form.querySelector('details.stage-section'), surveySectionNode, quoteSection, negotiation, workOrderSectionNode]);
+    const sectionNodes = [form.querySelector('details.stage-section'), surveySectionNode, quoteSection, negotiation, workOrderSectionNode];
+    const sectionBodies = sectionNodes.map((n) => (n ? n.querySelector(':scope > .stage-section-body') : null));
+    // Follow-up date lives among New enquiry's own fields (wherever that section ends up below), but it's
+    // always shown and changeable from its own card further down - captured here, by reference, before
+    // that happens, so the card can read/set it (and fire its change event) no matter where its section
+    // itself is currently sitting (open on screen, or tucked inside a finished step's sheet).
+    const dateInput = form.querySelector('#f-follow_up_date');
+    // Once its body is handed to a row/card below, the empty <details> shell left behind in `form` would
+    // otherwise render as a second, content-less "New enquiry" accordion - drop it; what's left in `form`
+    // (the error box, the read-only "Current stage" line) stays, just not shown - see `form.hidden` below.
+    sectionNodes[0]?.remove();
+
+    const next = nextStageIndex(lead);
+    const rounds = lead.negotiations || [];
+    // New enquiry is always finished once a lead exists at all - creating one requires its fields in the
+    // first place (see addView's own required-field check) - so, unlike every other stage, there's no
+    // state where a saved lead is still "working on" it; nextStageIndex already assumes this (it always
+    // resolves to at least 1 while a lead sits at this very stage), so done[0] has to match that or New
+    // enquiry would land in neither the done nor the current bucket below.
+    const done = [
+      true,
+      !!lead.survey?.survey_date,
+      !!lead.quote_sent_date,
+      rounds.some((r) => r.finalized) || CLOSED_STAGES.includes(lead.stage),
+      !!lead.work_order_no,
+    ];
+    const closedLead = CLOSED_STAGES.includes(lead.stage);
+
+    const finishedRows = [];
+    const upcomingRows = [];
+    let currentCard = null;
+    STAGE_ORDER.forEach((stageName, i) => {
+      const body = sectionBodies[i];
+      if (done[i]) finishedRows.push(finishedStepRow(i, stageName, body, lead, saveBtn));
+      else if (!closedLead && i === next) currentCard = currentStepCard(i, stageName, body);
+      else if (!closedLead) upcomingRows.push(upcomingStepRow(i, stageName));
+      // A closed (Lost) lead that never reached this stage: nothing to show, it was never reached.
+    });
 
     // Mark won only once the deal is actually being negotiated, not from New enquiry onward - and only
     // for the admin, since it's the step that maps the lead to a client. Mark lost has no such gate.
     const canMarkWon = S.me.is_admin && STAGE_ORDER.indexOf(lead.stage) >= STAGE_ORDER.indexOf('Negotiation');
-    // Once the work order itself is saved, Won is actually reachable (the server's own gate), so both
-    // outcomes get their own row above Activity instead of staying tucked in More actions.
-    const workOrderSaved = isOpen(lead) && !!lead.work_order_no;
-    const outcomeRow = workOrderSaved ? h('div', { class: 'outcome-row' },
-      S.me.is_admin ? h('button', { class: 'btn ok-solid', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won') : null,
-      h('button', { class: 'btn danger-solid', type: 'button', onclick: () => markOutcome('Lost') }, 'Mark lost')) : null;
-    const moreActions = [
-      !workOrderSaved && isOpen(lead) && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
-      !workOrderSaved && isOpen(lead) ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
-    ].filter(Boolean);
-    const moreBtn = moreActions.length
-      ? h('button', { class: 'btn more-btn', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(moreActions) }, '⋯')
-      : null;
-
-    // Overdue follow-up: say so up top, with a way straight to the date field.
-    const overdue = isOpen(lead) && lead.follow_up_date && diffDays(lead.follow_up_date, S.today) < 0;
-    const dueBanner = overdue ? h('div', { class: 'due-banner', role: 'status' },
-      h('span', {}, `Follow-up was due ${dayName(lead.follow_up_date)}`),
-      h('button', {
-        class: 'btn small', type: 'button',
-        onclick: () => {
-          const dateBtn = form.querySelector('#f-follow_up_date');
-          dateBtn.closest('details')?.setAttribute('open', '');
-          dateBtn.scrollIntoView({ block: 'center' });
-          dateBtn.click();
+    const menuActions = [
+      !closedLead && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
+      !closedLead ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
+      {
+        label: 'Edit contact',
+        run: () => {
+          const row = document.getElementById('lead-stage-row-0');
+          if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.click(); return; }
+          document.getElementById('lead-stage-current-0')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         },
-      }, 'Reschedule')) : null;
+      },
+    ].filter(Boolean);
+    const moreBtn = h('button', {
+      class: 'btn small', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(menuActions),
+    }, '⋯');
+    const callBtn = lead.phone ? h('a', { class: 'btn small', href: `tel:${telNumber(lead.phone)}` }, 'Call') : null;
 
-    const handle = h('div', { class: 'sheet-handle', 'aria-hidden': 'true' });
-    swipeToClose(handle);
-    const contactLine = [lead.contact_name && lead.contact_name !== title(lead) ? lead.contact_name : null,
-      lead.phone ? h('span', { class: 'drawer-phone' }, lead.phone) : null].filter(Boolean);
+    const contactLine = [subtitle(lead), serviceLabel(lead)].filter(Boolean).join(' · ');
+    const header = h('div', { class: 'p-head' },
+      h('div', {},
+        h('a', { class: 'back-link lead-back-link', href: '#active' }, '‹ Leads'),
+        h('h2', {}, title(lead)),
+        contactLine ? h('p', { class: 'hint' }, contactLine) : null),
+      h('div', { class: 'lead-head-actions' }, callBtn, moreBtn));
 
-    clear(drawer).append(
-      h('div', { class: 'drawer-head' },
-        handle,
-        h('div', { class: 'drawer-head-row' },
-          h('div', { class: 'drawer-titles' },
-            h('h2', { id: 'drawer-title', tabindex: '-1' }, title(lead)),
-            contactLine.length ? h('p', { class: 'drawer-sub' }, contactLine.flatMap((part, i) => (i ? [' · ', part] : [part]))) : null),
-          h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close', onclick: closeDrawer }, '×')),
-        contactActions(lead)),
-      h('div', { class: 'drawer-scroll' },
-        stageSteps(lead),
-        dueBanner,
-        projectBox(lead),
-        form,
-        surveySectionNode,
-        quoteSection,
-        negotiation,
-        workOrderSectionNode,
-        outcomeRow,
-        activitySection()),
-      h('div', { class: 'drawer-foot' }, saveBtn, moreBtn),
-    );
+    // `form` stays in the document - saveBtn's form="lead-form" needs it to exist, and (unlike the button
+    // itself) a *hidden* form silently refuses to submit - but nothing is left inside worth showing: the
+    // error box is pulled out so a validation error is still visible, right under the header, and the
+    // read-only "Current stage" line is dropped as redundant with the progress bar above.
+    const errorBox = form.querySelector('.form-error');
+    form.querySelector('.current-stage')?.remove();
+
+    return h('div', { class: 'lead-detail-page' },
+      header,
+      errorBox,
+      leadProgress(lead, next),
+      projectBox(lead),
+      finishedRows.length ? h('div', { class: 'card-group step-list' }, finishedRows) : null,
+      currentCard,
+      closedLead ? null : saveBtn,
+      upcomingRows.length ? h('div', {}, upcomingRows) : null,
+      followupCard(lead, dateInput, saveBtn),
+      form,
+      noteComposer(lead),
+      activitySection());
   }
 
   /* ---------- add lead (a full screen, like the other tabs) ---------- */
@@ -1394,8 +1530,8 @@
           e.target.disabled = true;
           try {
             const res = await api(`/api/leads/${lead.id}/project`, { method: 'POST' });
-            closeDrawer();
             toast(`Project ${res.code} created`);
+            forceNextRender = true;
             await load();
             if (canOpen) window.location.href = `/projects#p${res.project_id}`;
           } catch (err) {
@@ -1443,7 +1579,7 @@
   async function loadActivity(id) {
     try {
       const lead = await api(`/api/leads/${id}`);
-      if (openId === id) renderTimeline(lead.activities);
+      if (view === 'lead' && leadId === id) renderTimeline(lead.activities);
     } catch (err) {
       toast(err.message, true);
     }
@@ -1453,10 +1589,14 @@
 
   function resolveView() {
     const next = window.location.hash.slice(1);
+    const leadMatch = /^lead\/(\d+)$/.exec(next);
+    if (leadMatch) { view = 'lead'; leadId = Number(leadMatch[1]); return; }
     view = VIEWS.includes(next) ? next : 'active';
+    leadId = null;
   }
 
   function syncView() {
+    if (view === 'active') listScrollY = window.scrollY;      // leaving the list - remember where from
     resolveView();
     if (S) { renderNav(); renderMain(); }
   }
@@ -1473,30 +1613,9 @@
     });
   });
 
-  overlay.addEventListener('click', closeDrawer);
-
-  document.addEventListener('keydown', (e) => {
-    if (openId === undefined) return;
-    if (e.key === 'Escape') { closeDrawer(); return; }
-    if (e.key !== 'Tab') return;
-
-    // Keep keyboard focus inside the open drawer.
-    const focusable = [...drawer.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex="0"]')]
-      .filter((el) => el.offsetParent !== null);
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const at = document.activeElement;
-    if (e.shiftKey && (at === first || at === drawer || at.id === 'drawer-title')) {
-      e.preventDefault(); last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault(); first.focus();
-    }
-  });
-
   // Pick up changes made on another device when the tab comes back into view.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && S && openId === undefined) load().catch(() => {});
+    if (document.visibilityState === 'visible' && S) load().catch(() => {});
   });
 
   function start() {
