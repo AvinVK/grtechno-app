@@ -23,8 +23,11 @@ def _summaries(keys) -> dict:
     with nothing cheap to say about them get no line, just their name."""
     out = {}
     if "leads" in keys:
-        n = visible_leads().filter(Lead.stage.in_(OPEN_STAGES)).count()
-        out["leads"] = f"{n} open"
+        today = today_local()
+        open_leads = visible_leads().filter(Lead.stage.in_(OPEN_STAGES))
+        n = open_leads.count()
+        overdue = open_leads.filter(Lead.follow_up_date < today).count()
+        out["leads"] = f"{n} open · {overdue} overdue" if overdue else f"{n} open"
     if "attendance" in keys:
         today = today_local()
         if g.user.is_admin:                          # the admin doesn't check in; show the team instead

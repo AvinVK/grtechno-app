@@ -105,7 +105,7 @@ a { color: var(--accent-dark); }
 .appbar-section:empty { display: none; }
 .appbar-heading { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .appbar-title { flex: 1; min-width: 0; margin: 0; font: 700 30px/1.15 var(--font-display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.appbar-count { display: none; color: var(--muted); font: 500 15px/1 var(--font-num); }
+.appbar-count { display: none; color: var(--muted); font: 500 15px/1 var(--font-num); font-variant-numeric: tabular-nums; }
 .appbar-summary { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
 .appbar-summary:empty { display: none; }
 .appbar-summary b { color: var(--signal); font-weight: 600; }
@@ -219,7 +219,7 @@ a { color: var(--accent-dark); }
 .hero-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; opacity: 0.9; }
 .hero-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .hero-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--seg, var(--st-new)); }
-.hero-legend b { font: 500 13px/1 var(--font-num); }
+.hero-legend b { font: 500 13px/1 var(--font-num); font-variant-numeric: tabular-nums; }
 [data-stage="Site survey"] { --seg: var(--st-survey); }
 [data-stage="Quote sent"] { --seg: var(--st-quote); }
 [data-stage="Negotiation"] { --seg: var(--st-negotiation); }
@@ -231,7 +231,7 @@ a { color: var(--accent-dark); }
   border: 1px solid #e8b9c0; border-radius: var(--r-card); background: var(--panel);
   color: inherit; text-decoration: none; font: inherit; text-align: left; cursor: pointer; appearance: none;
 }
-.alert-count { flex: none; min-width: 40px; color: var(--signal); font: 500 34px/1 var(--font-num); text-align: center; }
+.alert-count { flex: none; min-width: 40px; color: var(--signal); font: 500 34px/1 var(--font-num); text-align: center; font-variant-numeric: tabular-nums; }
 .alert-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .alert-text span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .alert-open { flex: none; color: var(--accent-dark); font-weight: 600; }
@@ -357,15 +357,24 @@ a.stat:hover, button.stat:hover { border-color: var(--line-strong); cursor: poin
 
 .result-count { max-width: 1100px; margin: 0 auto 6px; color: var(--muted); font-size: 14px; }
 
-/* ---------- Leads list: search row, count + Filters, active filters, groups ---------- */
+/* ---------- Leads list: search + Filters row, count, active filters, groups ---------- */
 
-.search-row { max-width: 1100px; margin: 0 auto 10px; }
-
-.list-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 1100px; margin: 8px auto 4px; }
-.list-meta .result-count { margin: 0; }
+.search-filter-row { display: flex; align-items: center; gap: 10px; max-width: 1100px; margin: 0 auto 10px; }
+.search-filter-row input[type="search"] { flex: 1; min-width: 0; min-height: 44px; }
+.search-filter-row .filter-btn { flex: none; }
 .link-btn.filter-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 14px; }
 .filter-btn svg { width: 17px; height: 17px; }
-.filter-count { padding: 1px 7px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-dark); font: 600 12px/1.4 var(--font-num); }
+.filter-count { padding: 1px 7px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-dark); font: 600 12px/1.4 var(--font-num); font-variant-numeric: tabular-nums; }
+
+/* The 4 view chips (Open / Overdue / Won / Lost) above search+filters - Overdue is tinted so it reads as
+   something worth attention even before it's picked. */
+.filter-chip.tone-signal { border-color: #e8b9c0; color: var(--signal); }
+.filter-chip.tone-signal .n { color: var(--signal); }
+.filter-chip.tone-signal[aria-pressed="true"] { background: var(--signal); border-color: var(--signal); color: #fff; }
+.filter-chip.tone-signal[aria-pressed="true"] .n { color: rgba(255, 255, 255, 0.85); }
+
+/* A lead row's place in the 5-step pipeline, as plain text - "2 / 5" - next to the stage tag. */
+.step-tag { padding: 1px 6px; border-radius: 6px; background: var(--track); color: var(--muted); font: 600 12px/1.5 var(--font-num); font-variant-numeric: tabular-nums; }
 
 .active-filters { display: flex; flex-wrap: wrap; gap: 6px; max-width: 1100px; margin: 0 auto 6px; }
 .active-filters:empty { display: none; }
@@ -384,7 +393,7 @@ a.stat:hover, button.stat:hover { border-color: var(--line-strong); cursor: poin
 }
 .group-head.group-overdue { color: var(--signal); }
 .group-head.group-today { color: var(--amber); }
-.group-count { font: 500 12px/1.2 var(--font-num); }
+.group-count { font: 500 12px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
 /* On the Leads tab screens the collapsed bar stays pinned at 56px - group headers stick just below it. */
 .page-app .group-head { top: 56px; }
 
@@ -535,7 +544,7 @@ button.bottom-nav-item { font: 600 12px/1 var(--font-body); }
   border-radius: var(--r-pill);
   background: var(--signal);
   color: #fff;
-  font: 500 11px/1 var(--font-num);
+  font: 500 11px/1 var(--font-num); font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
@@ -625,7 +634,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
   outline: none;
 }
 .drawer-sub { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
-.drawer-phone { font-family: var(--font-num); font-weight: 500; }
+.drawer-phone { font-family: var(--font-num); font-weight: 500; font-variant-numeric: tabular-nums; }
 .drawer-head-row .icon-x { margin: -6px -8px 0 0; }
 
 /* Grab handle - the sheet can be dragged down by it to close (phone only, see the 640px block). */
@@ -799,7 +808,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .js .pin-boxes span {
   display: grid; place-items: center; height: 52px;
   border: 1px solid var(--line-strong); border-radius: var(--r-control); background: #fff;
-  font: 500 22px/1 var(--font-num);
+  font: 500 22px/1 var(--font-num); font-variant-numeric: tabular-nums;
 }
 .js .pin-boxes span.next { border: 2px solid var(--accent); }
 .js .pin-input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; color: transparent; caret-color: transparent; }
@@ -828,7 +837,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .code-card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; align-items: baseline; }
 .code-card dt { color: var(--muted); font-size: 14px; }
 .code-card dd { margin: 0; }
-.code-value { font: 500 22px/1.3 var(--font-num); letter-spacing: 0.04em; overflow-wrap: anywhere; user-select: all; }
+.code-value { font: 500 22px/1.3 var(--font-num); letter-spacing: 0.04em; overflow-wrap: anywhere; user-select: all; font-variant-numeric: tabular-nums; }
 .code-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .code-actions .btn { flex: 1 1 150px; min-height: 52px; font-size: 16px; }
 .code-done { justify-self: center; }
@@ -844,7 +853,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .user-main { display: grid; gap: 1px; min-width: 0; }
 .user-name { font: 600 16px/1.2 var(--font-display); overflow-wrap: anywhere; }
 .user-tag { margin-left: 8px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-dark); font: 600 12px/1.4 var(--font-body); }
-.user-id { color: var(--muted); font: 500 13px/1.3 var(--font-num); overflow-wrap: anywhere; }
+.user-id { color: var(--muted); font: 500 13px/1.3 var(--font-num); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .user-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 3px; color: var(--muted); font-size: 13px; }
 .chip-role { background: var(--soon-tint); color: var(--soon); font-size: 12px; }
 .user-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -937,7 +946,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .p-manager { color: var(--muted); font-size: 13px; }
 .p-manager.none { font-style: italic; }
 .p-side { flex: none; display: grid; justify-items: end; gap: 4px; }
-.p-progress-pct { font: 500 13px/1 var(--font-num); color: var(--muted); }
+.p-progress-pct { font: 500 13px/1 var(--font-num); color: var(--muted); font-variant-numeric: tabular-nums; }
 .p-progress-bar { width: 56px; height: 6px; border-radius: var(--r-pill); background: var(--track); overflow: hidden; }
 .p-progress-bar i { display: block; height: 100%; background: var(--ok); }
 
@@ -982,7 +991,7 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-overview-title { margin: 0 0 8px; font-weight: 600; overflow-wrap: anywhere; }
 .pay-overview-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 0; font-size: 14px; }
 .pay-overview-grid dt { color: var(--muted); }
-.pay-overview-grid dd { margin: 0; text-align: right; font-weight: 600; font-family: var(--font-num); }
+.pay-overview-grid dd { margin: 0; text-align: right; font-weight: 600; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 
 /* How each step was actually paid, read straight off what's saved - a receipt, not another editable row. */
 .pay-receipts { display: grid; gap: 10px; margin-bottom: 14px; }
@@ -1001,18 +1010,18 @@ a.p-client-name { color: var(--accent-dark); }
 .step-row:hover { background: var(--hover); }
 .step-circle {
   flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
-  border: 2px solid var(--line-strong); color: var(--muted); font: 600 13px/1 var(--font-num);
+  border: 2px solid var(--line-strong); color: var(--muted); font: 600 13px/1 var(--font-num); font-variant-numeric: tabular-nums;
 }
 .step-circle.paid { border-color: var(--ok); background: var(--ok); color: #fff; font-size: 15px; }
 .step-circle.dashed { border-style: dashed; color: var(--accent-dark); border-color: var(--accent-dark); }
 .step-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .step-title { font: 600 15px/1.25 var(--font-body); overflow-wrap: anywhere; }
 .step-sub { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.step-amount { flex: none; font: 600 15px/1 var(--font-num); }
+.step-amount { flex: none; font: 600 15px/1 var(--font-num); font-variant-numeric: tabular-nums; }
 .step-add .step-title { color: var(--accent-dark); }
 
 /* The edit-step sheet - same slide-up panel as the lead drawer / close-project sheet. */
-.step-sheet-eyebrow { margin: 0; color: var(--muted); font: 600 12px/1.2 var(--font-num); text-transform: uppercase; letter-spacing: 0.04em; }
+.step-sheet-eyebrow { margin: 0; color: var(--muted); font: 600 12px/1.2 var(--font-num); text-transform: uppercase; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
 .step-sheet-delete { color: var(--signal); font-weight: 600; }
 .amount-input-wrap { position: relative; }
 .amount-input-wrap input { padding-left: 28px; }
@@ -1341,8 +1350,8 @@ a.p-client-name { color: var(--accent-dark); }
 .att-step-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .att-step-label { font-weight: 700; }
 .att-step.pending .att-step-label { color: var(--muted); font-weight: 600; }
-.att-step-time { font: 500 15px/1.2 var(--font-num); }
-.att-elapsed { font: 500 22px/1.1 var(--font-num); color: var(--accent-dark); }
+.att-step-time { font: 500 15px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
+.att-elapsed { font: 500 22px/1.1 var(--font-num); color: var(--accent-dark); font-variant-numeric: tabular-nums; }
 .att-step-sub { color: var(--muted); font-size: 14px; }
 .att-step-note { color: var(--muted); font-size: 13px; }
 .att-step-body .field-picker { margin-top: 4px; }
@@ -1378,9 +1387,9 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .att-day { display: grid; gap: 4px; padding: 12px 14px; }
 .att-day-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .att-day-date { font: 600 15px/1.2 var(--font-display); }
-.att-day-hours { font: 500 15px/1.2 var(--font-num); white-space: nowrap; }
+.att-day-hours { font: 500 15px/1.2 var(--font-num); white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* Times and hours set inside running text (a row's "9:05 am – 5:50 pm", "8.5 h total"). */
-.att-num { font-family: var(--font-num); font-weight: 500; }
+.att-num { font-family: var(--font-num); font-weight: 500; font-variant-numeric: tabular-nums; }
 .att-day-sub { color: var(--muted); font-size: 13px; }
 .att-bar { height: 4px; margin-top: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .att-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--warn); }
@@ -1453,7 +1462,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-site-when { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; }
 .fn-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .fn-stats > div { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-card); }
-.fn-stat-value { display: block; font: 500 22px/1.2 var(--font-num); overflow-wrap: anywhere; }
+.fn-stat-value { display: block; font: 500 22px/1.2 var(--font-num); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .fn-stat-note { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
 .fn-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px 4px; margin: 0; padding: 0; list-style: none; }
 .fn-cell { display: grid; justify-items: center; gap: 3px; }
@@ -1461,7 +1470,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-date {
   display: flex; align-items: center; justify-content: center; box-sizing: border-box;
   width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line-strong);
-  color: var(--muted); font: 500 13px/1 var(--font-num);
+  color: var(--muted); font: 500 13px/1 var(--font-num); font-variant-numeric: tabular-nums;
 }
 .fn-date.present { border-color: var(--ok); background: var(--ok-tint); color: var(--ok-ink); }
 .fn-date.absent { border-color: var(--signal); background: var(--signal-tint); color: var(--signal); }
@@ -1486,7 +1495,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
   color: #fff; font-size: 14px; font-weight: 600; text-decoration: none; opacity: 0.85;
 }
 .me-today-status { font-size: 15px; font-weight: 600; }
-.me-today-big { font: 500 32px/1.15 var(--font-num); overflow-wrap: anywhere; }
+.me-today-big { font: 500 32px/1.15 var(--font-num); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .me-today-btn { width: 100%; min-height: 52px; margin-top: 8px; font-size: 16px; }
 .btn.me-out { background: #fff; border-color: #fff; color: var(--ink); }
 .btn.me-out:hover { background: var(--track); }
@@ -1529,7 +1538,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
   font: 700 17px/1.2 var(--font-display); color: var(--ink);
 }
 .state-box-title::-webkit-details-marker { display: none; }
-.state-box-title .p-code { margin-left: auto; color: var(--muted); font: 500 13px/1.2 var(--font-num); }
+.state-box-title .p-code { margin-left: auto; color: var(--muted); font: 500 13px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
 .state-box-title::before {
   content: ""; position: absolute; right: 10px; top: 50%; width: 8px; height: 8px; margin-top: -6px;
   border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
@@ -1556,7 +1565,7 @@ details[open] > summary.state-box-title::before { transform: rotate(-135deg); ma
 .area-title::-webkit-details-marker { display: none; }
 
 .city-box-title { margin: 0; padding: 12px 34px 12px 2px; font: 600 15px/1.2 var(--font-display); color: var(--ink); }
-.city-box-title .p-code, .area-title .p-code { margin-left: auto; color: var(--muted); font: 500 13px/1.2 var(--font-num); }
+.city-box-title .p-code, .area-title .p-code { margin-left: auto; color: var(--muted); font: 500 13px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
 .city-box-body { padding-bottom: 8px; }
 
 .area-title {
@@ -1603,7 +1612,7 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 .client-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .client-row-name { font: 600 16px/1.25 var(--font-display); overflow-wrap: anywhere; }
 .client-row-count { color: var(--muted); font-size: 13px; }
-.client-row-value { flex: none; font: 500 15px/1.2 var(--font-num); }
+.client-row-value { flex: none; font: 500 15px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
 .row-chevron { flex: none; color: var(--muted); font-size: 20px; line-height: 1; }
 
 .client-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -1673,7 +1682,7 @@ details[open] > summary.stage-section-title::before { transform: rotate(-135deg)
 details[open] > summary.stage-section-title { border-bottom: 1px solid var(--line); }
 .section-status { flex: none; font: 600 12px/1.2 var(--font-body); color: var(--ok); }
 .section-status.next { padding: 4px 10px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-dark); }
-.section-count { flex: none; color: var(--muted); font: 500 13px/1.2 var(--font-num); }
+.section-count { flex: none; color: var(--muted); font: 500 13px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
 .stage-section-body { padding: 16px; }
 
 /* A stage that can't be entered yet - the section before it isn't done. Still shows what's coming,

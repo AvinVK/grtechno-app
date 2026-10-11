@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from app.extensions import db
-from app.models import Attendance, Client, Project, utcnow
+from app.models import Attendance, Client, Lead, Project, utcnow
 from app.timeutil import today_local
 
 
@@ -42,6 +42,20 @@ def test_a_tile_per_service_with_cheap_summaries(app, admin_client, admin):
     assert "0 open" in html and "1 client<" in html and "1 running" in html
     assert "Team attendance" in html and "checked in today" in html        # the admin's tile: the team, not a week
     assert 'id="me-today"' not in html                                     # and no check-in card
+
+
+def test_the_leads_tile_adds_an_overdue_count_once_there_is_one(app, admin_client):
+    with app.app_context():
+        db.session.add(Lead(company="On time", stage="New enquiry", follow_up_date=today_local()))
+        db.session.commit()
+    html = admin_client.get("/me").get_data(as_text=True)
+    assert "1 open</span>" in html and "overdue" not in html         # nothing overdue yet: just the plain count
+
+    with app.app_context():
+        db.session.add(Lead(company="Late", stage="New enquiry", follow_up_date=today_local() - timedelta(days=3)))
+        db.session.commit()
+    html = admin_client.get("/me").get_data(as_text=True)
+    assert "2 open · 1 overdue</span>" in html
 
 
 def test_everyone_else_gets_the_today_card_and_their_week(app, client, user):

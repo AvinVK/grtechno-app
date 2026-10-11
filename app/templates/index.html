@@ -5,14 +5,10 @@
 
 {% block hub_back %}{% endblock %}{# here the bottom nav's Me leads to the hub #}
 
-{# The Active leads / Add lead toggle takes the title row itself, not a line of its own - a plain heading
-   would just repeat what the tabs already say. #}
-{% block page_title %}
-<span class="visually-hidden">Leads</span>
-<div class="stage-filter appbar-view-tabs" role="group" aria-label="Leads view">
-  <a class="filter-chip" href="#active" id="tab-active" aria-current="page">Active leads</a>
-  <a class="filter-chip" href="#add" id="tab-add">Add lead</a>
-</div>
+{% block page_title %}Leads{% endblock %}
+
+{% block actions %}
+  <a class="btn primary appbar-primary" href="#add">+ Lead</a>
 {% endblock %}
 
 {% block content %}
