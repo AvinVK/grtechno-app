@@ -17,7 +17,7 @@ from werkzeug.exceptions import abort
 from .auth import visible_projects
 from .extensions import db
 from .modules import check_module
-from .models import Material, MaterialMovement, Project, settings_for_client
+from .models import Material, MaterialMovement, Project, Supplier, Worker, settings_for_client
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -76,7 +76,7 @@ def _movement_fields(payload, *, needs_project):
         if f.data.get("project_id") is None:
             if "project_id" not in f.errors:
                 f.errors["project_id"] = "Pick a project"
-        elif visible_projects().filter(Project.id == f.data["project_id"]).first() is None:
+        elif visible_projects().filter(Project.id == f.data["project_id"], Project.status != "completed").first() is None:
             f.errors["project_id"] = "Pick a project"
             f.data.pop("project_id", None)
     if f.data.get("quantity") is not None and f.data["quantity"] <= 0:
@@ -91,13 +91,30 @@ def page():
     return render_template("inventory.html")
 
 
+def _current_projects():
+    """"Current projects" for the issue form's picker - not yet completed. visible_projects() already
+    scopes this to what the signed-in person may see at all."""
+    return visible_projects().filter(Project.status != "completed").order_by(Project.id.desc()).all()
+
+
+def _suppliers_for_client():
+    return [{"id": s.id, "name": s.name} for s in Supplier.query.order_by(Supplier.name).all()]
+
+
+def _workers_for_client():
+    """Who can be picked as "Given by" on an issue - anyone on the Employee management list, not just
+    sales (unlike Enquired by on leads), since it's whoever physically hands the material over."""
+    return [{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()]
+
+
 @bp.get("/api/inventory/materials")
 def list_materials():
     materials = Material.query.order_by(Material.is_active.desc(), Material.name).all()
-    projects = visible_projects().order_by(Project.id.desc()).all()
     return jsonify(
         materials=[m.to_dict() for m in materials],
-        projects=[{"id": p.id, "code": p.code, "title": p.title} for p in projects],
+        projects=[{"id": p.id, "code": p.code, "title": p.title} for p in _current_projects()],
+        suppliers=_suppliers_for_client(),
+        workers=_workers_for_client(),
         total_stock_value=float(sum((m.stock_value for m in materials), start=0)),
         currency=settings_for_client()["currency"],
     )
@@ -120,9 +137,26 @@ def get_material(material_id):
     return jsonify(
         material=material.to_dict(),
         movements=[mv.to_dict() for mv in material.movements],
-        projects=[{"id": p.id, "code": p.code, "title": p.title} for p in visible_projects().order_by(Project.id.desc()).all()],
+        projects=[{"id": p.id, "code": p.code, "title": p.title} for p in _current_projects()],
+        suppliers=_suppliers_for_client(),
+        workers=_workers_for_client(),
         currency=settings_for_client()["currency"],
     )
+
+
+@bp.post("/api/inventory/suppliers")
+def add_supplier():
+    """Add a supplier, same "add new on the fly" pattern as Role (see app/roles.py) - just a name, no
+    slug/key needed since nothing else references a supplier by a stable string key."""
+    name = str(_payload().get("name") or "").strip()[:160]
+    if not name:
+        return jsonify(error="Check the highlighted fields", fields={"name": "Enter a supplier name"}), 422
+    if Supplier.query.filter(db.func.lower(Supplier.name) == name.lower()).first():
+        return jsonify(error="Check the highlighted fields", fields={"name": "That supplier already exists"}), 422
+    supplier = Supplier(name=name)
+    db.session.add(supplier)
+    db.session.commit()
+    return jsonify(supplier={"id": supplier.id, "name": supplier.name}), 201
 
 
 @bp.patch("/api/inventory/materials/<int:material_id>")
@@ -146,8 +180,18 @@ def stock_in(material_id):
     payload = _payload()
     f = _movement_fields(payload, needs_project=False)
     f.money("rate", nullable=False)
-    f.text("seller_name", 120)
-    f.text("seller_contact", 40)
+    f.text("bill_no", 60)
+    f.choice("payment_mode", ("credit", "cash"))
+    f.money("gst_percent", nullable=False)
+    if f.data.get("gst_percent") is not None and f.data["gst_percent"] > 100:
+        f.errors["gst_percent"] = "Enter a percentage from 0 to 100"
+    supplier_id = payload.get("supplier_id")
+    if supplier_id not in (None, ""):
+        supplier = db.session.get(Supplier, int(supplier_id)) if str(supplier_id).isdigit() else None
+        if supplier is None:
+            f.errors["supplier_id"] = "Pick a supplier"
+        else:
+            f.data["supplier_id"] = supplier.id
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     qty, rate = f.data["quantity"], f.data["rate"]
@@ -155,10 +199,15 @@ def stock_in(material_id):
     blended = ((material.stock_qty * material.avg_rate) + (qty * rate)) / new_qty
     material.avg_rate = blended.quantize(Decimal("0.01"))
     material.stock_qty = new_qty
+    amount = qty * rate
+    gst_percent = f.data.get("gst_percent") or Decimal("0")
+    gst_amount = (amount * gst_percent / Decimal("100")).quantize(Decimal("0.01"))
     movement = MaterialMovement(
-        material=material, kind="in", quantity=qty, rate=rate, amount=qty * rate,
+        material=material, kind="in", quantity=qty, rate=rate, amount=amount,
         note=f.data.get("note", ""), entry_date=f.data["entry_date"], created_by_code=g.user.code,
-        seller_name=f.data.get("seller_name", ""), seller_contact=f.data.get("seller_contact", ""),
+        supplier_id=f.data.get("supplier_id"), bill_no=f.data.get("bill_no", ""),
+        payment_mode=f.data.get("payment_mode", ""), gst_percent=gst_percent, gst_amount=gst_amount,
+        total_cost=amount + gst_amount,
     )
     db.session.add(movement)
     db.session.commit()
@@ -205,6 +254,13 @@ def issue(material_id):
     f = _movement_fields(payload, needs_project=True)
     if f.data.get("quantity") is not None and f.data["quantity"] > material.stock_qty:
         f.errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
+    given_by_worker_id = payload.get("given_by_worker_id")
+    if given_by_worker_id not in (None, ""):
+        worker = db.session.get(Worker, int(given_by_worker_id)) if str(given_by_worker_id).isdigit() else None
+        if worker is None:
+            f.errors["given_by_worker_id"] = "Pick who gave it out"
+        else:
+            f.data["given_by_worker_id"] = worker.id
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     qty, rate = f.data["quantity"], material.avg_rate
@@ -212,7 +268,7 @@ def issue(material_id):
     movement = MaterialMovement(
         material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
         project_id=f.data["project_id"], note=f.data.get("note", ""), entry_date=f.data["entry_date"],
-        created_by_code=g.user.code,
+        created_by_code=g.user.code, given_by_worker_id=f.data.get("given_by_worker_id"),
     )
     db.session.add(movement)
     db.session.commit()

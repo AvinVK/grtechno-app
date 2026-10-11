@@ -4,7 +4,7 @@ for now - see app/reference_data.ADMIN_ONLY_MODULES."""
 import io
 
 from app.extensions import db
-from app.models import Material
+from app.models import Material, Worker
 
 
 def add_material(admin_client, name="Cement", unit="bags"):
@@ -17,6 +17,20 @@ def add_project(admin_client, name="Orchid Heights"):
     res = admin_client.post("/api/projects", json={"new_client_name": name})
     assert res.status_code == 201, res.get_json()
     return res.get_json()["project"]["id"]
+
+
+def add_supplier(admin_client, name="Shree Building Supplies"):
+    res = admin_client.post("/api/inventory/suppliers", json={"name": name})
+    assert res.status_code == 201, res.get_json()
+    return res.get_json()["supplier"]["id"]
+
+
+def add_worker(admin_client, name="Ramesh Storekeeper"):
+    with admin_client.application.app_context():
+        w = Worker(name=name)
+        db.session.add(w)
+        db.session.commit()
+        return w.id
 
 
 # ---------- admin only ----------
@@ -42,6 +56,7 @@ def test_admin_adds_a_material(admin_client):
     material = add_material(admin_client, "TMT Bars", "kg")
     assert material["unit"] == "kg" and material["stock_qty"] == 0 and material["avg_rate"] == 0
     assert material["stock_value"] == 0 and material["is_active"] is True
+    assert material["code"] == f"MAT-{material['id']:04d}"
 
 
 def test_material_name_is_required_and_cannot_duplicate(admin_client):
@@ -129,29 +144,79 @@ def test_issuing_needs_a_real_project(admin_client):
     assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
 
 
-# ---------- who it was bought from, and the bill ----------
+# ---------- supplier, GST and the bill ----------
 
-def test_stock_in_records_the_seller(admin_client):
+def test_a_supplier_can_be_added_on_the_fly_and_is_not_duplicated(admin_client):
+    sid = add_supplier(admin_client, "Shree Building Supplies")
+    res = admin_client.post("/api/inventory/suppliers", json={"name": "shree building supplies"})
+    assert res.status_code == 422 and "name" in res.get_json()["fields"]
+    res = admin_client.post("/api/inventory/suppliers", json={"name": "  "})
+    assert res.status_code == 422 and "name" in res.get_json()["fields"]
+    assert isinstance(sid, int)
+
+
+def test_stock_in_records_the_supplier_bill_and_payment_terms(admin_client):
     material = add_material(admin_client)
+    sid = add_supplier(admin_client)
     res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={
-        "quantity": 100, "rate": 10, "seller_name": "Shree Building Supplies", "seller_contact": "9876543210",
+        "quantity": 100, "rate": 10, "supplier_id": sid, "bill_no": "INV-55", "payment_mode": "credit",
+        "gst_percent": 18, "note": "First delivery",
     })
     assert res.status_code == 201
     movement = res.get_json()["movement"]
-    assert movement["seller_name"] == "Shree Building Supplies" and movement["seller_contact"] == "9876543210"
+    assert movement["supplier_id"] == sid and movement["supplier_name"] == "Shree Building Supplies"
+    assert movement["bill_no"] == "INV-55" and movement["payment_mode"] == "credit"
     assert movement["bill_url"] is None
 
     history = admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()["movements"]
-    assert history[0]["seller_name"] == "Shree Building Supplies"
+    assert history[0]["supplier_name"] == "Shree Building Supplies"
 
 
-def test_issuing_never_carries_a_seller(admin_client):
+def test_stock_in_computes_gst_amount_and_total_cost_server_side(admin_client):
+    material = add_material(admin_client)
+    # 100 @ 10 = 1000; 18% GST = 180; total 1180 - sent gst_amount/total_cost are ignored if sent at all.
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={
+        "quantity": 100, "rate": 10, "gst_percent": 18, "gst_amount": 999999, "total_cost": 1,
+    })
+    assert res.status_code == 201
+    movement = res.get_json()["movement"]
+    assert movement["gst_percent"] == 18 and movement["gst_amount"] == 180 and movement["total_cost"] == 1180
+
+
+def test_stock_in_without_gst_defaults_to_zero(admin_client):
+    material = add_material(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    assert res.status_code == 201
+    movement = res.get_json()["movement"]
+    assert movement["gst_percent"] == 0 and movement["gst_amount"] == 0 and movement["total_cost"] == 50
+
+
+def test_stock_in_rejects_a_gst_percent_over_100_or_an_unknown_supplier(admin_client):
+    material = add_material(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5, "gst_percent": 101})
+    assert res.status_code == 422 and "gst_percent" in res.get_json()["fields"]
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5, "supplier_id": 999999})
+    assert res.status_code == 422 and "supplier_id" in res.get_json()["fields"]
+
+
+def test_issuing_never_carries_supplier_or_gst_but_can_carry_given_by(admin_client):
     material = add_material(admin_client)
     admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
     pid = add_project(admin_client)
-    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
+    wid = add_worker(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid, "given_by_worker_id": wid})
     movement = res.get_json()["movement"]
-    assert movement["seller_name"] == "" and movement["seller_contact"] == "" and movement["bill_url"] is None
+    assert movement["supplier_name"] is None and movement["bill_url"] is None
+    assert movement["gst_percent"] == 0 and movement["gst_amount"] == 0
+    assert movement["given_by_worker_id"] == wid and movement["given_by_name"] == "Ramesh Storekeeper"
+
+
+def test_issuing_rejects_an_unknown_given_by_worker(admin_client):
+    material = add_material(admin_client)
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    pid = add_project(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid, "given_by_worker_id": 999999})
+    assert res.status_code == 422 and "given_by_worker_id" in res.get_json()["fields"]
 
 
 def test_bill_can_be_uploaded_viewed_and_removed(admin_client):
@@ -181,6 +246,18 @@ def test_bill_upload_rejects_a_non_document_file(admin_client):
     res = admin_client.post(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill",
                              data={"bill": bad}, content_type="multipart/form-data")
     assert res.status_code == 422
+
+
+def test_materials_list_and_detail_carry_suppliers_and_workers_for_the_pickers(admin_client):
+    sid = add_supplier(admin_client)
+    wid = add_worker(admin_client)
+    material = add_material(admin_client)
+    data = admin_client.get("/api/inventory/materials").get_json()
+    assert sid in [s["id"] for s in data["suppliers"]]
+    assert wid in [w["id"] for w in data["workers"]]
+    data = admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()
+    assert sid in [s["id"] for s in data["suppliers"]]
+    assert wid in [w["id"] for w in data["workers"]]
 
 
 def test_only_a_stock_in_entry_can_have_a_bill(admin_client):

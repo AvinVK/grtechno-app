@@ -485,15 +485,32 @@ class Material(db.Model):
     )
 
     @property
+    def code(self) -> str:
+        # The item's own business key - shown everywhere instead of the raw database id. Derived from id,
+        # like Project.code, so it's unique and immutable for free - no stored column to keep in sync.
+        return f"MAT-{self.id:04d}"
+
+    @property
     def stock_value(self):
         return (self.stock_qty * self.avg_rate).quantize(Decimal("0.01"))
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "name": self.name, "unit": self.unit,
+            "id": self.id, "code": self.code, "name": self.name, "unit": self.unit,
             "stock_qty": float(self.stock_qty), "avg_rate": float(self.avg_rate),
             "stock_value": float(self.stock_value), "notes": self.notes, "is_active": self.is_active,
         }
+
+
+class Supplier(db.Model):
+    """Who a material was bought from - its own short list (like Role), built up as stock-in entries name
+    a new one, rather than typed fresh every time."""
+
+    __tablename__ = "suppliers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
 
 class MaterialMovement(db.Model):
@@ -507,21 +524,31 @@ class MaterialMovement(db.Model):
     material_id = db.Column(db.Integer, db.ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, index=True)
     kind = db.Column(db.String(10), nullable=False)                                        # in | out
     quantity = db.Column(db.Numeric(14, 2), nullable=False)
-    rate = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")      # cost per unit at the time
-    amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # quantity * rate
+    rate = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")      # purchase cost per unit
+    amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # quantity * rate, pre-GST
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
-    note = db.Column(db.String(200), nullable=False, default="", server_default="")
+    note = db.Column(db.String(200), nullable=False, default="", server_default="")         # "Remarks"
     entry_date = db.Column(db.Date, nullable=False)
-    # Who it was bought from (stock-in only) - a material can be restocked from a different seller each
-    # time, at a different rate, so this lives on the movement, not on the material itself.
-    seller_name = db.Column(db.String(120), nullable=False, default="", server_default="")
-    seller_contact = db.Column(db.String(40), nullable=False, default="", server_default="")
+    # Stock-in only (a material can be bought from a different supplier, on different terms, each time, so
+    # these live on the movement, not the material itself) - stock on hand is still valued at `rate`
+    # (pre-GST), unaffected by any of this; it's kept purely for the paper trail.
+    supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
+    bill_no = db.Column(db.String(60), nullable=False, default="", server_default="")
+    payment_mode = db.Column(db.String(10), nullable=False, default="", server_default="")  # credit | cash
+    gst_percent = db.Column(db.Numeric(5, 2), nullable=False, default=0, server_default="0")
+    gst_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount * gst_percent / 100
+    total_cost = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount + gst_amount
     bill_filename = db.Column(db.String(80), nullable=True)
+    # Issue (stock-out) only - who physically handed the material over, not who happened to be signed in
+    # and recorded the entry (created_by_code, below).
+    given_by_worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True, index=True)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     material = db.relationship("Material", back_populates="movements")
     project = db.relationship("Project")
+    supplier = db.relationship("Supplier")
+    given_by = db.relationship("Worker")
     created_by = db.relationship("User")
 
     def to_dict(self) -> dict:
@@ -531,8 +558,12 @@ class MaterialMovement(db.Model):
             "project_id": self.project_id, "project_title": self.project.title if self.project else None,
             "project_code": self.project.code if self.project else None,
             "note": self.note, "entry_date": self.entry_date.isoformat(),
-            "seller_name": self.seller_name, "seller_contact": self.seller_contact,
+            "supplier_id": self.supplier_id, "supplier_name": self.supplier.name if self.supplier else None,
+            "bill_no": self.bill_no, "payment_mode": self.payment_mode,
+            "gst_percent": float(self.gst_percent), "gst_amount": float(self.gst_amount),
+            "total_cost": float(self.total_cost),
             "bill_url": f"/uploads/materials/{self.bill_filename}" if self.bill_filename else None,
+            "given_by_worker_id": self.given_by_worker_id, "given_by_name": self.given_by.name if self.given_by else None,
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),
         }
