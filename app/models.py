@@ -461,6 +461,76 @@ class ProjectPayment(db.Model):
         }
 
 
+class Material(db.Model):
+    """One kind of stock the business buys and uses on projects (cement, pipes, valves...), admin only for
+    now. Stock on hand and its cost are kept right here, moved only through MaterialMovement entries below -
+    a running balance, the same way a bank balance isn't re-summed from every transaction each time someone
+    checks it. avg_rate is a weighted average cost per unit: a stock-in blends its own rate into it; usage
+    just draws down the quantity at whatever that average already is, so it never needs a rate typed in."""
+
+    __tablename__ = "materials"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False, unique=True)
+    unit = db.Column(db.String(20), nullable=False, default="", server_default="")   # bags, kg, pcs, mtr...
+    stock_qty = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    avg_rate = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    notes = db.Column(db.String(400), nullable=False, default="", server_default="")
+    is_active = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    movements = db.relationship(
+        "MaterialMovement", back_populates="material", cascade="all, delete-orphan",
+        order_by="MaterialMovement.entry_date.desc(), MaterialMovement.id.desc()",
+    )
+
+    @property
+    def stock_value(self):
+        return (self.stock_qty * self.avg_rate).quantize(Decimal("0.01"))
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name, "unit": self.unit,
+            "stock_qty": float(self.stock_qty), "avg_rate": float(self.avg_rate),
+            "stock_value": float(self.stock_value), "notes": self.notes, "is_active": self.is_active,
+        }
+
+
+class MaterialMovement(db.Model):
+    """One stock-in (a purchase or receipt) or stock-out (issued to a project) entry for a material - a
+    ledger, so the stock and value on the Material row can always be traced back to where they came from
+    or where they went."""
+
+    __tablename__ = "material_movements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    material_id = db.Column(db.Integer, db.ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                                        # in | out
+    quantity = db.Column(db.Numeric(14, 2), nullable=False)
+    rate = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")      # cost per unit at the time
+    amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # quantity * rate
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    note = db.Column(db.String(200), nullable=False, default="", server_default="")
+    entry_date = db.Column(db.Date, nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    material = db.relationship("Material", back_populates="movements")
+    project = db.relationship("Project")
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "material_id": self.material_id, "kind": self.kind,
+            "quantity": float(self.quantity), "rate": float(self.rate), "amount": float(self.amount),
+            "project_id": self.project_id, "project_title": self.project.title if self.project else None,
+            "project_code": self.project.code if self.project else None,
+            "note": self.note, "entry_date": self.entry_date.isoformat(),
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": _iso(self.created_at),
+        }
+
+
 class Pincode(db.Model):
     """Pincode to state / district / city. Filled from India Post the first time a pincode is used,
     then served from here. Rows can be corrected directly in the database."""

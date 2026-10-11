@@ -41,7 +41,12 @@ NEW_MODULES = [
     ("clients", "Clients", "clients", "/clients", 2),
     ("projects", "Projects", "projects", "/projects", 3),
     ("attendance", "Attendance", "attendance", "/attendance", 4),
+    ("inventory", "Inventory", "material", "/inventory", 5),
 ]
+
+# Modules that are admin-only regardless of role_modules (check_module() refuses everyone else, even the
+# admin's own role_key rows) - just "inventory" for now, until roles for it are defined.
+ADMIN_ONLY_MODULES = {"inventory"}
 
 SITE_CATEGORIES = [
     "Hospital", "Nursing home", "Residential apartment", "Commercial complex",

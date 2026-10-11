@@ -32,6 +32,7 @@ def create_app(config_object=Config):
     from .auth import csrf_token
     from .cli import register_cli
     from .deploy import bp as deploy_bp
+    from .inventory import bp as inventory_bp
     from .clients import bp as clients_bp
     from .projects import bp as projects_bp
     from .attendance import bp as attendance_bp
@@ -54,6 +55,7 @@ def create_app(config_object=Config):
     app.register_blueprint(uploads_bp)
     app.register_blueprint(modules_bp)
     app.register_blueprint(roles_bp)
+    app.register_blueprint(inventory_bp)
     app.register_blueprint(clients_bp)
     app.register_blueprint(projects_bp)
     app.register_blueprint(attendance_bp)

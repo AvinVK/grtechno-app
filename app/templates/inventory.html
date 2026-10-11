@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Inventory - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Inventory{% endblock %}
+{# A way back to Me only when there's no bottom nav to provide one - otherwise Inventory is its own tab
+   and the back chevron is redundant. #}
+{% block hub_back %}{% if not bottom_nav %}{{ super() }}{% endif %}{% endblock %}
+
+{% block actions %}
+  <a class="btn primary appbar-primary" href="/inventory#new">+ Material</a>
+{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1"><p class="loading">Loading inventory…</p></main>
+<script src="{{ asset('js/inventory.js') }}" defer></script>
+{% endblock %}

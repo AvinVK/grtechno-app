@@ -32,7 +32,8 @@ def seed_reference_data():
     """What the migrations put in a real database: services, roles, who can open what, site categories."""
     db.session.add(Module(key="leads", name="Leads", icon="leads", path="/", sort_order=1))
     for key, name, icon, path, order in ref.NEW_MODULES:
-        db.session.add(Module(key=key, name=name, icon=icon, path=path, sort_order=order))
+        db.session.add(Module(key=key, name=name, icon=icon, path=path, sort_order=order,
+                               admin_only=key in ref.ADMIN_ONLY_MODULES))
     for key, name, sees_all in ref.ROLES:
         db.session.add(Role(key=key, name=name, sees_all=sees_all))
     db.session.flush()

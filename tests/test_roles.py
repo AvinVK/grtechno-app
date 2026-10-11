@@ -76,7 +76,7 @@ def test_supervisor_can_only_open_attendance(app):
 
 
 def test_admin_opens_everything(admin_client):
-    assert names(admin_client) == ["Leads", "Clients", "Projects", "Attendance"]
+    assert names(admin_client) == ["Leads", "Clients", "Projects", "Attendance", "Inventory"]
 
 
 def test_roles_are_editable_in_the_database(app):
