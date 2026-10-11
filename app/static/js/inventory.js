@@ -16,10 +16,16 @@
   const backLink = $('#appbar-back');
   const showBack = (visible) => { if (backLink) backLink.hidden = !visible; };
 
+  // "+ Material" opens the same add-material form this button already sits on top of, so it's hidden
+  // there (and restored everywhere else) - same idea as showBack above, just for the other appbar link.
+  const addLink = $('.appbar-primary');
+  const showAddLink = (visible) => { if (addLink) addLink.hidden = !visible; };
+
   /* ---------- list: every material, its stock and what it's worth ---------- */
 
   async function showList() {
     showBack(false);
+    showAddLink(true);
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading inventory…'));
     let data;
@@ -123,6 +129,7 @@
     try { data = await api(`/api/inventory/materials/${id}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to inventory'))); return; }
     const m = data.material;
     showBack(true);
+    showAddLink(true);
     LD.setAppbarBack?.('Inventory', '#');
 
     clear(view).append(h('div', { class: 'project-detail' },
@@ -199,6 +206,7 @@
 
   async function showNew() {
     showBack(true);
+    showAddLink(false);            // already on the form it opens - nothing for it to do here
     LD.setAppbarBack?.('Inventory', '#');
     materialForm(null);
   }
@@ -208,6 +216,7 @@
     try {
       const data = await api(`/api/inventory/materials/${id}`);
       showBack(true);
+      showAddLink(true);
       LD.setAppbarBack?.(data.material.name, `#m${id}`);
       materialForm(data.material);
     } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); }
@@ -343,6 +352,7 @@
     let data;
     try { data = await api(`/api/inventory/materials/${id}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     showBack(true);
+    showAddLink(true);
     LD.setAppbarBack?.(data.material.name, `#m${id}`);
     movementForm(data.material, kind, data);
   }
