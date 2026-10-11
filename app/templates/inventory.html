@@ -4,9 +4,10 @@
 
 {% block page_title %}Inventory{% endblock %}
 {# Unlike Clients/Projects, Inventory is more than one level deep (list -> material -> stock-in/issue), so
-   the chevron stays even with the bottom nav there - inventory.js points it at the material or the list
-   as you go, same as it does on Workforce/People's own sub-screens. #}
-{% block hub_back %}{{ super() }}{% endblock %}
+   the chevron is kept in the DOM even with the bottom nav there - but starts hidden (this is the list,
+   same as Clients/Projects at their own top level) and inventory.js reveals it once you're a level in,
+   repointing it at the material or the list as you go, same as Workforce/People's own sub-screens. #}
+{% block hub_back %}<a class="back-link appbar-back" id="appbar-back" href="{{ url_for('me.page') }}" aria-label="Back to Me" hidden>‹</a>{% endblock %}
 
 {% block actions %}
   <a class="btn primary appbar-primary" href="/inventory#new">+ Material</a>

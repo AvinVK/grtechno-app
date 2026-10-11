@@ -10,9 +10,16 @@
   const view = $('#view');
   const todayIso = () => new Date().toISOString().slice(0, 10);
 
+  // The chevron only makes sense once you're a level deeper than the list - Inventory's own bottom tab
+  // already gets you back to the list itself, same as Clients/Projects, so it stays hidden there and
+  // only appears on a material, or a form, same as setAppbarBack repoints it below.
+  const backLink = $('#appbar-back');
+  const showBack = (visible) => { if (backLink) backLink.hidden = !visible; };
+
   /* ---------- list: every material, its stock and what it's worth ---------- */
 
   async function showList() {
+    showBack(false);
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading inventory…'));
     let data;
@@ -113,6 +120,7 @@
     let data;
     try { data = await api(`/api/inventory/materials/${id}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to inventory'))); return; }
     const m = data.material;
+    showBack(true);
     LD.setAppbarBack?.('Inventory', '#');
 
     clear(view).append(h('div', { class: 'project-detail' },
@@ -187,6 +195,7 @@
   }
 
   async function showNew() {
+    showBack(true);
     LD.setAppbarBack?.('Inventory', '#');
     materialForm(null);
   }
@@ -195,6 +204,7 @@
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     try {
       const data = await api(`/api/inventory/materials/${id}`);
+      showBack(true);
       LD.setAppbarBack?.(data.material.name, `#m${id}`);
       materialForm(data.material);
     } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); }
@@ -260,6 +270,7 @@
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api(`/api/inventory/materials/${id}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    showBack(true);
     LD.setAppbarBack?.(data.material.name, `#m${id}`);
     movementForm(data.material, kind, data.projects, data.currency);
   }
