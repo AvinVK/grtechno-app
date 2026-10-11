@@ -66,6 +66,64 @@ def _material_fields(payload, required=False):
     return f
 
 
+def _supply_fields(payload, *, require_quantity):
+    """Supply detail for a purchase - quantity, cost, who it was bought from, the bill and GST. Required
+    together for an explicit stock-in; on Add material, a brand-new material's first purchase is optional,
+    but once either quantity or rate is given, both are needed (so it's never stocked with a quantity but
+    no cost, or vice versa). GST amount and total cost are always computed here, never trusted from the
+    client - see _apply_stock_in."""
+    f = Fields(payload)
+    f.money("quantity", nullable=True)
+    f.money("rate", nullable=True)
+    f.date("entry_date")
+    f.text("note", 200)
+    f.text("bill_no", 60)
+    f.choice("payment_mode", ("credit", "cash"))
+    f.money("gst_percent", nullable=True)
+    has_qty = f.data.get("quantity") is not None
+    has_rate = f.data.get("rate") is not None
+    wants_stock = has_qty or has_rate or require_quantity
+    if wants_stock:
+        if not has_qty:
+            f.errors.setdefault("quantity", "Enter a quantity greater than 0")
+        elif f.data["quantity"] <= 0:
+            f.errors["quantity"] = "Enter a quantity greater than 0"
+        if not has_rate:
+            f.errors.setdefault("rate", "Enter a cost per unit")
+    if f.data.get("gst_percent") is not None and f.data["gst_percent"] > 100:
+        f.errors["gst_percent"] = "Enter a percentage from 0 to 100"
+    if not f.data.get("entry_date") and "entry_date" not in f.errors:
+        f.data["entry_date"] = today_local()
+    supplier_id = payload.get("supplier_id")
+    if supplier_id not in (None, ""):
+        supplier = db.session.get(Supplier, int(supplier_id)) if str(supplier_id).isdigit() else None
+        if supplier is None:
+            f.errors["supplier_id"] = "Pick a supplier"
+        else:
+            f.data["supplier_id"] = supplier.id
+    return f, wants_stock
+
+
+def _apply_stock_in(material, data):
+    qty, rate = data["quantity"], data["rate"]
+    new_qty = material.stock_qty + qty
+    blended = ((material.stock_qty * material.avg_rate) + (qty * rate)) / new_qty
+    material.avg_rate = blended.quantize(Decimal("0.01"))
+    material.stock_qty = new_qty
+    amount = qty * rate
+    gst_percent = data.get("gst_percent") or Decimal("0")
+    gst_amount = (amount * gst_percent / Decimal("100")).quantize(Decimal("0.01"))
+    movement = MaterialMovement(
+        material=material, kind="in", quantity=qty, rate=rate, amount=amount,
+        note=data.get("note", ""), entry_date=data["entry_date"], created_by_code=g.user.code,
+        supplier_id=data.get("supplier_id"), bill_no=data.get("bill_no", ""),
+        payment_mode=data.get("payment_mode", ""), gst_percent=gst_percent, gst_amount=gst_amount,
+        total_cost=amount + gst_amount,
+    )
+    db.session.add(movement)
+    return movement
+
+
 def _movement_fields(payload, *, needs_project):
     f = Fields(payload)
     f.money("quantity", nullable=False)
@@ -122,13 +180,19 @@ def list_materials():
 
 @bp.post("/api/inventory/materials")
 def add_material():
-    f = _material_fields(_payload(), required=True)
+    payload = _payload()
+    f = _material_fields(payload, required=True)
+    sf, wants_stock = _supply_fields(payload, require_quantity=False)
+    f.errors.update(sf.errors)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     material = Material(**f.data)
     db.session.add(material)
+    if wants_stock:
+        db.session.flush()         # stock_qty/avg_rate need their column defaults applied before blending
+    movement = _apply_stock_in(material, sf.data) if wants_stock else None
     db.session.commit()
-    return jsonify(material=material.to_dict()), 201
+    return jsonify(material=material.to_dict(), movement=movement.to_dict() if movement else None), 201
 
 
 @bp.get("/api/inventory/materials/<int:material_id>")
@@ -177,39 +241,10 @@ def update_material(material_id):
 @bp.post("/api/inventory/materials/<int:material_id>/stock-in")
 def stock_in(material_id):
     material = _material_or_404(material_id)
-    payload = _payload()
-    f = _movement_fields(payload, needs_project=False)
-    f.money("rate", nullable=False)
-    f.text("bill_no", 60)
-    f.choice("payment_mode", ("credit", "cash"))
-    f.money("gst_percent", nullable=False)
-    if f.data.get("gst_percent") is not None and f.data["gst_percent"] > 100:
-        f.errors["gst_percent"] = "Enter a percentage from 0 to 100"
-    supplier_id = payload.get("supplier_id")
-    if supplier_id not in (None, ""):
-        supplier = db.session.get(Supplier, int(supplier_id)) if str(supplier_id).isdigit() else None
-        if supplier is None:
-            f.errors["supplier_id"] = "Pick a supplier"
-        else:
-            f.data["supplier_id"] = supplier.id
+    f, _ = _supply_fields(_payload(), require_quantity=True)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
-    qty, rate = f.data["quantity"], f.data["rate"]
-    new_qty = material.stock_qty + qty
-    blended = ((material.stock_qty * material.avg_rate) + (qty * rate)) / new_qty
-    material.avg_rate = blended.quantize(Decimal("0.01"))
-    material.stock_qty = new_qty
-    amount = qty * rate
-    gst_percent = f.data.get("gst_percent") or Decimal("0")
-    gst_amount = (amount * gst_percent / Decimal("100")).quantize(Decimal("0.01"))
-    movement = MaterialMovement(
-        material=material, kind="in", quantity=qty, rate=rate, amount=amount,
-        note=f.data.get("note", ""), entry_date=f.data["entry_date"], created_by_code=g.user.code,
-        supplier_id=f.data.get("supplier_id"), bill_no=f.data.get("bill_no", ""),
-        payment_mode=f.data.get("payment_mode", ""), gst_percent=gst_percent, gst_amount=gst_amount,
-        total_cost=amount + gst_amount,
-    )
-    db.session.add(movement)
+    movement = _apply_stock_in(material, f.data)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 

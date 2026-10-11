@@ -160,7 +160,11 @@
 
   /* ---------- add / edit a material ---------- */
 
-  function materialForm(material) {
+  // `data` (suppliers + currency, from GET /api/inventory/materials) is only needed while adding - editing
+  // a material that may already have its own stock-in history doesn't touch any of this; use Stock in for
+  // a later purchase instead.
+  function materialForm(material, data) {
+    const isAdd = !material;
     const M = material || { name: '', unit: '', notes: '' };
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
     const controls = {
@@ -168,6 +172,33 @@
       unit: text('text', M.unit, { maxlength: 20, autocomplete: 'off', placeholder: 'bags, kg, pcs, mtr…' }),
       notes: (() => { const t = h('textarea', { rows: 3 }); t.value = M.notes ?? ''; return t; })(),
     };
+
+    // Supply detail - this material's first purchase, optional (leave quantity blank to add it with no
+    // stock yet). Same shape as the Stock-in form's own supply fields, see movementForm below.
+    const currency = isAdd ? data.currency : '';
+    const qty = isAdd ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' }) : null;
+    const rate = isAdd ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit' }) : null;
+    const supplierSel = isAdd ? supplierPicker((data.suppliers || []).map((s) => ({ value: s.id, label: s.name })), '') : null;
+    const billNo = isAdd ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off' }) : null;
+    const paymentMode = isAdd ? selectField(PAYMENT_MODES, 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
+    const gstPercent = isAdd ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' }) : null;
+    const gstAmount = isAdd ? h('input', { type: 'text', disabled: true, value: money(0, currency) }) : null;
+    const totalCost = isAdd ? h('input', { type: 'text', disabled: true, value: money(0, currency) }) : null;
+    const remarks = isAdd ? h('input', { type: 'text', maxlength: 200, autocomplete: 'off' }) : null;
+
+    if (isAdd) {
+      const recalc = () => {
+        const q = Number(qty.value) || 0;
+        const r = Number(rate.value) || 0;
+        const g = Number(gstPercent.value) || 0;
+        const amount = q * r;
+        const gst = amount * g / 100;
+        gstAmount.value = money(gst, currency);
+        totalCost.value = money(amount + gst, currency);
+      };
+      [qty, rate, gstPercent].forEach((el) => el.addEventListener('input', recalc));
+      recalc();
+    }
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, material ? 'Save material' : 'Add material');
@@ -177,8 +208,25 @@
         errorBox.hidden = true;
         showFieldErrors(form, {});
         saveBtn.disabled = true;
+        if (isAdd && supplierSel.newSupplierName) {
+          try {
+            const created = await api('/api/inventory/suppliers', { method: 'POST', body: { name: supplierSel.newSupplierName } });
+            data.suppliers.push(created.supplier);
+            supplierSel.setOptions(data.suppliers.map((s) => ({ value: s.id, label: s.name })));
+            supplierSel.value = created.supplier.id;
+          } catch (err) {
+            errorBox.textContent = (err.fields && err.fields.name) || err.message;
+            errorBox.hidden = false;
+            saveBtn.disabled = false;
+            return;
+          }
+        }
         const body = {};
         for (const [name, el] of Object.entries(controls)) body[name] = el.value;
+        if (isAdd) Object.assign(body, {
+          quantity: qty.value, rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
+          payment_mode: paymentMode.value, gst_percent: gstPercent.value || '0', note: remarks.value,
+        });
         try {
           const saved = material
             ? await api(`/api/inventory/materials/${material.id}`, { method: 'PATCH', body })
@@ -196,8 +244,18 @@
       h('div', { class: 'form-grid' },
         field('name', 'Material name', controls.name, { wide: true }),
         field('unit', 'Unit', controls.unit),
-        field('notes', 'Notes', controls.notes, { wide: true })),
-      h('div', { class: 'form-actions' }, saveBtn));
+        field('notes', 'Notes', controls.notes, { wide: true }),
+        isAdd ? field('quantity', 'Quantity', qty) : null,
+        isAdd ? field('rate', 'Purchase cost', rate) : null,
+        isAdd ? field('supplier_id', 'Supplier name', supplierSel) : null,
+        isAdd ? field('bill_no', 'Bill no', billNo) : null,
+        isAdd ? field('payment_mode', 'Credit or cash', paymentMode) : null,
+        isAdd ? field('gst_percent', 'GST %', gstPercent) : null,
+        isAdd ? field('gst_amount', 'GST amt', gstAmount) : null,
+        isAdd ? field('total_cost', 'Total cost', totalCost) : null,
+        isAdd ? field('note', 'Remarks', remarks, { wide: true }) : null),
+      h('div', { class: 'form-actions' }, saveBtn),
+      isAdd ? h('p', { class: 'hint' }, 'Leave quantity blank to add the material with no stock yet - you can stock it in later.') : null);
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, material ? 'Edit material' : 'Add material')),
@@ -205,10 +263,13 @@
   }
 
   async function showNew() {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/inventory/materials'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     showBack(true);
     showAddLink(false);            // already on the form it opens - nothing for it to do here
     LD.setAppbarBack?.('Inventory', '#');
-    materialForm(null);
+    materialForm(null, data);
   }
 
   async function showEdit(id) {

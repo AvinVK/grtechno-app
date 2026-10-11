@@ -67,6 +67,40 @@ def test_material_name_is_required_and_cannot_duplicate(admin_client):
     assert res.status_code == 422 and "name" in res.get_json()["fields"]
 
 
+# ---------- the new material's first purchase (optional, right on Add material) ----------
+
+def test_adding_a_material_with_no_quantity_leaves_it_with_no_stock(admin_client):
+    material = add_material(admin_client, "No Stock Yet")
+    assert material["stock_qty"] == 0 and material["avg_rate"] == 0
+    history = admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()["movements"]
+    assert history == []
+
+
+def test_adding_a_material_with_a_quantity_logs_its_first_purchase(admin_client):
+    sid = add_supplier(admin_client)
+    res = admin_client.post("/api/inventory/materials", json={
+        "name": "TMT Bars", "unit": "kg", "quantity": 100, "rate": 60, "supplier_id": sid,
+        "bill_no": "INV-1", "payment_mode": "cash", "gst_percent": 18, "note": "Opening stock",
+    })
+    assert res.status_code == 201, res.get_json()
+    body = res.get_json()
+    assert body["material"]["stock_qty"] == 100 and body["material"]["avg_rate"] == 60
+    movement = body["movement"]
+    assert movement["kind"] == "in" and movement["supplier_name"] == "Shree Building Supplies"
+    assert movement["gst_amount"] == 1080 and movement["total_cost"] == 7080         # 100*60=6000, 18% = 1080
+
+
+def test_adding_a_material_with_a_quantity_but_no_rate_is_refused(admin_client):
+    res = admin_client.post("/api/inventory/materials", json={"name": "TMT Bars", "quantity": 100})
+    assert res.status_code == 422 and "rate" in res.get_json()["fields"]
+    assert Material.query.filter_by(name="TMT Bars").first() is None     # nothing half-created
+
+
+def test_adding_a_material_with_a_rate_but_no_quantity_is_refused(admin_client):
+    res = admin_client.post("/api/inventory/materials", json={"name": "TMT Bars", "rate": 60})
+    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
+
+
 def test_admin_edits_a_material_and_can_rename_it_to_its_own_name(admin_client):
     material = add_material(admin_client, "Cement")
     res = admin_client.patch(f"/api/inventory/materials/{material['id']}", json={"name": "Cement", "unit": "bags of 50kg"})
