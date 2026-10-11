@@ -512,6 +512,11 @@ class MaterialMovement(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     note = db.Column(db.String(200), nullable=False, default="", server_default="")
     entry_date = db.Column(db.Date, nullable=False)
+    # Who it was bought from (stock-in only) - a material can be restocked from a different seller each
+    # time, at a different rate, so this lives on the movement, not on the material itself.
+    seller_name = db.Column(db.String(120), nullable=False, default="", server_default="")
+    seller_contact = db.Column(db.String(40), nullable=False, default="", server_default="")
+    bill_filename = db.Column(db.String(80), nullable=True)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
@@ -526,6 +531,8 @@ class MaterialMovement(db.Model):
             "project_id": self.project_id, "project_title": self.project.title if self.project else None,
             "project_code": self.project.code if self.project else None,
             "note": self.note, "entry_date": self.entry_date.isoformat(),
+            "seller_name": self.seller_name, "seller_contact": self.seller_contact,
+            "bill_url": f"/uploads/materials/{self.bill_filename}" if self.bill_filename else None,
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),
         }

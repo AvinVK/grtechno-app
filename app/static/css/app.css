@@ -185,6 +185,8 @@ a { color: var(--accent-dark); }
 }
 
 .link-btn:hover { text-decoration: underline; }
+.bill-links { display: inline-flex; align-items: center; gap: 4px; }
+.bill-links .link-btn { font-size: 13px; }
 
 /* ---------- Summary ---------- */
 

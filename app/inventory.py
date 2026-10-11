@@ -19,6 +19,7 @@ from .extensions import db
 from .modules import check_module
 from .models import Material, MaterialMovement, Project, settings_for_client
 from .timeutil import today_local
+from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
 
 bp = Blueprint("inventory", __name__)
@@ -42,6 +43,13 @@ def _material_or_404(material_id: int) -> Material:
     if material is None:
         abort(404)
     return material
+
+
+def _movement_or_404(material: Material, movement_id: int) -> MaterialMovement:
+    movement = next((mv for mv in material.movements if mv.id == movement_id), None)
+    if movement is None:
+        abort(404)
+    return movement
 
 
 def _material_fields(payload, required=False):
@@ -138,6 +146,8 @@ def stock_in(material_id):
     payload = _payload()
     f = _movement_fields(payload, needs_project=False)
     f.money("rate", nullable=False)
+    f.text("seller_name", 120)
+    f.text("seller_contact", 40)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     qty, rate = f.data["quantity"], f.data["rate"]
@@ -148,10 +158,44 @@ def stock_in(material_id):
     movement = MaterialMovement(
         material=material, kind="in", quantity=qty, rate=rate, amount=qty * rate,
         note=f.data.get("note", ""), entry_date=f.data["entry_date"], created_by_code=g.user.code,
+        seller_name=f.data.get("seller_name", ""), seller_contact=f.data.get("seller_contact", ""),
     )
     db.session.add(movement)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
+
+
+@bp.post("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>/bill")
+def upload_bill(material_id, movement_id):
+    """The purchase's receipt or invoice - attached after the fact (it isn't always to hand when the
+    stock-in itself is logged), and only for a stock-in, since an issue has no bill of its own."""
+    material = _material_or_404(material_id)
+    movement = _movement_or_404(material, movement_id)
+    if movement.kind != "in":
+        abort(422, "Only a stock-in entry can have a bill.")
+    files = request.files.getlist("bill")
+    if not files:
+        abort(422, "Choose a file")
+    try:
+        filename = save_upload(files[0], "materials", allowed=DOCUMENT_TYPES)
+    except UploadError as err:
+        abort(422, err.message)
+    if movement.bill_filename:
+        delete_upload("materials", movement.bill_filename)
+    movement.bill_filename = filename
+    db.session.commit()
+    return jsonify(movement=movement.to_dict()), 201
+
+
+@bp.delete("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>/bill")
+def delete_bill(material_id, movement_id):
+    material = _material_or_404(material_id)
+    movement = _movement_or_404(material, movement_id)
+    if movement.bill_filename:
+        delete_upload("materials", movement.bill_filename)
+        movement.bill_filename = None
+        db.session.commit()
+    return jsonify(movement=movement.to_dict())
 
 
 @bp.post("/api/inventory/materials/<int:material_id>/issue")

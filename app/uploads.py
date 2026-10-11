@@ -10,7 +10,9 @@ from werkzeug.exceptions import abort
 
 bp = Blueprint("uploads", __name__)
 
-ALLOWED_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+# A bill is as often a scanned PDF as a photo of the paper receipt.
+DOCUMENT_TYPES = {**IMAGE_TYPES, "application/pdf": "pdf"}
 
 
 class UploadError(Exception):
@@ -19,11 +21,12 @@ class UploadError(Exception):
         self.message = message
 
 
-def save_upload(file_storage, subdir: str) -> str:
-    """Save one uploaded image under instance/uploads/<subdir>/ and return its stored filename."""
-    ext = ALLOWED_TYPES.get((file_storage.mimetype or "").lower())
+def save_upload(file_storage, subdir: str, allowed: dict = IMAGE_TYPES) -> str:
+    """Save one uploaded file under instance/uploads/<subdir>/ and return its stored filename."""
+    ext = allowed.get((file_storage.mimetype or "").lower())
     if not ext:
-        raise UploadError("Only JPEG, PNG or WEBP photos are allowed")
+        kinds = "a JPEG, PNG or WEBP photo" if allowed is IMAGE_TYPES else "a JPEG, PNG, WEBP or PDF file"
+        raise UploadError(f"Choose {kinds}")
     directory = current_app.config["UPLOAD_DIR"] / subdir
     directory.mkdir(parents=True, exist_ok=True)
     filename = f"{secrets.token_hex(16)}.{ext}"

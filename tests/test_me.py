@@ -102,11 +102,13 @@ def test_api_me_patch_requires_a_phone_key(client):
 
 
 def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
-    # Clients/Projects claim their own tab as current, and skip the back chevron since the tabs already
-    # get you back; every other pushed screen defaults to Me and keeps the chevron alongside the tabs.
+    # Clients/Projects claim their own tab as current and skip the back chevron since the tabs already
+    # get you back; Inventory claims its tab too but keeps the chevron anyway (it goes deeper than one
+    # level - list -> material -> stock-in/issue); every other pushed screen defaults to Me and keeps the
+    # chevron alongside the tabs.
     current_tab = {"/clients": '/clients" aria-current="page"', "/projects": '/projects" aria-current="page"',
                     "/inventory": '/inventory" aria-current="page"'}
-    no_back = {"/clients", "/projects", "/inventory"}
+    no_back = {"/clients", "/projects"}
     for who, url in ((client, "/attendance"), (admin_client, "/users"), (admin_client, "/workforce"),
                      (admin_client, "/attendance-sheet"), (admin_client, "/clients"), (admin_client, "/projects"),
                      (admin_client, "/inventory")):

@@ -62,13 +62,49 @@
     } catch (err) { toast(err.message, true); }
   }
 
-  function movementRow(mv, currency) {
+  // The bill (a photo or PDF of the receipt) isn't always to hand when the stock-in itself is logged, so
+  // it's attached here, after the fact, from the material's own history - not part of the stock-in form.
+  function billControl(materialId, mv, onChanged) {
+    if (!mv.bill_url) {
+      const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', hidden: true });
+      fileInput.onchange = async () => {
+        if (!fileInput.files.length) return;
+        const body = new FormData();
+        body.append('bill', fileInput.files[0]);
+        try {
+          const res = await fetch(`/api/inventory/materials/${materialId}/movements/${mv.id}/bill`, { method: 'POST', body, credentials: 'same-origin' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'Could not upload the bill');
+          toast('Bill added');
+          onChanged();
+        } catch (err) { toast(err.message, true); }
+      };
+      return h('label', { class: 'link-btn' }, 'Add bill', fileInput);
+    }
+    return h('span', { class: 'bill-links' },
+      h('a', { href: mv.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill'),
+      h('button', {
+        type: 'button', class: 'link-btn', onclick: async () => {
+          const ok = await confirm('Remove this bill?', { ok: 'Remove', danger: true });
+          if (!ok) return;
+          try {
+            await api(`/api/inventory/materials/${materialId}/movements/${mv.id}/bill`, { method: 'DELETE' });
+            toast('Bill removed');
+            onChanged();
+          } catch (err) { toast(err.message, true); }
+        },
+      }, 'Remove'));
+  }
+
+  function movementRow(materialId, mv, currency, onChanged) {
     const isIn = mv.kind === 'in';
+    const seller = isIn ? [mv.seller_name, mv.seller_contact].filter(Boolean).join(' · ') : '';
     return h('li', { class: 'p-row' },
       h('span', { class: `chip ${isIn ? 'chip-active' : 'chip-off'}` }, isIn ? '+ Stock in' : '− Issued'),
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, `${mv.quantity} ${isIn ? 'at ' + money(mv.rate, currency) : ''}`.trim()),
-        h('span', { class: 'row-sub' }, [fmtDate(mv.entry_date), mv.project_title ? `${mv.project_code} · ${mv.project_title}` : null, mv.note || null, mv.created_by_name ? `by ${mv.created_by_name}` : null].filter(Boolean).join(' · '))),
+        h('span', { class: 'row-sub' }, [fmtDate(mv.entry_date), mv.project_title ? `${mv.project_code} · ${mv.project_title}` : null, seller || null, mv.note || null, mv.created_by_name ? `by ${mv.created_by_name}` : null].filter(Boolean).join(' · ')),
+        isIn ? billControl(materialId, mv, onChanged) : null),
       h('span', { class: 'row-value' }, money(mv.amount, currency)));
   }
 
@@ -100,7 +136,7 @@
       h('section', { class: 'p-section' },
         h('h3', {}, 'History'),
         data.movements.length
-          ? h('ul', { class: 'card-group' }, data.movements.map((mv) => movementRow(mv, data.currency)))
+          ? h('ul', { class: 'card-group' }, data.movements.map((mv) => movementRow(m.id, mv, data.currency, () => showDetail(id))))
           : h('p', { class: 'hint' }, 'No stock-in or issue entries yet.'))));
   }
 
@@ -170,6 +206,8 @@
     const isIn = kind === 'in';
     const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: `Quantity (${material.unit || 'units'})` });
     const rate = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit' }) : null;
+    const sellerName = isIn ? h('input', { type: 'text', maxlength: 120, autocomplete: 'off' }) : null;
+    const sellerContact = isIn ? h('input', { type: 'tel', maxlength: 40, autocomplete: 'off' }) : null;
     const project = !isIn ? selectField(projects.map((p) => ({ value: p.id, label: `${p.code} · ${p.title}` })), '', { title: 'Project', placeholder: 'Choose a project' }) : null;
     const date = dateField(todayIso(), { placeholder: 'Date' });
     const note = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
@@ -177,7 +215,7 @@
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isIn ? 'Add stock' : 'Issue material');
     const fields = { quantity: qty, entry_date: date, note };
-    if (isIn) fields.rate = rate;
+    if (isIn) Object.assign(fields, { rate, seller_name: sellerName, seller_contact: sellerContact });
     if (!isIn) fields.project_id = project;
 
     const form = h('form', { novalidate: true, class: 'project-form',
@@ -187,7 +225,7 @@
         showFieldErrors(form, {});
         saveBtn.disabled = true;
         const body = { quantity: qty.value, entry_date: date.value, note: note.value };
-        if (isIn) body.rate = rate.value;
+        if (isIn) Object.assign(body, { rate: rate.value, seller_name: sellerName.value, seller_contact: sellerContact.value });
         else body.project_id = project.value ? Number(project.value) : null;
         try {
           await api(`/api/inventory/materials/${material.id}/${isIn ? 'stock-in' : 'issue'}`, { method: 'POST', body });
@@ -204,9 +242,12 @@
       h('div', { class: 'form-grid' },
         field('quantity', 'Quantity', qty),
         isIn ? field('rate', 'Cost per unit', rate) : field('project_id', 'Project', project),
+        isIn ? field('seller_name', 'Seller name', sellerName) : null,
+        isIn ? field('seller_contact', 'Seller contact', sellerContact) : null,
         field('entry_date', 'Date', date),
         field('note', 'Note', note, { wide: true })),
-      h('div', { class: 'form-actions' }, saveBtn));
+      h('div', { class: 'form-actions' }, saveBtn),
+      isIn ? h('p', { class: 'hint' }, "You can attach the bill afterwards, from the material's history, once you have it to hand.") : null);
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' },

@@ -3,9 +3,10 @@
 {% block body_class %}page-plain{% endblock %}
 
 {% block page_title %}Inventory{% endblock %}
-{# A way back to Me only when there's no bottom nav to provide one - otherwise Inventory is its own tab
-   and the back chevron is redundant. #}
-{% block hub_back %}{% if not bottom_nav %}{{ super() }}{% endif %}{% endblock %}
+{# Unlike Clients/Projects, Inventory is more than one level deep (list -> material -> stock-in/issue), so
+   the chevron stays even with the bottom nav there - inventory.js points it at the material or the list
+   as you go, same as it does on Workforce/People's own sub-screens. #}
+{% block hub_back %}{{ super() }}{% endblock %}
 
 {% block actions %}
   <a class="btn primary appbar-primary" href="/inventory#new">+ Material</a>

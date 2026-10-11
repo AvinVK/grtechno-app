@@ -1,6 +1,8 @@
 """Inventory: materials, their stock/cost, and the stock-in / issue ledger that moves them. Admin only,
 for now - see app/reference_data.ADMIN_ONLY_MODULES."""
 
+import io
+
 from app.extensions import db
 from app.models import Material
 
@@ -125,3 +127,70 @@ def test_issuing_needs_a_real_project(admin_client):
     assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
     res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1})
     assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
+
+
+# ---------- who it was bought from, and the bill ----------
+
+def test_stock_in_records_the_seller(admin_client):
+    material = add_material(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={
+        "quantity": 100, "rate": 10, "seller_name": "Shree Building Supplies", "seller_contact": "9876543210",
+    })
+    assert res.status_code == 201
+    movement = res.get_json()["movement"]
+    assert movement["seller_name"] == "Shree Building Supplies" and movement["seller_contact"] == "9876543210"
+    assert movement["bill_url"] is None
+
+    history = admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()["movements"]
+    assert history[0]["seller_name"] == "Shree Building Supplies"
+
+
+def test_issuing_never_carries_a_seller(admin_client):
+    material = add_material(admin_client)
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    pid = add_project(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
+    movement = res.get_json()["movement"]
+    assert movement["seller_name"] == "" and movement["seller_contact"] == "" and movement["bill_url"] is None
+
+
+def test_bill_can_be_uploaded_viewed_and_removed(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
+    movement_id = stocked.get_json()["movement"]["id"]
+
+    bill = (io.BytesIO(b"%PDF-1.4 fake bill"), "bill.pdf")
+    up = admin_client.post(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill",
+                            data={"bill": bill}, content_type="multipart/form-data")
+    assert up.status_code == 201
+    url = up.get_json()["movement"]["bill_url"]
+    assert url and url.startswith("/uploads/materials/")
+    assert admin_client.get(url).status_code == 200                     # served back like a survey photo
+
+    deleted = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill")
+    assert deleted.status_code == 200 and deleted.get_json()["movement"]["bill_url"] is None
+
+
+def test_bill_upload_rejects_a_non_document_file(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
+    movement_id = stocked.get_json()["movement"]["id"]
+    bad = (io.BytesIO(b"not a document"), "notes.txt")
+    res = admin_client.post(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill",
+                             data={"bill": bad}, content_type="multipart/form-data")
+    assert res.status_code == 422
+
+
+def test_only_a_stock_in_entry_can_have_a_bill(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
+    pid = add_project(admin_client)
+    issued = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 1, "project_id": pid})
+    movement_id = issued.get_json()["movement"]["id"]
+    bill = (io.BytesIO(b"%PDF-1.4 fake bill"), "bill.pdf")
+    res = admin_client.post(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill",
+                             data={"bill": bill}, content_type="multipart/form-data")
+    assert res.status_code == 422
