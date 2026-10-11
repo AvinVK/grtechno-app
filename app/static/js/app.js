@@ -1125,14 +1125,6 @@
     return finish;
   }
 
-  // The action a current step's card asks for - not the stage's own name, but what finishing it means.
-  const STAGE_ACTION_TITLE = {
-    'New enquiry': 'Book the site survey',
-    'Site survey': 'Send the quote',
-    'Quote sent': 'Log a negotiation round',
-    Negotiation: 'Record the work order',
-    'Work order & advance': 'Mark won',
-  };
   // Why a not-yet-reached step is waiting - each names the step right before it.
   const UPCOMING_REASON = {
     'Site survey': 'After the enquiry is logged',
@@ -1199,7 +1191,7 @@
     return h('div', { class: 'current-card', id: `lead-stage-current-${stageIndex}` },
       h('div', { class: 'current-card-head' },
         h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(stageIndex + 1)),
-        h('h3', {}, STAGE_ACTION_TITLE[stageName] || stageName)),
+        h('h3', {}, stageName)),
       body || h('p', { class: 'hint' }, 'Nothing to fill in here yet.'));
   }
 
@@ -1325,9 +1317,13 @@
     // Mark won only once the deal is actually being negotiated, not from New enquiry onward - and only
     // for the admin, since it's the step that maps the lead to a client. Mark lost has no such gate.
     const canMarkWon = S.me.is_admin && STAGE_ORDER.indexOf(lead.stage) >= STAGE_ORDER.indexOf('Negotiation');
+    // Once the work order itself is saved, Won is actually reachable (the server's own gate) - that's its
+    // own prominent Mark won / Mark lost row further down then, not tucked in this menu alongside Edit
+    // contact.
+    const workOrderSaved = isOpen(lead) && !!lead.work_order_no;
     const menuActions = [
-      !closedLead && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
-      !closedLead ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
+      !closedLead && !workOrderSaved && canMarkWon ? { label: 'Mark won', run: () => markOutcome('Won') } : null,
+      !closedLead && !workOrderSaved ? { label: 'Mark lost', danger: true, run: () => markOutcome('Lost') } : null,
       {
         label: 'Edit contact',
         run: () => {
@@ -1337,6 +1333,9 @@
         },
       },
     ].filter(Boolean);
+    const outcomeRow = workOrderSaved ? h('div', { class: 'outcome-row' },
+      S.me.is_admin ? h('button', { class: 'btn ok-solid', type: 'button', onclick: () => markOutcome('Won') }, 'Mark won') : null,
+      h('button', { class: 'btn danger-solid', type: 'button', onclick: () => markOutcome('Lost') }, 'Mark lost')) : null;
     const moreBtn = h('button', {
       class: 'btn small', type: 'button', 'aria-label': 'More actions', onclick: () => actionSheet(menuActions),
     }, '⋯');
@@ -1363,8 +1362,9 @@
       leadProgress(lead, next),
       projectBox(lead),
       finishedRows.length ? h('div', { class: 'card-group step-list' }, finishedRows) : null,
+      outcomeRow,
       currentCard,
-      closedLead ? null : saveBtn,
+      currentCard ? saveBtn : null,
       upcomingRows.length ? h('div', {}, upcomingRows) : null,
       followupCard(lead, dateInput, saveBtn),
       form,
