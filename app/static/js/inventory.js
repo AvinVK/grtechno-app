@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, confirm, plural, money, field, showFieldErrors, selectField, dateField } = window.LD;
+  const { $, h, clear, api, toast, confirm, plural, money, field, showFieldErrors, selectField, dateField, closeOnBack } = window.LD;
 
   const view = $('#view');
   const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -94,7 +94,9 @@
       };
       return h('label', { class: 'link-btn' }, 'Add bill', fileInput);
     }
-    return h('span', { class: 'bill-links' },
+    // Siblings, not wrapped in their own .bill-links span - movementRow puts the whole action row
+    // (bill controls plus Edit/Delete) in one shared one below.
+    return [
       h('a', { href: mv.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill'),
       h('button', {
         type: 'button', class: 'link-btn', onclick: async () => {
@@ -106,7 +108,60 @@
             onChanged();
           } catch (err) { toast(err.message, true); }
         },
-      }, 'Remove'));
+      }, 'Remove'),
+    ];
+  }
+
+  // A bulk-entry typo happens on quantity (and, for a stock-in, cost) more than anything else - this is a
+  // small sheet, not the full add form, so fixing one is quick. Everything else on the entry is carried
+  // over unchanged.
+  function editMovementSheet(materialId, mv, onSaved) {
+    const isIn = mv.kind === 'in';
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.quantity });
+    const rate = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.rate }) : null;
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      const body = isIn
+        ? { quantity: qty.value, rate: rate.value, supplier_id: mv.supplier_id, bill_no: mv.bill_no,
+            payment_mode: mv.payment_mode, gst_percent: mv.gst_percent, note: mv.note, entry_date: mv.entry_date }
+        : { quantity: qty.value, project_id: mv.project_id, given_by_worker_id: mv.given_by_worker_id,
+            note: mv.note, entry_date: mv.entry_date };
+      try {
+        await api(`/api/inventory/materials/${materialId}/movements/${mv.id}`, { method: 'PATCH', body });
+        finish();
+        toast('Entry updated');
+        onSaved();
+      } catch (err) {
+        errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, isIn ? 'Edit stock in' : 'Edit issue'),
+      field('quantity', 'Quantity', qty),
+      isIn ? field('rate', 'Purchase cost', rate) : null,
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+    qty.focus();
+  }
+
+  async function deleteMovement(materialId, mv, onChanged) {
+    const ok = await confirm(`Delete this ${mv.kind === 'in' ? 'stock-in' : 'issue'} entry? Stock and average cost will be recalculated.`, { ok: 'Delete', danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/inventory/materials/${materialId}/movements/${mv.id}`, { method: 'DELETE' });
+      toast('Entry deleted');
+      onChanged();
+    } catch (err) { toast(err.message, true); }
   }
 
   function movementRow(materialId, mv, currency, onChanged) {
@@ -119,7 +174,10 @@
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, `${mv.quantity} ${isIn ? 'at ' + money(mv.rate, currency) : ''}`.trim()),
         h('span', { class: 'row-sub' }, [fmtDate(mv.entry_date), mv.project_title ? `${mv.project_code} · ${mv.project_title}` : null, ...extra, mv.note || null, mv.created_by_name ? `by ${mv.created_by_name}` : null].filter(Boolean).join(' · ')),
-        isIn ? billControl(materialId, mv, onChanged) : null),
+        h('span', { class: 'bill-links' },
+          isIn ? billControl(materialId, mv, onChanged) : null,
+          h('button', { type: 'button', class: 'link-btn', onclick: () => editMovementSheet(materialId, mv, onChanged) }, 'Edit'),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => deleteMovement(materialId, mv, onChanged) }, 'Delete'))),
       h('span', { class: 'row-value' }, money(isIn ? mv.total_cost : mv.amount, currency)));
   }
 

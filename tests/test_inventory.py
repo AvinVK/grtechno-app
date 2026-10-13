@@ -305,3 +305,97 @@ def test_only_a_stock_in_entry_can_have_a_bill(admin_client):
     res = admin_client.post(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill",
                              data={"bill": bill}, content_type="multipart/form-data")
     assert res.status_code == 422
+
+
+# ---------- fixing a bulk-entry mistake: edit or delete a saved entry ----------
+
+def test_editing_a_stock_ins_quantity_and_rate_reblends_the_average(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
+    movement_id = stocked.get_json()["movement"]["id"]
+    # typed 100 @ 10 by mistake - fix it to 50 @ 20
+    res = admin_client.patch(f"/api/inventory/materials/{mid}/movements/{movement_id}", json={"quantity": 50, "rate": 20})
+    assert res.status_code == 200, res.get_json()
+    m = res.get_json()["material"]
+    assert m["stock_qty"] == 50 and m["avg_rate"] == 20
+    movement = res.get_json()["movement"]
+    assert movement["quantity"] == 50 and movement["rate"] == 20 and movement["amount"] == 1000
+
+
+def test_editing_a_stock_in_recomputes_gst_from_the_new_amount(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 10, "gst_percent": 18})
+    movement_id = stocked.get_json()["movement"]["id"]
+    res = admin_client.patch(f"/api/inventory/materials/{mid}/movements/{movement_id}", json={"quantity": 20, "rate": 10, "gst_percent": 18})
+    assert res.status_code == 200
+    movement = res.get_json()["movement"]
+    assert movement["amount"] == 200 and movement["gst_amount"] == 36 and movement["total_cost"] == 236
+
+
+def test_editing_an_issues_quantity_adjusts_stock_without_touching_rate(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
+    pid = add_project(admin_client)
+    issued = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 10, "project_id": pid})
+    movement_id = issued.get_json()["movement"]["id"]
+    res = admin_client.patch(f"/api/inventory/materials/{mid}/movements/{movement_id}", json={"quantity": 30, "project_id": pid})
+    assert res.status_code == 200, res.get_json()
+    m = res.get_json()["material"]
+    assert m["stock_qty"] == 70 and m["avg_rate"] == 10
+
+
+def test_editing_a_stock_in_that_would_leave_a_later_issue_short_is_refused(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
+    movement_id = stocked.get_json()["movement"]["id"]
+    pid = add_project(admin_client)
+    admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 80, "project_id": pid})
+    # shrinking the stock-in to 50 would leave the 80-unit issue short
+    res = admin_client.patch(f"/api/inventory/materials/{mid}/movements/{movement_id}", json={"quantity": 50, "rate": 10})
+    assert res.status_code == 422
+    with admin_client.application.app_context():
+        assert db.session.get(Material, mid).stock_qty == 20          # untouched by the refused edit
+
+
+def test_deleting_a_stock_in_entry_removes_it_and_recomputes_stock(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    first = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
+    first_id = first.get_json()["movement"]["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 50, "rate": 40})
+
+    res = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{first_id}")
+    assert res.status_code == 200, res.get_json()
+    m = res.get_json()["material"]
+    assert m["stock_qty"] == 50 and m["avg_rate"] == 40                # only the second stock-in remains
+    history = admin_client.get(f"/api/inventory/materials/{mid}").get_json()["movements"]
+    assert len(history) == 1
+
+
+def test_deleting_a_stock_in_that_a_later_issue_depends_on_is_refused(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
+    movement_id = stocked.get_json()["movement"]["id"]
+    pid = add_project(admin_client)
+    admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 10, "project_id": pid})
+    res = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{movement_id}")
+    assert res.status_code == 422
+    with admin_client.application.app_context():
+        assert db.session.get(Material, mid).stock_qty == 90
+
+
+def test_deleting_an_issue_restores_the_stock(admin_client):
+    material = add_material(admin_client)
+    mid = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
+    pid = add_project(admin_client)
+    issued = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 30, "project_id": pid})
+    movement_id = issued.get_json()["movement"]["id"]
+    res = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{movement_id}")
+    assert res.status_code == 200
+    assert res.get_json()["material"]["stock_qty"] == 100

@@ -124,6 +124,48 @@ def _apply_stock_in(material, data):
     return movement
 
 
+def _validate_given_by(payload, f):
+    given_by_worker_id = payload.get("given_by_worker_id")
+    if given_by_worker_id not in (None, ""):
+        worker = db.session.get(Worker, int(given_by_worker_id)) if str(given_by_worker_id).isdigit() else None
+        if worker is None:
+            f.errors["given_by_worker_id"] = "Pick who gave it out"
+        else:
+            f.data["given_by_worker_id"] = worker.id
+
+
+class _NegativeStock(Exception):
+    """Raised mid-replay (see _recompute_material) - editing or deleting one entry can make a later issue
+    exceed what's actually left in stock at that point, even if the material's final stock_qty would still
+    come out non-negative overall."""
+
+
+def _recompute_material(material):
+    """Rebuild stock_qty/avg_rate (and, since an issue draws down at whatever the average happened to be at
+    the time, every issue's own rate/amount snapshot) from scratch by replaying every movement for this
+    material in date order. Needed after editing or deleting any one entry - avg_rate is a running weighted
+    average, so touching one entry can change every average calculated after it, not just that row."""
+    movements = (MaterialMovement.query.filter_by(material_id=material.id)
+                 .order_by(MaterialMovement.entry_date, MaterialMovement.id).all())
+    stock_qty = Decimal("0")
+    avg_rate = Decimal("0")
+    for mv in movements:
+        if mv.kind == "in":
+            new_qty = stock_qty + mv.quantity
+            if new_qty > 0:
+                avg_rate = ((stock_qty * avg_rate) + (mv.quantity * mv.rate)) / new_qty
+                avg_rate = avg_rate.quantize(Decimal("0.01"))
+            stock_qty = new_qty
+        else:
+            if mv.quantity > stock_qty:
+                raise _NegativeStock
+            mv.rate = avg_rate
+            mv.amount = (mv.quantity * avg_rate).quantize(Decimal("0.01"))
+            stock_qty -= mv.quantity
+    material.stock_qty = stock_qty
+    material.avg_rate = avg_rate
+
+
 def _movement_fields(payload, *, needs_project):
     f = Fields(payload)
     f.money("quantity", nullable=False)
@@ -289,13 +331,7 @@ def issue(material_id):
     f = _movement_fields(payload, needs_project=True)
     if f.data.get("quantity") is not None and f.data["quantity"] > material.stock_qty:
         f.errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
-    given_by_worker_id = payload.get("given_by_worker_id")
-    if given_by_worker_id not in (None, ""):
-        worker = db.session.get(Worker, int(given_by_worker_id)) if str(given_by_worker_id).isdigit() else None
-        if worker is None:
-            f.errors["given_by_worker_id"] = "Pick who gave it out"
-        else:
-            f.data["given_by_worker_id"] = worker.id
+    _validate_given_by(payload, f)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     qty, rate = f.data["quantity"], material.avg_rate
@@ -308,3 +344,66 @@ def issue(material_id):
     db.session.add(movement)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
+
+
+@bp.patch("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>")
+def update_movement(material_id, movement_id):
+    """Fix a bulk-entry mistake on an already-saved stock-in or issue - quantity and (for a stock-in) cost
+    are the usual culprits, but everything on the entry can be corrected. stock_qty/avg_rate (and every
+    later issue's own rate snapshot) are rebuilt from scratch afterwards - see _recompute_material."""
+    material = _material_or_404(material_id)
+    movement = _movement_or_404(material, movement_id)
+    payload = _payload()
+    if movement.kind == "in":
+        f, _ = _supply_fields(payload, require_quantity=True)
+        if f.errors:
+            return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+        amount = f.data["quantity"] * f.data["rate"]
+        gst_percent = f.data.get("gst_percent") or Decimal("0")
+        gst_amount = (amount * gst_percent / Decimal("100")).quantize(Decimal("0.01"))
+        movement.quantity = f.data["quantity"]
+        movement.rate = f.data["rate"]
+        movement.amount = amount
+        movement.entry_date = f.data["entry_date"]
+        movement.note = f.data.get("note", "")
+        movement.supplier_id = f.data.get("supplier_id")
+        movement.bill_no = f.data.get("bill_no", "")
+        movement.payment_mode = f.data.get("payment_mode", "")
+        movement.gst_percent = gst_percent
+        movement.gst_amount = gst_amount
+        movement.total_cost = amount + gst_amount
+    else:
+        f = _movement_fields(payload, needs_project=True)
+        _validate_given_by(payload, f)
+        if f.errors:
+            return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+        movement.quantity = f.data["quantity"]
+        movement.project_id = f.data["project_id"]
+        movement.entry_date = f.data["entry_date"]
+        movement.note = f.data.get("note", "")
+        movement.given_by_worker_id = f.data.get("given_by_worker_id")
+    try:
+        _recompute_material(material)
+    except _NegativeStock:
+        db.session.rollback()
+        return jsonify(error="That leaves an issue later on exceeding what was in stock at the time - check the quantities around it."), 422
+    db.session.commit()
+    return jsonify(material=material.to_dict(), movement=movement.to_dict())
+
+
+@bp.delete("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>")
+def delete_movement(material_id, movement_id):
+    """Remove a bulk-entry mistake entirely, same recompute as update_movement above."""
+    material = _material_or_404(material_id)
+    movement = _movement_or_404(material, movement_id)
+    bill_filename = movement.bill_filename
+    db.session.delete(movement)
+    try:
+        _recompute_material(material)
+    except _NegativeStock:
+        db.session.rollback()
+        return jsonify(error="Can't delete that - a later issue would exceed what was left in stock without it."), 422
+    db.session.commit()
+    if bill_filename:          # only delete the actual file once the row's gone for good, not before
+        delete_upload("materials", bill_filename)
+    return jsonify(material=material.to_dict())

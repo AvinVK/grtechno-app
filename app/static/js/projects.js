@@ -540,12 +540,15 @@
     const ovNegotiated = h('dd', {}, '—');
     const ovAdvance = h('dd', {}, '—');
     const ovRemaining = h('dd', {}, '—');
-    // Projects that didn't come from a lead have no negotiated amount to start from - offer to take the
-    // total of their payments as it, rather than leaving Remaining stuck on a dash.
-    const fillBtn = h('button', { class: 'link-btn fill-amount-btn', type: 'button', hidden: netValue !== null }, 'Fill amount');
+    // Projects that didn't come from a lead have no negotiated amount to start from - offer to fill one in
+    // rather than leaving Remaining stuck on a dash. Once there is one, it stays editable (not just
+    // fillable) - a wrong figure typed in, here or carried over from the lead, needs a way to be corrected.
+    // Only while there's no final amount yet though - once that's set, it's what actually governs Remaining
+    // (see net_amount), so editing the negotiated amount under it wouldn't change anything.
+    const fillBtn = h('button', { class: 'link-btn fill-amount-btn', type: 'button', hidden: P.final_amount != null }, netValue === null ? 'Fill amount' : 'Edit');
     fillBtn.onclick = () => {
       const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-      const input = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', id: 'f-negotiated_amount' });
+      const input = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', id: 'f-negotiated_amount', value: P.estimated_amount ?? '' });
       const errEl = h('p', { class: 'err', role: 'alert' });
       const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
       const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save');
