@@ -62,6 +62,43 @@ def test_the_admin_itself_gets_no_worker(admin_client, admin, app):
         assert Worker.query.filter_by(user_code=admin.code).first() is None
 
 
+def test_activating_links_to_an_already_existing_worker_with_the_same_name_instead_of_duplicating(admin_client, anon, app):
+    """E.g. someone already tracked from the WhatsApp attendance import, later also given a login - should
+    end up as one Employee management row, not two. Matched case-insensitively (the User form and the
+    WhatsApp import rarely agree on capitalisation)."""
+    with app.app_context():
+        existing = Worker(name="Ashish Sutone", category="manpower", source="whatsapp")
+        db.session.add(existing)
+        db.session.commit()
+        existing_id = existing.id
+
+    res = admin_client.post("/api/users", json={"name": "ashish sutone", "role": "sales_field"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
+
+    with app.app_context():
+        assert Worker.query.filter(db.func.lower(Worker.name) == "ashish sutone").count() == 1
+        worker = db.session.get(Worker, existing_id)
+        assert worker.user_code == body["user"]["code"] and worker.source == "whatsapp"
+        assert worker.role_key == "sales_field"
+
+
+def test_an_ambiguous_name_match_creates_a_new_worker_instead_of_guessing(admin_client, anon, app):
+    with app.app_context():
+        db.session.add(Worker(name="Common Name", category="manpower", source="whatsapp"))
+        db.session.add(Worker(name="Common Name", category="manpower", source="whatsapp"))
+        db.session.commit()
+
+    res = admin_client.post("/api/users", json={"name": "Common Name", "role": "sales_field"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
+
+    with app.app_context():
+        assert Worker.query.filter(db.func.lower(Worker.name) == "common name").count() == 3
+        new_worker = Worker.query.filter_by(user_code=body["user"]["code"]).first()
+        assert new_worker is not None and new_worker.source == "user_account"
+
+
 def test_changing_a_pending_users_role_does_not_create_a_worker_yet(admin_client, app):
     res = admin_client.post("/api/users", json={"name": "Still Pending", "role": "sales_field"})
     code = res.get_json()["user"]["code"]

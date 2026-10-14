@@ -113,16 +113,26 @@ def sync_worker_for_user(user: User) -> None:
     added and never activated (declined the job, a typo'd duplicate...) shouldn't clutter Employee
     management with a row that never becomes a real person. Also called whenever their role changes, so
     the two stay in step from then on; never deletes or turns one off from here - a user's own attendance/
-    HR history on the Worker side shouldn't disappear just because their login does."""
+    HR history on the Worker side shouldn't disappear just because their login does.
+
+    Before creating a new row, checks for an already-existing Worker with the same name that has no User
+    of its own yet (typically someone already tracked from the WhatsApp attendance import, now also given
+    a login) and links to that one instead - otherwise the same real person ends up listed twice. Only
+    when the name matches exactly one such Worker; an ambiguous or absent match still gets a new row."""
     if user.is_admin or not user.password_hash:
         return
     worker = Worker.query.filter_by(user_code=user.code).first()
     if worker is None:
-        db.session.add(Worker(name=user.name, role_key=user.role_key, category="staff",
-                               source="user_account", user_code=user.code))
-    else:
-        worker.name = user.name
-        worker.role_key = user.role_key
+        candidates = Worker.query.filter(
+            Worker.user_code.is_(None), db.func.lower(Worker.name) == user.name.strip().lower(),
+        ).all()
+        worker = candidates[0] if len(candidates) == 1 else None
+        if worker is None:
+            worker = Worker(category="staff", source="user_account")
+            db.session.add(worker)
+        worker.user_code = user.code
+    worker.name = user.name
+    worker.role_key = user.role_key
 
 
 def find_user(userid_text: str):
