@@ -286,20 +286,27 @@
       notes: (() => { const t = h('textarea', { rows: 3 }); t.value = M.notes ?? ''; return t; })(),
     };
 
-    // Supply detail - this material's first purchase, optional (leave quantity blank to add it with no
-    // stock yet). Same shape as the Stock-in form's own supply fields, see movementForm below.
-    const currency = isAdd ? data.currency : '';
-    const qty = isAdd ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' }) : null;
-    const rate = isAdd ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit' }) : null;
-    const supplierSel = isAdd ? supplierPicker((data.suppliers || []).map((s) => ({ value: s.id, label: s.name })), '') : null;
-    const billNo = isAdd ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off' }) : null;
-    const paymentMode = isAdd ? selectField(PAYMENT_MODES, 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
-    const gstPercent = isAdd ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' }) : null;
-    const gstAmount = isAdd ? h('input', { type: 'text', disabled: true, value: money(0, currency) }) : null;
-    const totalCost = isAdd ? h('input', { type: 'text', disabled: true, value: money(0, currency) }) : null;
-    const remarks = isAdd ? h('input', { type: 'text', maxlength: 200, autocomplete: 'off' }) : null;
+    // Supply detail - on Add, this material's first purchase (optional, leave quantity blank to add it
+    // with no stock yet). On Edit, the same fields reopen for its one stock-in, when it has exactly one
+    // and nothing else has happened since (the overwhelmingly common case right after a bulk entry) - once
+    // there's more than one movement, which one "is" the material's purchase is ambiguous, so this stays
+    // material-only fields and the entries themselves are edited from History below instead.
+    const movements = (data && data.movements) || [];
+    const soleMovement = !isAdd && movements.length === 1 && movements[0].kind === 'in' ? movements[0] : null;
+    const showSupply = isAdd || !!soleMovement;
+    const SM = soleMovement || {};
+    const currency = data ? data.currency : '';
+    const qty = showSupply ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity', value: SM.quantity ?? '' }) : null;
+    const rate = showSupply ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit', value: SM.rate ?? '' }) : null;
+    const supplierSel = showSupply ? supplierPicker((data.suppliers || []).map((s) => ({ value: s.id, label: s.name })), SM.supplier_id ?? '') : null;
+    const billNo = showSupply ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off', value: SM.bill_no || '' }) : null;
+    const paymentMode = showSupply ? selectField(PAYMENT_MODES, SM.payment_mode || 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
+    const gstPercent = showSupply ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0', value: SM.gst_percent ?? '' }) : null;
+    const gstAmount = showSupply ? h('input', { type: 'text', disabled: true, value: money(SM.gst_amount || 0, currency) }) : null;
+    const totalCost = showSupply ? h('input', { type: 'text', disabled: true, value: money(SM.total_cost || 0, currency) }) : null;
+    const remarks = showSupply ? h('input', { type: 'text', maxlength: 200, autocomplete: 'off', value: SM.note || '' }) : null;
 
-    if (isAdd) {
+    if (showSupply) {
       const recalc = () => {
         const q = Number(qty.value) || 0;
         const r = Number(rate.value) || 0;
@@ -321,7 +328,7 @@
         errorBox.hidden = true;
         showFieldErrors(form, {});
         saveBtn.disabled = true;
-        if (isAdd && supplierSel.newSupplierName) {
+        if (showSupply && supplierSel.newSupplierName) {
           try {
             const created = await api('/api/inventory/suppliers', { method: 'POST', body: { name: supplierSel.newSupplierName } });
             data.suppliers.push(created.supplier);
@@ -334,16 +341,24 @@
             return;
           }
         }
-        const body = {};
-        for (const [name, el] of Object.entries(controls)) body[name] = el.value;
-        if (isAdd) Object.assign(body, {
+        const supplyBody = showSupply ? {
           quantity: qty.value, rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
           payment_mode: paymentMode.value, gst_percent: gstPercent.value || '0', note: remarks.value,
-        });
+        } : null;
+        const body = {};
+        for (const [name, el] of Object.entries(controls)) body[name] = el.value;
+        // Add material: the material and its optional first purchase are created together, in one call.
+        // Edit material: the material's own fields PATCH separately from its sole movement (a different
+        // row, its own endpoint) - the entry_date isn't shown here, so it's carried over unchanged.
+        if (isAdd && supplyBody) Object.assign(body, supplyBody);
         try {
           const saved = material
             ? await api(`/api/inventory/materials/${material.id}`, { method: 'PATCH', body })
             : await api('/api/inventory/materials', { method: 'POST', body });
+          if (!isAdd && soleMovement) {
+            await api(`/api/inventory/materials/${material.id}/movements/${soleMovement.id}`,
+              { method: 'PATCH', body: { ...supplyBody, entry_date: soleMovement.entry_date } });
+          }
           toast(material ? 'Material saved' : 'Material added');
           window.location.hash = `#m${saved.material.id}`;
         } catch (err) {
@@ -358,17 +373,20 @@
         field('name', 'Material name', controls.name, { wide: true }),
         field('unit', 'Unit', controls.unit),
         field('notes', 'Notes', controls.notes, { wide: true }),
-        isAdd ? field('quantity', 'Quantity', qty) : null,
-        isAdd ? field('rate', 'Purchase cost', rate) : null,
-        isAdd ? field('supplier_id', 'Supplier name', supplierSel) : null,
-        isAdd ? field('bill_no', 'Bill no', billNo) : null,
-        isAdd ? field('payment_mode', 'Credit or cash', paymentMode) : null,
-        isAdd ? field('gst_percent', 'GST %', gstPercent) : null,
-        isAdd ? field('gst_amount', 'GST amt', gstAmount) : null,
-        isAdd ? field('total_cost', 'Total cost', totalCost) : null,
-        isAdd ? field('note', 'Remarks', remarks, { wide: true }) : null),
+        showSupply ? field('quantity', 'Quantity', qty) : null,
+        showSupply ? field('rate', 'Purchase cost', rate) : null,
+        showSupply ? field('supplier_id', 'Supplier name', supplierSel) : null,
+        showSupply ? field('bill_no', 'Bill no', billNo) : null,
+        showSupply ? field('payment_mode', 'Credit or cash', paymentMode) : null,
+        showSupply ? field('gst_percent', 'GST %', gstPercent) : null,
+        showSupply ? field('gst_amount', 'GST amt', gstAmount) : null,
+        showSupply ? field('total_cost', 'Total cost', totalCost) : null,
+        showSupply ? field('note', 'Remarks', remarks, { wide: true }) : null),
       h('div', { class: 'form-actions' }, saveBtn),
-      isAdd ? h('p', { class: 'hint' }, 'Leave quantity blank to add the material with no stock yet - you can stock it in later.') : null);
+      isAdd ? h('p', { class: 'hint' }, 'Leave quantity blank to add the material with no stock yet - you can stock it in later.') : null,
+      !isAdd && !showSupply && movements.length
+        ? h('p', { class: 'hint' }, 'This material has more than one stock-in or issue entry, so edit those individually from its history.')
+        : null);
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, material ? 'Edit material' : 'Add material')),
@@ -392,7 +410,7 @@
       showBack(true);
       showAddLink(true);
       LD.setAppbarBack?.(data.material.name, `#m${id}`);
-      materialForm(data.material);
+      materialForm(data.material, data);
     } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); }
   }
 
