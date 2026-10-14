@@ -18,18 +18,24 @@
 </div>
 {%- endmacro %}
 
-{# Admin only - the pages themselves check again on the server; hiding a link is not access control. #}
-{% macro manage() -%}
-{% if current_user.is_admin %}
+{# Gated by the "users"/"workforce" modules (app/modules.py check_module) - the admin always sees both;
+   everyone else only the ones their role has (e.g. Accountant sees both, but look-only - the pages
+   themselves enforce that, not this link). Hiding a link here is not access control on its own. #}
+{% macro manage(can_see_users=False, can_see_workforce=False) -%}
+{% set show_users = current_user.is_admin or can_see_users %}
+{% set show_workforce = current_user.is_admin or can_see_workforce %}
+{% if show_users or show_workforce %}
 <section class="me-section" aria-labelledby="me-manage">
-  <div class="me-section-head"><h2 id="me-manage">Manage</h2><span class="chip chip-role">Admin</span></div>
+  <div class="me-section-head"><h2 id="me-manage">Manage</h2>{% if current_user.is_admin %}<span class="chip chip-role">Admin</span>{% endif %}</div>
   <div class="card-group me-rows">
-    {% for endpoint, ic, text in [
-      ('users_page.page', 'user', 'Users & roles'),
-      ('workers_page.workforce_page', 'manpower', 'Employee management'),
-      ('workers_page.sheet_page', 'attendance', 'Attendance sheet'),
+    {% for endpoint, ic, text, shown in [
+      ('users_page.page', 'user', 'Users & roles', show_users),
+      ('workers_page.workforce_page', 'manpower', 'Employee management', show_workforce),
+      ('workers_page.sheet_page', 'attendance', 'Attendance sheet', show_workforce),
     ] %}
+    {% if shown %}
     <a class="me-row" href="{{ url_for(endpoint) }}">{{ icon(ic) }}<span>{{ text }}</span><span class="me-chevron" aria-hidden="true">›</span></a>
+    {% endif %}
     {% endfor %}
   </div>
 </section>

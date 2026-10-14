@@ -1,4 +1,4 @@
-from flask import Blueprint, g, jsonify, render_template
+from flask import Blueprint, g, jsonify, render_template, request
 from sqlalchemy import func
 from werkzeug.exceptions import HTTPException, abort
 
@@ -6,6 +6,7 @@ from .api import _payload
 from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code, sync_worker_for_user
 from .extensions import db
 from .models import Lead, Role, User, UserState, utcnow
+from .modules import can_write, check_module
 from .reference_data import INDIAN_STATES
 
 bp = Blueprint("users", __name__, url_prefix="/api/users")
@@ -18,20 +19,22 @@ def json_error(err):
 
 
 @bp.before_request
-def admin_only():
-    if not g.user or not g.user.is_admin:
-        abort(403, "Only the admin can do this.")
+def _access():
+    # Everyone with the "users" module can look (Accountant, Office Assistant); changing anything needs
+    # write access too (everyone else who has the module at all, plus the real admin always).
+    check_module("users", write=request.method != "GET")
 
 
 @page_bp.before_request
-def admin_only_page():
-    if not g.user or not g.user.is_admin:
-        abort(403, "Only the admin can open this page.")
+def _page_access():
+    check_module("users")
 
 
 @page_bp.get("/users")
 def page():
-    return render_template("users.html", page_title="Users & roles")
+    # Hiding Add/Edit/etc. for a look-only role (Accountant, Office Assistant) is just so the buttons
+    # aren't there to tap in the first place - the API enforces this regardless (see _access above).
+    return render_template("users.html", page_title="Users & roles", can_write=can_write(g.user, "users"))
 
 
 def _dict(user: User, lead_count: int = 0) -> dict:

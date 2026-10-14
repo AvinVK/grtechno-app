@@ -38,10 +38,20 @@ def by_name(rows):
 
 # ---------- pages ----------
 
-def test_pages_and_api_are_admin_only(client, manager_client, accounts_client, admin_client, anon):
-    for who in (client, manager_client, accounts_client):
+def test_pages_and_api_are_role_gated(client, manager_client, accounts_client, admin_client, anon):
+    """Gated by the "workforce" module - Sales field and Project manager have no access at all; Accountant
+    can look (GET) but not touch (kohal's access matrix, 2026-10-14) - used to be admin-only outright,
+    before any role had it."""
+    for who in (client, manager_client):
         for url in ("/workforce", "/attendance-sheet", "/api/workforce", "/api/workforce/1"):
             assert who.get(url).status_code == 403
+
+    assert accounts_client.get("/workforce").status_code == 200
+    assert accounts_client.get("/attendance-sheet").status_code == 200
+    assert accounts_client.get("/api/workforce").status_code == 200
+    assert accounts_client.get("/api/workforce/1").status_code == 404         # module access granted, no such worker
+    assert accounts_client.patch("/api/workforce/1", json={"name": "X"}).status_code == 403   # look, not touch
+
     assert anon.get("/workforce").status_code == 302 and anon.get("/api/workforce").status_code == 401
     roster = admin_client.get("/workforce").get_data(as_text=True)
     sheet = admin_client.get("/attendance-sheet").get_data(as_text=True)

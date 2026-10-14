@@ -132,10 +132,10 @@ def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
         assert ('id="appbar-back"' in html) == (url not in no_back), url
 
 
-def test_without_leads_other_pages_get_a_back_arrow_instead(manager_client):
-    html = manager_client.get("/clients").get_data(as_text=True)
+def test_without_leads_other_pages_get_a_back_arrow_instead(accounts_client):
+    html = accounts_client.get("/clients").get_data(as_text=True)
     assert 'id="appbar-back" href="/me"' in html and 'class="bottom-nav"' not in html
-    assert "appbar-back" not in manager_client.get("/me").get_data(as_text=True)
+    assert "appbar-back" not in accounts_client.get("/me").get_data(as_text=True)
 
 
 def test_hub_keeps_the_bottom_tabs_leading_back_into_leads(client):

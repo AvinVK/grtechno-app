@@ -147,9 +147,13 @@ def find_user(userid_text: str):
 
 
 def visible_leads():
-    """Leads the signed-in person may see: everything for the admin, otherwise only their own."""
+    """Leads the signed-in person may see: everything for the admin, any sees_all role (full admin-like
+    access - Company Director, Office Assistant cum client consultant) and Sales (office) specifically -
+    every lead, but deliberately not sees_all's wider powers (everyone's attendance and the right to
+    delete it, project-manager assignment) which they were never asked to have (kohal's access matrix,
+    2026-10-14). Otherwise only their own."""
     query = Lead.query
-    if not g.user.is_admin:
+    if not (g.user.is_admin or g.user.sees_all or g.user.role_key == "sales_office"):
         query = query.filter(Lead.owner_code == g.user.code)
     return query
 

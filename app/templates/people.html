@@ -5,6 +5,6 @@
 {% block page_title %}{{ page_title }}{% endblock %}
 
 {% block content %}
-<main id="view" class="view" tabindex="-1" data-mode="{{ mode }}"><p class="loading">Loading…</p></main>
+<main id="view" class="view" tabindex="-1" data-mode="{{ mode }}" data-can-write="{{ '1' if can_write else '0' }}"><p class="loading">Loading…</p></main>
 <script src="{{ asset('js/people.js') }}" defer></script>
 {% endblock %}

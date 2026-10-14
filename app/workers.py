@@ -1,15 +1,19 @@
-"""Employee management (admin only): field workers and office staff who don't sign in to the app, tracked
-instead from the WhatsApp group each marks their attendance in. Grouped by role - the same roles table
-Users & roles uses (minus 'admin') - rather than the old manpower/staff split (see Worker.category in
-models.py for why that split still exists in the database but not here). Attendance still only arrives
-through the WhatsApp import; every employee itself comes from either that import or from being added as a
-User in Users & roles (see app/auth.py sync_worker_for_user) - there's no separate "add employee" here any
-more. The admin can edit someone's name, role or HR details, or remove someone who left.
+"""Employee management: field workers and office staff who don't sign in to the app, tracked instead from
+the WhatsApp group each marks their attendance in. Grouped by role - the same roles table Users & roles
+uses (minus 'admin') - rather than the old manpower/staff split (see Worker.category in models.py for why
+that split still exists in the database but not here). Attendance still only arrives through the WhatsApp
+import; every employee itself comes from either that import or from being added as a User in Users & roles
+(see app/auth.py sync_worker_for_user) - there's no separate "add employee" here any more.
+
+Gated by the "workforce" module (app/modules.py), same as any other service - look-only for a role with
+read but not write access there (Accountant, Office Assistant: can't add, edit, remove, or change roles);
+everyone else who has it at all, and the real admin always, has both.
 
 Two pages under Manage share one script (people.js): "Employee management" (who's where, and the last
 week at a glance) and "Attendance sheet" (everyone ranked by attendance, lowest first, with each person's
-full day-by-day record). The older per-category JSON APIs (/api/workers, /api/staff) are kept as they
-were - they still use category, not role_key, since Leads still relies on them (see app/api.py)."""
+full day-by-day record). The older per-category JSON APIs (/api/workers, /api/staff) are kept exactly
+admin-only as they were - they still use category, not role_key, since Leads relies on them server-side,
+not through a browser session (see app/api.py)."""
 
 from datetime import date, timedelta
 
@@ -20,6 +24,7 @@ from werkzeug.exceptions import HTTPException, abort
 from .constants import PAYMENT_MODES
 from .extensions import db
 from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
+from .modules import can_write, check_module
 from .validation import Fields, parse_money
 
 EMPLOYMENT_TYPES = ("regular", "daily_wages")
@@ -44,26 +49,38 @@ def json_error(err):
 
 @bp.before_request
 @staff_bp.before_request
-@workforce_bp.before_request
 def admin_only():
+    # The older per-category APIs (/api/workers, /api/staff) aren't part of the role-based access rollout -
+    # Leads is the only thing that reads them, server-side, not through a browser session, so they stay
+    # exactly as locked down as they always were.
     if not g.user or not g.user.is_admin:
         abort(403, "Only the admin can do this.")
 
 
+@workforce_bp.before_request
+def _workforce_access():
+    # Everyone with the "workforce" module can look (Accountant, Office Assistant); changing anything
+    # needs write access too (everyone else who has the module at all, plus the real admin always).
+    check_module("workforce", write=request.method != "GET")
+
+
 @page_bp.before_request
-def admin_only_page():
-    if not g.user or not g.user.is_admin:
-        abort(403, "Only the admin can open this page.")
+def _page_access():
+    check_module("workforce")
 
 
 @page_bp.get("/workforce")
 def workforce_page():
-    return render_template("people.html", mode="roster", page_title="Employee management")
+    # Hiding Edit/Remove for a look-only role (Accountant, Office Assistant) is just so the buttons aren't
+    # there to tap in the first place - the API enforces this regardless (see _workforce_access above).
+    return render_template("people.html", mode="roster", page_title="Employee management",
+                            can_write=can_write(g.user, "workforce"))
 
 
 @page_bp.get("/attendance-sheet")
 def sheet_page():
-    return render_template("people.html", mode="sheet", page_title="Attendance sheet")
+    return render_template("people.html", mode="sheet", page_title="Attendance sheet",
+                            can_write=can_write(g.user, "workforce"))
 
 
 # The separate Manpower list and Staff list pages were folded into Employee management; old links still land.

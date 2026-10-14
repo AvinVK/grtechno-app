@@ -33,13 +33,14 @@ def seed_reference_data():
     db.session.add(Module(key="leads", name="Leads", icon="leads", path="/", sort_order=1))
     for key, name, icon, path, order in ref.NEW_MODULES:
         db.session.add(Module(key=key, name=name, icon=icon, path=path, sort_order=order,
-                               admin_only=key in ref.ADMIN_ONLY_MODULES))
+                               admin_only=key in ref.ADMIN_ONLY_MODULES, in_nav=key not in ref.NAV_HIDDEN_MODULES))
     for key, name, sees_all in ref.ROLES:
         db.session.add(Role(key=key, name=name, sees_all=sees_all))
     db.session.flush()
     for role, keys in ref.ROLE_MODULES.items():
         for module in keys:
-            db.session.add(RoleModule(role_key=role, module_key=module))
+            db.session.add(RoleModule(role_key=role, module_key=module,
+                                       write_access=(role, module) not in ref.READONLY_ROLE_MODULES))
     for i, name in enumerate(ref.SITE_CATEGORIES, start=1):
         db.session.add(SiteCategory(name=name, sort_order=i))
     db.session.commit()

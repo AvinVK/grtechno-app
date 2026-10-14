@@ -66,6 +66,10 @@
   };
 
   function usersView() {
+    // A look-only role (Accountant, Office Assistant) still sees the list, just none of the buttons that
+    // would change something - the API refuses those regardless (see app/users.py), this just saves them
+    // tapping something that was only ever going to come back "Your role can only view this".
+    const canWrite = $('#view').dataset.canWrite === '1';
     const wrap = h('div', { class: 'users' });
     const listBox = h('div', { class: 'user-list card-group' }, h('p', { class: 'loading' }, 'Loading users…'));
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
@@ -164,7 +168,7 @@
           act(`/api/users/${u.code}/states`, { states }, null, () => toast(`${u.name}'s states updated`));
         },
       }, u.states.length ? `States: ${u.states.join(', ')}` : 'Choose states');
-      const actions = u.is_admin ? null : h('div', { class: 'user-actions' },
+      const actions = u.is_admin || !canWrite ? null : h('div', { class: 'user-actions' },
         roleControl(u),
         statesBtn,
         h('button', {
@@ -286,7 +290,7 @@
       addBtn,
       h('p', { class: 'hint' }, 'The role decides which services they can open. The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
 
-    wrap.append(form, resultBox, listBox);
+    wrap.append(...[canWrite ? form : null, resultBox, listBox].filter(Boolean));
     refresh();
     return wrap;
   }

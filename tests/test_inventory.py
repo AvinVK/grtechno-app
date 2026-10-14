@@ -35,10 +35,14 @@ def add_worker(admin_client, name="Ramesh Storekeeper"):
 
 # ---------- admin only ----------
 
-def test_only_the_admin_can_open_inventory(client, manager_client, accounts_client, admin_client):
-    for who in (client, manager_client, accounts_client):
+def test_inventory_is_role_gated(client, manager_client, accounts_client, admin_client):
+    """Sales field and project manager have no Inventory access; Accountant does (kohal's access matrix,
+    2026-10-14) - Inventory used to be admin-only outright, before any role had it."""
+    for who in (client, manager_client):
         assert who.get("/inventory").status_code == 403
         assert who.get("/api/inventory/materials").status_code == 403
+    assert accounts_client.get("/inventory").status_code == 200
+    assert accounts_client.get("/api/inventory/materials").status_code == 200
     assert admin_client.get("/inventory").status_code == 200
     assert admin_client.get("/api/inventory/materials").status_code == 200
 

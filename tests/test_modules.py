@@ -48,12 +48,22 @@ def test_no_page_has_a_menu_button_or_panel(client):
     assert 'href="/attendance"' in html
 
 
-def test_users_and_roles_is_only_in_the_admin_menu(client, admin_client, manager_client, accounts_client):
-    for who in (client, manager_client, accounts_client):                        # every non-admin role
+def test_users_and_roles_is_role_gated(client, admin_client, manager_client, accounts_client):
+    """Sales field and project manager have no Users & roles access at all; Accountant can look but not
+    touch (kohal's access matrix, 2026-10-14) - the page used to be admin-only outright, before any role
+    had it."""
+    for who in (client, manager_client):
         html = who.get("/me").get_data(as_text=True)
         assert 'href="/users"' not in html and "Users &amp; roles" not in html and ">Manage<" not in html
         assert who.get("/users").status_code == 403
         assert who.get("/api/users").status_code == 403
+
+    html = accounts_client.get("/me").get_data(as_text=True)
+    assert 'href="/users"' in html and "Users &amp; roles" in html
+    assert accounts_client.get("/users").status_code == 200
+    assert accounts_client.get("/api/users").status_code == 200
+    assert accounts_client.post("/api/users", json={"name": "Nope"}).status_code == 403   # look, not touch
+
     html = admin_client.get("/me").get_data(as_text=True)
     assert 'href="/users"' in html and "Users &amp; roles" in html
 

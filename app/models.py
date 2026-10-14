@@ -284,12 +284,15 @@ class Role(db.Model):
 
 
 class RoleModule(db.Model):
-    """Which services a role can open (the admin can open all of them)."""
+    """Which services a role can open (the admin can open all of them), and whether that's look-only -
+    Accountant and Office Assistant can open Users & roles and Employee management to see them, but not
+    add, edit or remove anything there; everywhere else write_access is left at its default, True."""
 
     __tablename__ = "role_modules"
 
     role_key = db.Column(db.String(30), db.ForeignKey("roles.key", ondelete="CASCADE"), primary_key=True)
     module_key = db.Column(db.String(30), db.ForeignKey("modules.key", ondelete="CASCADE"), primary_key=True)
+    write_access = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
 
 
 class Client(db.Model):
@@ -628,7 +631,10 @@ class SiteCategoryRequest(db.Model):
 
 
 class Module(db.Model):
-    """A service listed in the sidebar (Leads, later attendance, manpower, ...). Edited in the database."""
+    """A service listed in the sidebar (Leads, later attendance, manpower, ...). Edited in the database.
+    in_nav=False is for a permission gate that isn't one of those tiles - Users & roles and Employee
+    management live under their own "Manage" section on the Me hub instead (see _me_links.html), not mixed
+    in with Clients/Projects/etc.; check_module still works on them exactly the same way."""
 
     __tablename__ = "modules"
 
@@ -639,6 +645,7 @@ class Module(db.Model):
     sort_order = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
     admin_only = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    in_nav = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
 
 
 class Setting(db.Model):

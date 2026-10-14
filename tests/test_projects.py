@@ -1,7 +1,7 @@
 from datetime import date
 
 from app.extensions import db
-from app.models import Attendance, Client, Lead, Project, ProjectPayment, Service, User
+from app.models import Attendance, Client, Lead, Project, ProjectPayment, RoleModule, Service, User
 from conftest import make_user, signed_in, win_lead
 
 
@@ -206,7 +206,14 @@ def test_sales_person_sees_no_projects_module_but_conversion_still_works(client,
 
 # ---------- clients ----------
 
-def test_clients_list_and_edit(client, admin_client, manager_client, manager, accounts_client):
+def test_clients_list_and_edit(app, client, admin_client, manager_client, manager, accounts_client):
+    # visible_clients()'s "otherwise the ones they created plus the clients of projects they manage" branch
+    # needs a role with clients access that isn't sees_all or sub_admin to exercise - project_manager
+    # itself has no clients access by default any more (kohal's access matrix, 2026-10-14; see test_roles.py
+    # for that), so this test grants it just for itself to keep covering that scoping logic.
+    with app.app_context():
+        db.session.add(RoleModule(role_key="project_manager", module_key="clients"))
+        db.session.commit()
     pid = make_project(client, admin_client)
     cid = admin_client.get(f"/api/projects/{pid}").get_json()["client"]["id"]
     assert [c["name"] for c in admin_client.get("/api/clients").get_json()["clients"]] == ["Kalyani Cold Storage"]

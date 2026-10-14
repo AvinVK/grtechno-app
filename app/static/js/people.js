@@ -1,11 +1,13 @@
-/* Employee management, and the Attendance sheet (admin only): field workers and office staff who don't
-   sign in to the app, tracked from the WhatsApp groups they mark attendance in. Grouped by role - the
-   same roles table Users & roles uses (minus Admin) - not the old manpower/staff split. Both pages open
-   straight on the list of people, with a search and a chip for All and each role in use:
+/* Employee management, and the Attendance sheet: field workers and office staff who don't sign in to the
+   app, tracked from the WhatsApp groups they mark attendance in. Gated by the "workforce" module
+   (app/modules.py) - a look-only role (Accountant, Office Assistant) sees the list but not Edit/Remove,
+   data-can-write="0" on #view (the API enforces this regardless). Grouped by role - the same roles table
+   Users & roles uses (minus Admin) - not the old manpower/staff split. Both pages open straight on the
+   list of people, with a search and a chip for All and each role in use:
    - Employee management (data-mode="roster"): each person, where they worked on their most recent
-     working day, and the last 7 days as green (present) / red (absent) dots. Edit and Remove sit beside
-     each row; + Employee (top bar) adds one. A person's name opens a popup: their current site, average
-     hours, and the last 2 weeks as dates circled green or red.
+     working day, and the last 7 days as dots - green present, red absent, amber if they're checked in
+     right now. Edit and Remove sit beside each row, for a role with write access. A person's name opens a
+     popup: their current site, average hours, and the last 2 weeks as dates circled green or red.
    - Attendance sheet (data-mode="sheet"): everyone ranked by attendance, lowest first.
    On the sheet, a person opens their day-by-day record, laid out like Your attendance's history.
    Workers often work Sundays, so every day counts here (unlike Your attendance, which skips Sundays). The
@@ -16,6 +18,7 @@
   const { $, h, clear, api, plural, toast, confirm, field, showFieldErrors, selectField, dateField, money, closeOnBack } = window.LD;
   const view = $('#view');
   const mode = view.dataset.mode;
+  const canWrite = view.dataset.canWrite === '1';
   const UNASSIGNED = 'unassigned';
 
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -75,11 +78,11 @@
           h('span', { class: 'att-day-date' }, p.name),
           p.needs_details && !liveToday ? h('span', { class: 'chip chip-today' }, 'Needs details') : weekDots(p.week)),
         h('span', { class: 'att-day-sub' }, where)),
-      h('div', { class: 'people-row-actions' },
+      canWrite ? h('div', { class: 'people-row-actions' },
         h('button', { type: 'button', class: 'people-action-btn', 'aria-label': `Edit ${p.name}`, title: 'Edit',
           onclick: () => openEditPerson(p, roles, onChange) }, '✎'),
         h('button', { type: 'button', class: 'people-action-btn danger', 'aria-label': `Remove ${p.name}`, title: 'Remove',
-          onclick: () => deletePerson(p, { afterDelete: onChange }) }, '×')));
+          onclick: () => deletePerson(p, { afterDelete: onChange }) }, '×')) : null);
   }
 
   const groupLabel = (k, roles) => (k === UNASSIGNED ? 'Unassigned' : roles[k] || k);
@@ -243,11 +246,12 @@
     closeBtn.focus();
 
     api(`/api/workforce/${p.id}`)
-      .then((data) => clear(body).append(
+      .then((data) => clear(body).append(...[
         ...popupBody(p, data),
-        h('div', { class: 'fn-actions' },
+        canWrite ? h('div', { class: 'fn-actions' },
           h('button', { class: 'btn small', type: 'button', onclick: () => { close(); openEditPerson(p, roles, onChange); } }, 'Edit'),
-          h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(p, { afterDelete: () => { close(); onChange(); } }) }, 'Remove person'))))
+          h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(p, { afterDelete: () => { close(); onChange(); } }) }, 'Remove person')) : null,
+      ].filter(Boolean)))
       .catch((err) => clear(body).append(h('p', { class: 'empty-state' }, err.message)));
   }
 
@@ -726,9 +730,9 @@
         : null,
       ...(data.period ? weeks(data) : [h('p', { class: 'empty-state' }, 'No attendance recorded for this person.')]),
       dataNote(data),
-      h('div', { class: 'fn-actions fn-remove' },
+      canWrite ? h('div', { class: 'fn-actions fn-remove' },
         h('button', { class: 'btn small', type: 'button', onclick: () => openEditPerson(data.worker, data.roles, onChange) }, 'Edit'),
-        h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(data.worker, { afterDelete: onChange }) }, 'Remove employee'))));
+        h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(data.worker, { afterDelete: onChange }) }, 'Remove employee')) : null));
     window.scrollTo(0, 0);
   }
 

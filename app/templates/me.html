@@ -33,7 +33,7 @@
     {{ services(nav_modules, summaries) }}
   </section>
 
-  {{ manage() }}
+  {{ manage(can_see_users, can_see_workforce) }}
 
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}
   {% if current_user.is_admin %}

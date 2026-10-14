@@ -12,7 +12,7 @@ from .auth import visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
 from .extensions import db
 from .models import Attendance, Client, Lead, LeadSurvey, Project, SiteCategory, SiteCategoryRequest
-from .modules import modules_for
+from .modules import has_module, modules_for
 from .timeutil import today_local
 
 bp = Blueprint("me", __name__)
@@ -50,7 +50,11 @@ def _summaries(keys) -> dict:
 def page():
     keys = {m.key for m in modules_for(g.user)}
     return render_template("me.html", summaries=_summaries(keys),
-                           has_attendance="attendance" in keys and not g.user.is_admin)   # no check-in card for the admin
+                           has_attendance="attendance" in keys and not g.user.is_admin,   # no check-in card for the admin
+                           # Users & roles / Employee management aren't in_nav (see modules_for), so they
+                           # aren't in keys above - checked separately for the Me hub's own Manage section.
+                           can_see_users=has_module(g.user, "users"),
+                           can_see_workforce=has_module(g.user, "workforce"))
 
 
 @bp.get("/api/me")

@@ -35,7 +35,7 @@ def test_admin_can_change_a_users_role(admin_client, user, client):
     assert names(client) == ["Leads", "Attendance"]
     res = admin_client.post(f"/api/users/{user.code}/role", json={"role": "project_manager"})
     assert res.status_code == 200 and res.get_json()["user"]["role"] == "project_manager"
-    assert names(client) == ["Clients", "Projects", "Attendance"]                      # menu follows the role at once
+    assert names(client) == ["Projects", "Attendance"]                                 # menu follows the role at once
     assert admin_client.post(f"/api/users/{user.code}/role", json={"role": "admin"}).status_code == 422
     assert admin_client.post(f"/api/users/{user.code}/role", json={"role": "ghost"}).status_code == 422
 
@@ -54,25 +54,29 @@ def test_sales_cannot_open_clients_or_projects(client):
 
 
 def test_project_manager_cannot_open_lead_desk(manager_client):
-    assert names(manager_client) == ["Clients", "Projects", "Attendance"]
+    assert names(manager_client) == ["Projects", "Attendance"]                         # no clients any more
     assert manager_client.get("/export.csv").status_code == 403
     assert manager_client.get("/api/state").status_code == 403
     assert manager_client.get("/api/projects").status_code == 200
+    assert manager_client.get("/api/clients").status_code == 403
 
 
 def test_home_page_sends_people_to_a_service_they_can_use(manager_client, client, admin_client):
     home = manager_client.get("/")
-    assert home.status_code == 302 and home.headers["Location"].endswith("/clients")   # first of their services
+    assert home.status_code == 302 and home.headers["Location"].endswith("/projects")  # first of their services
     assert client.get("/").status_code == 200                                          # sales: Leads itself
     assert admin_client.get("/").status_code == 200
 
 
-def test_supervisor_can_only_open_attendance(app):
+def test_supervisor_can_open_projects_and_attendance(app):
+    """Site supervisor = Projects and its attendance (kohal's access matrix, 2026-10-14) - used to be
+    attendance only, before any role had projects."""
     supervisor = signed_in(app, make_user("Site Sam", role="supervisor"))
-    assert names(supervisor) == ["Attendance"]
-    assert supervisor.get("/api/projects").status_code == 403
+    assert names(supervisor) == ["Projects", "Attendance"]
+    assert supervisor.get("/api/projects").status_code == 200
+    assert supervisor.get("/api/clients").status_code == 403
     home = supervisor.get("/")
-    assert home.status_code == 302 and home.headers["Location"].endswith("/attendance")
+    assert home.status_code == 302 and home.headers["Location"].endswith("/projects")
 
 
 def test_admin_opens_everything(admin_client):
@@ -80,12 +84,12 @@ def test_admin_opens_everything(admin_client):
 
 
 def test_roles_are_editable_in_the_database(app):
-    supervisor = signed_in(app, make_user("Site Sam", role="supervisor"))
-    assert supervisor.get("/api/projects").status_code == 403
-    db.session.add(RoleModule(role_key="supervisor", module_key="projects"))
+    welder = signed_in(app, make_user("Rafiq Welder", role="welder"))
+    assert welder.get("/api/projects").status_code == 403
+    db.session.add(RoleModule(role_key="welder", module_key="projects"))
     db.session.commit()
-    assert supervisor.get("/api/projects").status_code == 200
-    assert names(supervisor) == ["Projects", "Attendance"]
+    assert welder.get("/api/projects").status_code == 200
+    assert names(welder) == ["Projects", "Attendance"]
 
 
 def test_a_user_without_a_role_can_open_nothing(app, user):
@@ -178,6 +182,43 @@ def test_sub_admin_sees_only_their_assigned_states(app, admin_client):
     assert client_ids == {cid}
     assert sub_client.get(f"/api/clients/{cid}").status_code == 200
     assert sub_client.get(f"/api/clients/{cid2}").status_code == 404
+
+
+# ---------- the full access matrix (kohal's access matrix, 2026-10-14) ----------
+
+def test_sales_office_sees_every_lead_not_just_their_own(app):
+    from app.models import Lead
+    office = make_user("Office Sales", role="sales_office")
+    other_office = make_user("Other Office Sales", role="sales_office")
+    field = make_user("Field Sales", role="sales_field")
+    with app.app_context():
+        db.session.add(Lead(company="Someone Else's", contact_name="X", phone="9800000000", owner_code=other_office.code))
+        db.session.commit()
+    office_client = signed_in(app, office)
+    field_client = signed_in(app, field)
+    assert len(office_client.get("/api/state").get_json()["leads"]) == 1       # sees it despite not owning it
+    assert field_client.get("/api/state").get_json()["leads"] == []            # their own only, same as before
+    assert names(office_client) == ["Leads", "Attendance"]                     # no wider sees_all powers picked up
+    assert office_client.get("/api/attendance/team").status_code == 403
+
+
+def test_company_director_and_office_assistant_consultant_get_full_access(app):
+    for role in ("company_director", "office_assistant_consultant"):
+        who = signed_in(app, make_user(f"Test {role}", role=role))
+        assert names(who) == ["Leads", "Clients", "Projects", "Attendance", "Inventory"], role
+        assert who.get("/api/clients").status_code == 200
+        assert who.get("/api/projects").status_code == 200
+        assert who.get("/api/inventory/materials").status_code == 200
+        assert who.get("/users").status_code == 200
+        assert who.get("/workforce").status_code == 200
+        assert who.post("/api/roles", json={"name": f"Role for {role}"}).status_code == 403  # still not the admin
+
+
+def test_alarm_tech_cum_site_supervisor_matches_site_supervisor(app):
+    who = signed_in(app, make_user("Test Alarm Tech", role="alarm_tech_cum_site_supervisor"))
+    assert names(who) == ["Projects", "Attendance"]
+    assert who.get("/api/projects").status_code == 200
+    assert who.get("/api/clients").status_code == 403
 
 
 # ---------- adding a role on the fly (used by Add employee and Add user) ----------

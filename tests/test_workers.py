@@ -19,10 +19,15 @@ def make_worker(name="Sunny Pipe Welder GR", days_ago=(0, 1)):
 
 # ---------- admin only ----------
 
-def test_worker_list_page_and_api_are_admin_only(client, manager_client, accounts_client, admin_client):
+def test_worker_list_page_and_api_are_role_gated(client, manager_client, accounts_client, admin_client):
+    """/workers (the page, folded into Employee management) follows the "workforce" module - Accountant
+    can open it; /api/workers (the older per-category API, only Leads itself still reads it) stays
+    admin-only regardless (kohal's access matrix, 2026-10-14)."""
     for who in (client, manager_client, accounts_client):
-        assert who.get("/workers").status_code == 403
         assert who.get("/api/workers").status_code == 403
+    for who in (client, manager_client):
+        assert who.get("/workers").status_code == 403
+    assert accounts_client.get("/workers").status_code == 302                 # has workforce access
     assert admin_client.get("/workers").status_code == 302                    # folded into Manpower & staff
     assert admin_client.get("/api/workers").status_code == 200
 

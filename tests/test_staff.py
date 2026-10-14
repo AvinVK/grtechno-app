@@ -17,10 +17,15 @@ def make_staff(name="Kuldip Gaurd HR", days_ago=(0, 1)):
 
 # ---------- admin only ----------
 
-def test_staff_page_and_api_are_admin_only(client, manager_client, accounts_client, admin_client):
+def test_staff_page_and_api_are_role_gated(client, manager_client, accounts_client, admin_client):
+    """/staff (the page, folded into Employee management) follows the "workforce" module - Accountant can
+    open it; /api/staff (the older per-category API, only Leads itself still reads it) stays admin-only
+    regardless (kohal's access matrix, 2026-10-14)."""
     for who in (client, manager_client, accounts_client):
-        assert who.get("/staff").status_code == 403
         assert who.get("/api/staff").status_code == 403
+    for who in (client, manager_client):
+        assert who.get("/staff").status_code == 403
+    assert accounts_client.get("/staff").status_code == 302                   # has workforce access
     assert admin_client.get("/staff").status_code == 302                      # folded into Manpower & staff
     assert admin_client.get("/api/staff").status_code == 200
 
