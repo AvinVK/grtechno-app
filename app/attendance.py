@@ -1,7 +1,7 @@
-"""Attendance (the Attendance service): everyone checks themselves in and out, once per day, optionally
-against a running project. A location is required to check in - enforced here, not only by the screen,
-so it cannot be skipped by calling the API directly. Admin and any sees_all role (Accounts) can see
-everyone's; everyone else sees only their own."""
+"""Attendance (the Attendance service): everyone checks themselves in and out, as many times a day as they
+like (a lunch break, a second site), optionally against a running project. A location is required to check
+in - enforced here, not only by the screen, so it cannot be skipped by calling the API directly. Admin and
+any sees_all role (Accounts) can see everyone's; everyone else sees only their own."""
 
 from datetime import date
 
@@ -27,8 +27,10 @@ def _open_projects():
     return Project.query.filter(Project.status.in_(["planned", "running"])).order_by(Project.title).all()
 
 
-def _today_row():
-    return Attendance.query.filter_by(user_code=g.user.code, work_date=date.today()).first()
+def _open_session():
+    """The session the signed-in person is currently in, if any - at most one of their rows for today ever
+    has no check_out_at (check_in below refuses a second one while one is open)."""
+    return Attendance.query.filter_by(user_code=g.user.code, work_date=date.today(), check_out_at=None).first()
 
 
 def _coord(payload, name, low, high, errors):
@@ -63,12 +65,18 @@ def _no_admin_check_ins():
 
 @bp.get("/api/attendance/state")
 def state():
-    """What the signed-in person needs to check in or out today, plus their own recent history."""
-    today = _today_row()
+    """What the signed-in person needs to check in or out, plus today's sessions so far and their own
+    recent history. `today` is the currently open session (null if none - whether they never checked in
+    today, or already checked out and could check in again); `today_sessions` is every one of today's rows,
+    open or closed, oldest first."""
+    open_session = _open_session()
+    today_sessions = (Attendance.query.filter_by(user_code=g.user.code, work_date=date.today())
+                       .order_by(Attendance.check_in_at).all())
     history = (visible_attendance().filter_by(user_code=g.user.code)
-               .order_by(Attendance.work_date.desc()).limit(30).all())
+               .order_by(Attendance.work_date.desc(), Attendance.check_in_at.desc()).limit(60).all())
     return jsonify(
-        today=today.to_dict() if today else None,
+        today=open_session.to_dict() if open_session else None,
+        today_sessions=[a.to_dict() for a in today_sessions],
         projects=[
             {"id": p.id, "title": p.title, "client_name": p.client.name, "site_district": p.site_district}
             for p in _open_projects()
@@ -81,8 +89,8 @@ def state():
 @bp.post("/api/attendance/check-in")
 def check_in():
     _no_admin_check_ins()
-    if _today_row() is not None:
-        return jsonify(error="You have already checked in today."), 409
+    if _open_session() is not None:
+        return jsonify(error="You are already checked in. Check out first."), 409
 
     payload = request.get_json(silent=True) if request.is_json else {}
     if not isinstance(payload, dict):
@@ -123,11 +131,9 @@ def check_in():
 @bp.post("/api/attendance/check-out")
 def check_out():
     _no_admin_check_ins()
-    row = _today_row()
+    row = _open_session()
     if row is None:
-        return jsonify(error="You have not checked in today."), 409
-    if row.check_out_at is not None:
-        return jsonify(error="You have already checked out today."), 409
+        return jsonify(error="You are not checked in."), 409
     row.check_out_at = utcnow()
     db.session.commit()
     return jsonify(today=row.to_dict())

@@ -53,7 +53,7 @@
 
   /* ---------- Employee management: where each person is, and their last 7 days ---------- */
 
-  const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet' };
+  const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet', live: 'checked in now' };
 
   function weekDots(week) {
     const present = week.filter((d) => d.status === 'present').length;
@@ -66,11 +66,14 @@
     const where = dep
       ? [relativeDay(dep.date, today), dep.project_code ? `${dep.project_code} · ${dep.project_title}` : 'site not recorded'].join(' · ')
       : 'No working day on record';
+    // Checked in right now outranks "needs details" for this one slot - it's the more time-sensitive of
+    // the two, and clears itself the moment they check out, unlike needs_details which can sit for a while.
+    const liveToday = p.week.length && p.week[p.week.length - 1].status === 'live';
     return h('li', { class: 'people-row-li' },
       h('button', { type: 'button', class: 'att-day people-row', onclick: () => openPerson(p, roles, onChange) },
         h('div', { class: 'att-day-top' },
           h('span', { class: 'att-day-date' }, p.name),
-          p.needs_details ? h('span', { class: 'chip chip-today' }, 'Needs details') : weekDots(p.week)),
+          p.needs_details && !liveToday ? h('span', { class: 'chip chip-today' }, 'Needs details') : weekDots(p.week)),
         h('span', { class: 'att-day-sub' }, where)),
       h('div', { class: 'people-row-actions' },
         h('button', { type: 'button', class: 'people-action-btn', 'aria-label': `Edit ${p.name}`, title: 'Edit',
@@ -98,7 +101,8 @@
         'Last 7 days, oldest first: ',
         h('i', { class: 'wk-dot present' }), ' present ',
         h('i', { class: 'wk-dot absent' }), ' absent ',
-        h('i', { class: 'wk-dot none' }), ' no data yet');
+        h('i', { class: 'wk-dot none' }), ' no data yet ',
+        h('i', { class: 'wk-dot live' }), ' checked in now');
     const order = sheet
       ? (a, b) => rate(a) - rate(b) || a.name.localeCompare(b.name)
       : (a, b) => (b.needs_details - a.needs_details) || a.name.localeCompare(b.name);   // needs-details first

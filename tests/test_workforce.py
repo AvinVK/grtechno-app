@@ -330,3 +330,27 @@ def test_a_whatsapp_imported_worker_is_never_flagged(admin_client, app):
         make("From WhatsApp", role="welder")
     rows = by_name(admin_client.get("/api/workforce").get_json()["welder"])
     assert rows["From WhatsApp"]["needs_details"] is False
+
+
+# ---------- "live" - a linked User currently checked in (app/attendance.py) ----------
+
+def test_a_linked_user_with_an_open_session_shows_as_live_today(admin_client, anon, app):
+    from conftest import signed_in
+    from app.models import User
+
+    res = admin_client.post("/api/users", json={"name": "Live Checkin Test", "role": "sales_field"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
+    with app.app_context():
+        who = signed_in(app, db.session.get(User, body["user"]["code"]))
+
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
+    assert rows["Live Checkin Test"]["week"][-1]["status"] != "live"      # not checked in yet
+
+    assert who.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882}).status_code == 201
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
+    assert rows["Live Checkin Test"]["week"][-1]["status"] == "live"
+
+    who.post("/api/attendance/check-out")
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
+    assert rows["Live Checkin Test"]["week"][-1]["status"] != "live"      # checked out - no longer live

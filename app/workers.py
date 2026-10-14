@@ -19,7 +19,7 @@ from werkzeug.exceptions import HTTPException, abort
 
 from .constants import PAYMENT_MODES
 from .extensions import db
-from .models import Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
+from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
 from .validation import Fields, parse_money
 
 EMPLOYMENT_TYPES = ("regular", "daily_wages")
@@ -133,7 +133,12 @@ def _own_start(worker, start):
     return max(start, worker.first_seen) if worker.first_seen else start
 
 
-def _day_status(day, present, worker, data_until):
+def _day_status(day, present, worker, data_until, today, checked_in_now):
+    # "live" wins over the WhatsApp import's own present/absent for today specifically - someone with an
+    # open session right now (see app/attendance.py) is obviously present, whatever the import otherwise
+    # shows or hasn't caught up to yet.
+    if day == today and checked_in_now:
+        return "live"
     if day in present:
         return "present"
     if data_until is None or day > data_until or (worker.first_seen and day < worker.first_seen):
@@ -143,6 +148,11 @@ def _day_status(day, present, worker, data_until):
 
 def _person_row(worker, period, data_until, today):
     present = {a.work_date for a in worker.attendance if a.status == "present"}
+    # Only meaningful for a Worker linked to a User (see app/auth.py sync_worker_for_user) - whether that
+    # User currently has an open self-check-in session (app/attendance.py), right now.
+    checked_in_now = bool(worker.user_code) and (
+        Attendance.query.filter_by(user_code=worker.user_code, work_date=today, check_out_at=None).first() is not None
+    )
     latest = next((a for a in worker.attendance if a.status == "present"), None)   # attendance is newest first
     deployed = None
     if latest:
@@ -155,7 +165,7 @@ def _person_row(worker, period, data_until, today):
     week = []
     for back in range(WEEK_DAYS - 1, -1, -1):
         day = today - timedelta(days=back)
-        week.append({"date": day.isoformat(), "status": _day_status(day, present, worker, data_until)})
+        week.append({"date": day.isoformat(), "status": _day_status(day, present, worker, data_until, today, checked_in_now)})
 
     days = present_days = 0
     if period:

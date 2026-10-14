@@ -1473,6 +1473,7 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .wk-dot.present { background: var(--ok); }
 .wk-dot.absent { background: var(--signal); }
 .wk-dot.none { border: 1.5px solid var(--line-strong); }
+.wk-dot.live { background: var(--amber); }
 .att-bar > i.low { background: var(--signal); }
 button.people-row { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
 

@@ -667,8 +667,12 @@ def settings_for_client() -> dict:
 
 
 class Attendance(db.Model):
-    """One person's check-in and check-out for one day. At most one row per person per work_date;
-    project_id is who they worked for that day and is optional, for office staff with no site to pick."""
+    """One check-in/check-out session. Someone can check in and out more than once in a day (a lunch
+    break, a second site) - so there can be more than one row per person per work_date, each one session;
+    grouped back into a day's sessions for display (see app/attendance.py and the history view). At most
+    one of a person's rows for a given day has no check_out_at yet - that's the session they're currently
+    in, if any (see check_in below, which refuses a second one while one is still open). project_id is who
+    they worked for that session and is optional, for office staff with no site to pick."""
 
     __tablename__ = "attendance"
 
@@ -687,8 +691,6 @@ class Attendance(db.Model):
 
     user = db.relationship("User")
     project = db.relationship("Project")
-
-    __table_args__ = (db.UniqueConstraint("user_code", "work_date", name="uq_attendance_user_date"),)
 
     @property
     def hours(self):

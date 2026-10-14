@@ -1,10 +1,11 @@
-/* Attendance: check yourself in and out once a day, optionally against a running project.
-   Admin and the Accountant also get a Team tab with everyone's register for a chosen day. The admin doesn't
-   check in at all (data-team-only): their Attendance is just that register. */
+/* Attendance: check yourself in and out as many times a day as you like (a lunch break, a second site),
+   optionally against a running project. Admin and the Accountant also get a Team tab with everyone's
+   register for a chosen day. The admin doesn't check in at all (data-team-only): their Attendance is just
+   that register. */
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, dateField } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField, pickList } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
@@ -93,11 +94,59 @@
     });
   }
 
-  /* History grouped into Mon–Sun weeks, newest first. A past Mon–Sat with no record, inside the span the
-     history covers, is marked Absent; Sundays and today (still time to check in) never are. */
+  /* Picks which of a day's more-than-one sessions to delete, then deletes it the same way deleteLink
+     does - there's no room for a delete link per session once they're joined onto one line (see
+     groupedDayRow), so this is reached through one shared "Delete" link for the day instead. */
+  async function deleteOneOf(sessions, onDeleted) {
+    const id = await pickList(
+      sessions.map((a) => ({ value: String(a.id), label: a.check_out_at ? `${fmtTime(a.check_in_at)} – ${fmtTime(a.check_out_at)}` : `${fmtTime(a.check_in_at)} – still checked in` })),
+      '', { title: 'Delete which session?' },
+    );
+    if (!id) return;
+    const sure = await confirm('Delete this attendance record? This cannot be undone.', { ok: 'Delete', danger: true, title: 'Delete record' });
+    if (!sure) return;
+    try {
+      await api(`/api/attendance/${id}`, { method: 'DELETE' });
+      toast('Record deleted');
+      await onDeleted();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  /* A day with more than one check-in/out that day - each session's times joined on one line ("7:00 am –
+     1:00 pm, 2:00 pm – 7:00 pm"), with the day's total hours where a single session's row would show its
+     own. work_label is shown only when every session agrees on it (rare to differ - a lunch break back to
+     the same project, say); otherwise left off rather than showing just one of several. */
+  function groupedDayRow(title, sessions, onDeleted) {
+    const totalHours = sessions.reduce((sum, a) => sum + (a.hours || 0), 0);
+    const sameLabel = sessions.every((a) => a.work_label === sessions[0].work_label) ? sessions[0].work_label : null;
+    const times = [];
+    sessions.forEach((a, i) => {
+      if (i > 0) times.push(', ');
+      times.push(timesText(a));
+    });
+    return dayRow({
+      title,
+      right: h('span', { class: 'att-day-hours' }, totalHours ? `${roundHours(totalHours)} h` : ''),
+      sub: sameLabel ? [sameLabel, ' · ', ...times] : times,
+      hours: totalHours,
+      links: [onDeleted ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); deleteOneOf(sessions, onDeleted); } }, 'Delete') : null],
+    });
+  }
+
+  /* History grouped into Mon–Sun weeks, newest first. A past Mon–Sat with no session at all, inside the
+     span the history covers, is marked Absent; Sundays and today (still time to check in) never are. More
+     than one session on the same day (a lunch break, a second site) becomes one row with every session's
+     times joined and the day's total hours - see groupedDayRow. */
   function historyWeeks(history, onDeleted) {
     if (!history.length) return [h('p', { class: 'empty-state att-history-empty' }, 'No attendance recorded yet.')];
-    const byDay = new Map(history.map((a) => [a.work_date, a]));
+    const byDay = new Map();
+    for (const a of history) {
+      if (!byDay.has(a.work_date)) byDay.set(a.work_date, []);
+      byDay.get(a.work_date).push(a);
+    }
+    for (const sessions of byDay.values()) sessions.sort((a, b) => a.check_in_at.localeCompare(b.check_in_at));
     const todayDate = parseDay(dayKey(new Date()));
     const firstDay = parseDay(history.reduce((min, a) => (a.work_date < min ? a.work_date : min), history[0].work_date));
     const thisMonday = mondayOf(todayDate);
@@ -111,11 +160,11 @@
       for (let i = 6; i >= 0; i -= 1) {
         const day = addDays(monday, i);
         if (day < firstDay || day > todayDate) continue;
-        const a = byDay.get(dayKey(day));
-        if (a) {
+        const sessions = byDay.get(dayKey(day));
+        if (sessions && sessions.length) {
           worked += 1;
-          total += a.hours || 0;
-          rows.push(recordRow(shortDate(day), a, onDeleted));
+          total += sessions.reduce((sum, a) => sum + (a.hours || 0), 0);
+          rows.push(sessions.length === 1 ? recordRow(shortDate(day), sessions[0], onDeleted) : groupedDayRow(shortDate(day), sessions, onDeleted));
         } else if (day < todayDate && day.getDay() !== 0) {
           absent += 1;
           rows.push(dayRow({ title: shortDate(day), right: h('span', { class: 'chip chip-absent' }, 'Absent') }));
@@ -219,43 +268,37 @@
         clear(barBox);
         return;
       }
+      // t is always the open session here (data.today is null otherwise, handled above) - so this is
+      // always the "still checked in" timeline; once they check out, the very next render falls into the
+      // !t branch above instead (Check in again), earlier sessions today showing in the history below.
       const links = [mapLink(t), data.can_see_team ? deleteLink(t, reload) : null].filter(Boolean);
       const checkedIn = step('done', 'Checked in', h('span', { class: 'att-step-time' }, fmtTime(t.check_in_at)),
         h('span', { class: 'att-step-sub' }, t.work_label),
         links.length ? h('div', { class: 'att-day-links' }, links) : null);
 
-      if (!t.check_out_at) {
-        // TODO: "Switch project" mid-day - needs a new endpoint that changes today's project_id.
-        const elapsed = h('span', { class: 'att-elapsed' }, elapsedSince(t.check_in_at));
-        elapsedTimer = setInterval(() => { elapsed.textContent = elapsedSince(t.check_in_at); }, 30000);
-        const finish = usualFinish(data.history);
-        steps = [
-          checkedIn,
-          step('active', 'Working', elapsed, finish ? h('span', { class: 'att-step-note' }, 'Usual finish around ', h('span', { class: 'att-num' }, finish)) : null),
-          step('pending', 'Check out', null),
-        ];
+      // TODO: "Switch project" mid-day - needs a new endpoint that changes today's project_id.
+      const elapsed = h('span', { class: 'att-elapsed' }, elapsedSince(t.check_in_at));
+      elapsedTimer = setInterval(() => { elapsed.textContent = elapsedSince(t.check_in_at); }, 30000);
+      const finish = usualFinish(data.history);
+      steps = [
+        checkedIn,
+        step('active', 'Working', elapsed, finish ? h('span', { class: 'att-step-note' }, 'Usual finish around ', h('span', { class: 'att-num' }, finish)) : null),
+        step('pending', 'Check out', null),
+      ];
 
-        const checkOutBtn = h('button', { class: 'btn ink', type: 'button' }, 'Check out');
-        checkOutBtn.onclick = async () => {
-          checkOutBtn.disabled = true;
-          try {
-            await api('/api/attendance/check-out', { method: 'POST' });
-            toast('Checked out');
-            await reload();
-          } catch (err) {
-            toast(err.message, true);
-            checkOutBtn.disabled = false;
-          }
-        };
-        bar = actionBar(checkOutBtn);
-      } else {
-        steps = [
-          checkedIn,
-          step('done', 'Working', null),
-          step('done', 'Checked out', h('span', { class: 'att-step-time' }, fmtTime(t.check_out_at)),
-            h('span', { class: 'att-step-sub' }, h('span', { class: 'att-num' }, `${t.hours} h`), ' total')),
-        ];
-      }
+      const checkOutBtn = h('button', { class: 'btn ink', type: 'button' }, 'Check out');
+      checkOutBtn.onclick = async () => {
+        checkOutBtn.disabled = true;
+        try {
+          await api('/api/attendance/check-out', { method: 'POST' });
+          toast('Checked out');
+          await reload();
+        } catch (err) {
+          toast(err.message, true);
+          checkOutBtn.disabled = false;
+        }
+      };
+      bar = actionBar(checkOutBtn);
       clear(cardBox).append(h('div', { class: 'att-today' }, h('ol', { class: 'att-steps' }, steps)));
       clear(barBox);
       if (bar) barBox.append(bar);

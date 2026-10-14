@@ -100,10 +100,36 @@ def test_team_register_also_carries_the_location(client, admin_client):
     assert record["check_in_map_url"] == "https://maps.google.com/?q=21.1458,79.0882"
 
 
-def test_only_one_check_in_per_day(client):
+def test_cannot_check_in_again_while_already_checked_in(client):
     assert check_in(client).status_code == 201
     again = check_in(client)
     assert again.status_code == 409
+
+
+def test_can_check_in_again_after_checking_out(client):
+    """A lunch break, a second site - checking in and out more than once in the same day makes a second
+    row for that day, not an error."""
+    first = check_in(client).get_json()["today"]["id"]
+    client.post("/api/attendance/check-out")
+    second = check_in(client)
+    assert second.status_code == 201
+    assert second.get_json()["today"]["id"] != first
+
+    state = client.get("/api/attendance/state").get_json()
+    assert len(state["today_sessions"]) == 2
+    assert state["today_sessions"][0]["id"] == first and state["today_sessions"][0]["check_out_at"] is not None
+    assert state["today_sessions"][1]["id"] == second.get_json()["today"]["id"]
+    assert state["today"]["id"] == second.get_json()["today"]["id"]      # the open one
+
+
+def test_history_groups_more_than_one_session_a_day(client):
+    check_in(client)
+    client.post("/api/attendance/check-out")
+    check_in(client)
+    client.post("/api/attendance/check-out")
+    state = client.get("/api/attendance/state").get_json()
+    todays = [h for h in state["history"] if h["work_date"] == date.today().isoformat()]
+    assert len(todays) == 2
 
 
 def test_cannot_check_out_without_checking_in(client):

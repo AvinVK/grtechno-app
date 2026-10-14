@@ -183,8 +183,12 @@ window.ATT = (() => {
     let button = null;
 
     if (!t) {
-      status = 'Not checked in yet';
-      button = h('button', { class: 'btn primary me-today-btn', type: 'button' }, 'Check in');
+      // Never checked in today, or already checked out (and could check in again - a lunch break, a
+      // second site): either way there's no open session right now, so it's the same Check in button.
+      const earlier = (data.today_sessions || []).filter((a) => a.check_out_at);
+      const totalToday = Math.round(earlier.reduce((sum, a) => sum + (a.hours || 0), 0) * 10) / 10;
+      status = totalToday > 0 ? `${totalToday} h checked in so far today` : 'Not checked in yet';
+      button = h('button', { class: 'btn primary me-today-btn', type: 'button' }, earlier.length ? 'Check in again' : 'Check in');
       button.onclick = async () => {
         button.disabled = true;
         button.textContent = 'Checking in\u2026';
@@ -198,7 +202,7 @@ window.ATT = (() => {
           toast(err.message, true);
         }
         button.disabled = false;
-        button.textContent = 'Check in';
+        button.textContent = earlier.length ? 'Check in again' : 'Check in';
       };
     } else if (!t.check_out_at) {
       status = [`Checked in at ${fmtTime(t.check_in_at)}`, t.work_label].filter(Boolean).join(' \u00b7 ');
