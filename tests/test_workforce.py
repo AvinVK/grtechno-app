@@ -120,31 +120,17 @@ def test_no_data_means_no_period(admin_client, app):
     assert admin_client.get(f"/api/workforce/{wid}").get_json()["period"] is None
 
 
-# ---------- admin can add, edit and remove an employee ----------
+# ---------- admin can edit and remove an employee (every employee arrives from Users & roles or the
+# WhatsApp import - there's no "add employee" here any more, see app/auth.py sync_worker_for_user) ----------
 
-def test_admin_adds_an_employee_ahead_of_the_next_import(admin_client):
-    res = admin_client.post("/api/workforce", json={"name": "New Hire", "role_key": "welder"})
-    assert res.status_code == 201
-    body = res.get_json()["worker"]
-    assert body["name"] == "New Hire" and body["role_key"] == "welder" and body["role_name"] == "Welder"
-    assert body["source"] == "manual"
-    listed = admin_client.get("/api/workforce").get_json()
-    assert by_name(listed["welder"])["New Hire"]["id"] == body["id"]
-
-
-def test_an_employee_can_be_added_with_no_role_yet(admin_client):
-    res = admin_client.post("/api/workforce", json={"name": "New Hire"})
-    assert res.status_code == 201 and res.get_json()["worker"]["role_key"] is None
-    listed = admin_client.get("/api/workforce").get_json()
-    assert "New Hire" in by_name(listed["unassigned"])
-
-
-def test_adding_an_employee_requires_a_name_and_a_valid_role(admin_client):
-    res = admin_client.post("/api/workforce", json={"name": ""})
+def test_editing_an_employee_requires_a_name_and_a_valid_role(admin_client, app):
+    with app.app_context():
+        wid = make("Someone")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": ""})
     assert res.status_code == 422 and "name" in res.get_json()["fields"]
-    res = admin_client.post("/api/workforce", json={"name": "Someone", "role_key": "not-a-role"})
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Someone", "role_key": "not-a-role"})
     assert res.status_code == 422 and "role_key" in res.get_json()["fields"]
-    res = admin_client.post("/api/workforce", json={"name": "Someone", "role_key": "admin"})
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Someone", "role_key": "admin"})
     assert res.status_code == 422 and "role_key" in res.get_json()["fields"]
 
 
@@ -167,9 +153,8 @@ def test_editing_an_employee_can_clear_their_role(admin_client, app):
     assert res.status_code == 200 and res.get_json()["worker"]["role_key"] is None
 
 
-def test_only_the_admin_can_add_edit_or_remove_an_employee(client, manager_client, accounts_client):
+def test_only_the_admin_can_edit_or_remove_an_employee(client, manager_client, accounts_client):
     for who in (client, manager_client, accounts_client):
-        assert who.post("/api/workforce", json={"name": "X"}).status_code == 403
         assert who.patch("/api/workforce/1", json={"name": "X"}).status_code == 403
         assert who.delete("/api/workforce/1").status_code == 403
 
@@ -199,27 +184,30 @@ def test_removing_an_employee_clears_their_name_from_leads_they_were_picked_on(a
         assert kept is not None and kept.enquired_by_id is None
 
 
-def test_adding_or_editing_an_employee_never_touches_the_legacy_category(admin_client, app):
+def test_editing_an_employee_never_touches_the_legacy_category(admin_client, app):
     """category still decides who Leads offers as a surveyor/enquired-by (app/api.py) - unrelated to
     role_key, so Employee management must leave it at its default, not silently change who can be picked
     there."""
-    res = admin_client.post("/api/workforce", json={"name": "New Hire", "role_key": "welder"})
-    wid = res.get_json()["worker"]["id"]
+    with app.app_context():
+        wid = make("New Hire", role="welder")
+    admin_client.patch(f"/api/workforce/{wid}", json={"name": "New Hire", "role_key": "fitter"})
     with app.app_context():
         assert db.session.get(Worker, wid).category == "manpower"
 
 
 # ---------- HR details and the salary/wages log ----------
 
-def test_add_employee_captures_full_hr_details(admin_client):
-    res = admin_client.post("/api/workforce", json={
+def test_editing_an_employee_captures_full_hr_details(admin_client, app):
+    with app.app_context():
+        wid = make("Full Details", role="fitter")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={
         "name": "Full Details", "role_key": "fitter", "age": 29, "qualification": "ITI Fitter",
         "experience": "6 years in sprinkler installation", "skills": "Welding, pipe fitting",
         "phone": "9876543210", "joining_date": "2026-01-15", "employment_type": "regular",
         "wage_amount": 22000, "pf_number": "PF1234567", "esic_number": "ESIC7654321",
         "reference": "Referred by Ramesh",
     })
-    assert res.status_code == 201
+    assert res.status_code == 200
     body = res.get_json()["worker"]
     assert body["age"] == 29 and body["qualification"] == "ITI Fitter"
     assert body["experience"] == "6 years in sprinkler installation"
@@ -230,22 +218,18 @@ def test_add_employee_captures_full_hr_details(admin_client):
     assert body["reference"] == "Referred by Ramesh"
 
 
-def test_employment_type_must_be_regular_or_daily_wages(admin_client):
-    res = admin_client.post("/api/workforce", json={"name": "X", "employment_type": "contractor"})
+def test_employment_type_must_be_regular_or_daily_wages(admin_client, app):
+    with app.app_context():
+        wid = make("X")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "employment_type": "contractor"})
     assert res.status_code == 422 and "employment_type" in res.get_json()["fields"]
 
 
-def test_age_must_be_a_plausible_number(admin_client):
-    res = admin_client.post("/api/workforce", json={"name": "X", "age": 5})
+def test_age_must_be_a_plausible_number(admin_client, app):
+    with app.app_context():
+        wid = make("X")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "age": 5})
     assert res.status_code == 422 and "age" in res.get_json()["fields"]
-
-
-def test_a_bare_name_is_still_a_valid_employee(admin_client):
-    """Every detail field is optional - same as before this feature, a name alone is enough."""
-    res = admin_client.post("/api/workforce", json={"name": "Just A Name"})
-    assert res.status_code == 201
-    body = res.get_json()["worker"]
-    assert body["age"] is None and body["qualification"] == "" and body["wage_amount"] is None
 
 
 def test_editing_an_employee_updates_their_hr_details(admin_client, app):
@@ -303,3 +287,28 @@ def test_removing_an_employee_removes_their_payment_log_too(admin_client, app):
     with app.app_context():
         from app.models import WorkerPayment
         assert WorkerPayment.query.filter_by(worker_id=wid).count() == 0
+
+
+# ---------- "needs details" - someone who arrived via Users & roles, not filled in yet ----------
+
+def test_a_user_added_via_users_and_roles_is_flagged_as_needing_details(admin_client):
+    admin_client.post("/api/users", json={"name": "Priya Enquiry", "role": "sales_office"})
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_office"])
+    assert rows["Priya Enquiry"]["needs_details"] is True
+
+
+def test_filling_in_a_phone_clears_the_flag(admin_client, app):
+    res = admin_client.post("/api/users", json={"name": "Rohit Field", "role": "sales_field"})
+    code = res.get_json()["user"]["code"]
+    with app.app_context():
+        worker_id = Worker.query.filter_by(user_code=code).first().id
+    admin_client.patch(f"/api/workforce/{worker_id}", json={"name": "Rohit Field", "phone": "9876500000"})
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
+    assert rows["Rohit Field"]["needs_details"] is False
+
+
+def test_a_whatsapp_imported_worker_is_never_flagged(admin_client, app):
+    with app.app_context():
+        make("From WhatsApp", role="welder")
+    rows = by_name(admin_client.get("/api/workforce").get_json()["welder"])
+    assert rows["From WhatsApp"]["needs_details"] is False

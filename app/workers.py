@@ -1,9 +1,10 @@
 """Employee management (admin only): field workers and office staff who don't sign in to the app, tracked
 instead from the WhatsApp group each marks their attendance in. Grouped by role - the same roles table
 Users & roles uses (minus 'admin') - rather than the old manpower/staff split (see Worker.category in
-models.py for why that split still exists in the database but not here). Attendance itself still only
-arrives through the WhatsApp import, but the admin can add someone ahead of the next import (so their
-attendance has somewhere to land), edit their name or role, or remove someone who left.
+models.py for why that split still exists in the database but not here). Attendance still only arrives
+through the WhatsApp import; every employee itself comes from either that import or from being added as a
+User in Users & roles (see app/auth.py sync_worker_for_user) - there's no separate "add employee" here any
+more. The admin can edit someone's name, role or HR details, or remove someone who left.
 
 Two pages under Manage share one script (people.js): "Employee management" (who's where, and the last
 week at a glance) and "Attendance sheet" (everyone ranked by attendance, lowest first, with each person's
@@ -161,8 +162,12 @@ def _person_row(worker, period, data_until, today):
         start, end = _own_start(worker, period[0]), period[1]
         days = max(0, (end - start).days + 1)
         present_days = sum(1 for d in present if start <= d <= end)
+    # Someone who arrived from Users & roles (see app/auth.py sync_worker_for_user) starts with none of
+    # their own HR detail filled in - flagged here so the admin can find and fill them in from Edit, until
+    # they do (any phone or joining date on file clears it, not a separate "done" switch to maintain).
+    needs_details = worker.source == "user_account" and not worker.phone and not worker.joining_date
     return {"id": worker.id, "name": worker.name, "role_key": worker.role_key or UNASSIGNED, "deployed": deployed,
-            "week": week, "present_days": present_days, "days": days}
+            "week": week, "present_days": present_days, "days": days, "needs_details": needs_details}
 
 
 @workforce_bp.get("")
@@ -243,22 +248,6 @@ def _employee_fields(payload):
             errors["employment_type"] = "Choose regular or daily wages"
 
     return data, errors
-
-
-@workforce_bp.post("")
-def add_worker():
-    """Add someone ahead of the next WhatsApp import, or someone who never comes up in it (e.g. a new
-    hire). role_key is the same role list Users & roles uses - a label here, not a login or permission.
-    The rest is the usual HR paperwork - all optional, filled in now or later from Edit."""
-    data, errors = _employee_fields(_payload())
-    if not data.get("name") and "name" not in errors:
-        errors["name"] = "Enter a name"
-    if errors:
-        return jsonify(error="Check the highlighted fields", fields=errors), 422
-    worker = Worker(source="manual", **data)
-    db.session.add(worker)
-    db.session.commit()
-    return jsonify(worker=worker.to_dict(detail=True)), 201
 
 
 def _payments(raw, errors):

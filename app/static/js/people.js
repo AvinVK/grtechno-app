@@ -68,7 +68,9 @@
       : 'No working day on record';
     return h('li', { class: 'people-row-li' },
       h('button', { type: 'button', class: 'att-day people-row', onclick: () => openPerson(p, roles, onChange) },
-        h('div', { class: 'att-day-top' }, h('span', { class: 'att-day-date' }, p.name), weekDots(p.week)),
+        h('div', { class: 'att-day-top' },
+          h('span', { class: 'att-day-date' }, p.name),
+          p.needs_details ? h('span', { class: 'chip chip-today' }, 'Needs details') : weekDots(p.week)),
         h('span', { class: 'att-day-sub' }, where)),
       h('div', { class: 'people-row-actions' },
         h('button', { type: 'button', class: 'people-action-btn', 'aria-label': `Edit ${p.name}`, title: 'Edit',
@@ -99,7 +101,7 @@
         h('i', { class: 'wk-dot none' }), ' no data yet');
     const order = sheet
       ? (a, b) => rate(a) - rate(b) || a.name.localeCompare(b.name)
-      : (a, b) => a.name.localeCompare(b.name);
+      : (a, b) => (b.needs_details - a.needs_details) || a.name.localeCompare(b.name);   // needs-details first
     const onChange = () => { invalidateCache(); route(); };
     const row = sheet ? sheetRow : (p) => rosterRow(p, data.today, data.roles, onChange);
 
@@ -275,10 +277,9 @@
 
   const EMPLOYMENT_TYPES = [{ value: 'regular', label: 'Regular' }, { value: 'daily_wages', label: 'Daily wages' }];
 
-  // Add and Edit share the full HR detail set and the same save/error handling - just a different title,
-  // submit label, starting values and HTTP call. w is the worker to prefill from (its detail fields, e.g.
-  // age/qualification/..., are only present once loaded via GET /api/workforce/<id> - empty for a brand
-  // new employee or a roster-row's lightweight row data).
+  // Every employee now arrives from Users & roles (see app/auth.py sync_worker_for_user) - this is Edit
+  // only, no more Add. w is the worker to prefill from (its detail fields, e.g. age/qualification/..., are
+  // only present once loaded via GET /api/workforce/<id> - openEditPerson below always does that first).
   function employeeForm({ titleText, submitLabel, worker: w = {}, roles, onSave }) {
     const text = (name, extra = {}) => h('input', { type: 'text', value: w[name] ?? '', ...extra });
     const nameInput = text('name', { maxlength: 120, autocomplete: 'off' });
@@ -356,18 +357,6 @@
       h('div', { class: 'form-actions' }, saveBtn));
     const close = closeableModal(titleText, form);
     nameInput.focus();
-  }
-
-  function openAddPerson() {
-    employeeForm({
-      titleText: 'Add employee', submitLabel: 'Add employee', roles: cache?.roles || {},
-      onSave: async (body) => {
-        await api('/api/workforce', { method: 'POST', body });
-        toast('Employee added');
-        invalidateCache();
-        route();
-      },
-    });
   }
 
   // p can be a lightweight roster row (no detail fields) or a full worker (from the detail page, which
@@ -753,8 +742,6 @@
     }
     return showList(cache, hash);
   }
-
-  document.getElementById('add-person-btn')?.addEventListener('click', openAddPerson);
 
   window.addEventListener('hashchange', route);
   route();
