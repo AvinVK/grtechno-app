@@ -78,7 +78,10 @@
 
     function showCode(data, heading) {
       const u = data.user;
-      const message = `Leads\nUserid: ${u.userid}\nSetup code: ${data.setup_code} (works once, valid ${data.code_days} days)\nSet your PIN at: ${window.location.origin}/set-pin`;
+      // Userid and code each sit alone on their own line - a WhatsApp triple-tap/select-line only grabs
+      // the thing itself this way, not "Setup code: ABCD-EFGH (works once...)" as one lump that then gets
+      // pasted whole into the code box and never matches.
+      const message = `Leads\n\nUserid:\n${u.userid}\n\nSetup code:\n${data.setup_code}\n(works once, valid ${data.code_days} days)\n\nSet your PIN at: ${window.location.origin}/set-pin`;
       clear(resultBox).append(h('section', { class: 'code-card' },
         h('h3', {}, `${heading} for ${u.name}`),
         h('dl', {},
