@@ -738,6 +738,12 @@ class Worker(db.Model):
     last_seen = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
+    # The User (sign-in account) this row stands in for, if any - every non-admin User gets a matching
+    # Worker row made for them automatically (see auth.sync_worker_for_user), so they show up wherever
+    # Workers do (Enquired by, surveyor...) without being added twice. Not the other way around: plenty of
+    # Workers have no User at all.
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, unique=True, index=True)
+
     # HR details - optional, filled in by the admin from Employee management; blank for anyone who's only
     # ever come in through the WhatsApp attendance import.
     age = db.Column(db.Integer, nullable=True)
@@ -753,6 +759,7 @@ class Worker(db.Model):
     reference = db.Column(db.String(200), nullable=False, default="", server_default="")
 
     role = db.relationship("Role")
+    linked_user = db.relationship("User")
     attendance = db.relationship(
         "WorkerAttendance", back_populates="worker", cascade="all, delete-orphan",
         order_by="WorkerAttendance.work_date.desc()",

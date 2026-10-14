@@ -1,7 +1,7 @@
 from datetime import date
 
 from app.extensions import db
-from app.models import Attendance, Lead, Module, User, utcnow
+from app.models import Attendance, Lead, Module, User, Worker, utcnow
 from conftest import make_user, signed_in
 
 
@@ -31,6 +31,32 @@ def test_admin_adds_a_user_and_sees_the_setup_code_once(admin_client, app):
     assert any(u["userid"] == body["user"]["userid"] for u in listing)
     assert "setup_code" not in str(listing)
     assert admin_client.post("/api/users", json={"name": "  ??  "}).status_code == 422
+
+
+# ---------- every non-admin user also shows up as an employee (Worker) ----------
+
+def test_adding_a_user_also_adds_a_matching_worker(admin_client, app):
+    res = admin_client.post("/api/users", json={"name": "Priya Enquiry", "role": "sales_office"})
+    code = res.get_json()["user"]["code"]
+    with app.app_context():
+        worker = Worker.query.filter_by(user_code=code).first()
+        assert worker is not None
+        assert worker.name == "Priya Enquiry" and worker.role_key == "sales_office" and worker.category == "staff"
+
+
+def test_the_admin_itself_gets_no_worker(admin_client, admin, app):
+    with app.app_context():
+        assert Worker.query.filter_by(user_code=admin.code).first() is None
+
+
+def test_changing_a_users_role_updates_their_linked_worker_too(admin_client, app):
+    res = admin_client.post("/api/users", json={"name": "Rohit Field", "role": "sales_field"})
+    code = res.get_json()["user"]["code"]
+    res = admin_client.post(f"/api/users/{code}/role", json={"role": "sales_office"})
+    assert res.status_code == 200
+    with app.app_context():
+        worker = Worker.query.filter_by(user_code=code).first()
+        assert worker.role_key == "sales_office"
 
 
 def test_admin_account_is_protected(admin_client, admin):

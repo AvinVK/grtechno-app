@@ -3,7 +3,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import HTTPException, abort
 
 from .api import _payload
-from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code
+from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code, sync_worker_for_user
 from .extensions import db
 from .models import Lead, Role, User, UserState, utcnow
 from .reference_data import INDIAN_STATES
@@ -125,6 +125,7 @@ def set_role(code):
     if role == "sub_admin":
         _set_states(user, _clean_states(payload.get("states")))
     user.role_key = role
+    sync_worker_for_user(user)
     db.session.commit()
     return jsonify(user=_dict(user))
 

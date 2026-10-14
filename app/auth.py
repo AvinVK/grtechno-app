@@ -19,7 +19,7 @@ from sqlalchemy import false as sa_false, or_
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .extensions import db
-from .models import Attendance, Client, Lead, Project, Role, User, utcnow
+from .models import Attendance, Client, Lead, Project, Role, User, Worker, utcnow
 
 bp = Blueprint("auth", __name__)
 
@@ -103,7 +103,25 @@ def create_user(name: str, is_admin: bool = False, code: str = None, role: str =
     user = User(code=code, userid=f"{slug}-{code}", name=name, is_admin=is_admin, role_key=role)
     setup_code = issue_setup_code(user)
     db.session.add(user)
+    sync_worker_for_user(user)
     return user, setup_code
+
+
+def sync_worker_for_user(user: User) -> None:
+    """Make sure a non-admin User also has a matching Worker (Employee management) row, linked by
+    user_code - so they show up wherever Workers do (Enquired by, surveyor...) without being added twice.
+    Called when a user is created and whenever their role changes, so the two stay in step; never deletes
+    or turns one off from here - a user's own attendance/HR history on the Worker side shouldn't disappear
+    just because their login does."""
+    if user.is_admin:
+        return
+    worker = Worker.query.filter_by(user_code=user.code).first()
+    if worker is None:
+        db.session.add(Worker(name=user.name, role_key=user.role_key, category="staff",
+                               source="user_account", user_code=user.code))
+    else:
+        worker.name = user.name
+        worker.role_key = user.role_key
 
 
 def find_user(userid_text: str):
