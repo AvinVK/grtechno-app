@@ -739,9 +739,9 @@ class Worker(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     # The User (sign-in account) this row stands in for, if any - every non-admin User gets a matching
-    # Worker row made for them automatically (see auth.sync_worker_for_user), so they show up wherever
-    # Workers do (Enquired by, surveyor...) without being added twice. Not the other way around: plenty of
-    # Workers have no User at all.
+    # Worker row made for them automatically, once they've actually signed in for the first time (see
+    # auth.sync_worker_for_user), so they show up wherever Workers do (Enquired by, surveyor...) without
+    # being added twice. Not the other way around: plenty of Workers have no User at all.
     user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, unique=True, index=True)
 
     # HR details - optional, filled in by the admin from Employee management; blank for anyone who's only

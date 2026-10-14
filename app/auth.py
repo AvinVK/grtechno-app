@@ -103,17 +103,18 @@ def create_user(name: str, is_admin: bool = False, code: str = None, role: str =
     user = User(code=code, userid=f"{slug}-{code}", name=name, is_admin=is_admin, role_key=role)
     setup_code = issue_setup_code(user)
     db.session.add(user)
-    sync_worker_for_user(user)
     return user, setup_code
 
 
 def sync_worker_for_user(user: User) -> None:
     """Make sure a non-admin User also has a matching Worker (Employee management) row, linked by
     user_code - so they show up wherever Workers do (Enquired by, surveyor...) without being added twice.
-    Called when a user is created and whenever their role changes, so the two stay in step; never deletes
-    or turns one off from here - a user's own attendance/HR history on the Worker side shouldn't disappear
-    just because their login does."""
-    if user.is_admin:
+    Only once they've actually signed in for the first time (set_pin, below) - a user who was only ever
+    added and never activated (declined the job, a typo'd duplicate...) shouldn't clutter Employee
+    management with a row that never becomes a real person. Also called whenever their role changes, so
+    the two stay in step from then on; never deletes or turns one off from here - a user's own attendance/
+    HR history on the Worker side shouldn't disappear just because their login does."""
+    if user.is_admin or not user.password_hash:
         return
     worker = Worker.query.filter_by(user_code=user.code).first()
     if worker is None:
@@ -277,6 +278,7 @@ def set_pin():
                 user.setup_code_expires = None
                 user.failed_attempts = 0
                 user.locked_until = None
+                sync_worker_for_user(user)       # first time active (or reactivated after a reset) - see there
                 db.session.commit()
                 flash("PIN saved. Sign in with your userid and new PIN.", "ok")
                 return redirect(url_for("auth.login"))

@@ -6,6 +6,15 @@ from datetime import date, timedelta
 
 from app.extensions import db
 from app.models import Client, Project, Worker, WorkerAttendance
+from conftest import csrf
+
+
+def complete_setup(anon, userid, setup_code, pin="482915"):
+    """Walk a brand-new user through /set-pin, same as they would on their own phone - only once this
+    happens does a matching employee (Worker) get made for them, see app/auth.py sync_worker_for_user."""
+    return anon.post("/set-pin", data={
+        "csrf": csrf(anon), "userid": userid, "code": setup_code, "pin": pin, "confirm": pin,
+    })
 
 
 def make(name, role=None, category="manpower", present=(), absent=(), first_seen_days_ago=400, project=None):
@@ -291,17 +300,26 @@ def test_removing_an_employee_removes_their_payment_log_too(admin_client, app):
 
 # ---------- "needs details" - someone who arrived via Users & roles, not filled in yet ----------
 
-def test_a_user_added_via_users_and_roles_is_flagged_as_needing_details(admin_client):
-    admin_client.post("/api/users", json={"name": "Priya Enquiry", "role": "sales_office"})
+def test_a_user_added_via_users_and_roles_is_flagged_as_needing_details(admin_client, anon):
+    res = admin_client.post("/api/users", json={"name": "Priya Enquiry", "role": "sales_office"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
     rows = by_name(admin_client.get("/api/workforce").get_json()["sales_office"])
     assert rows["Priya Enquiry"]["needs_details"] is True
 
 
-def test_filling_in_a_phone_clears_the_flag(admin_client, app):
+def test_a_still_pending_user_does_not_show_up_in_employee_management_at_all(admin_client):
+    admin_client.post("/api/users", json={"name": "Not Yet Signed In", "role": "sales_office"})
+    rows = by_name(admin_client.get("/api/workforce").get_json().get("sales_office", []))
+    assert "Not Yet Signed In" not in rows
+
+
+def test_filling_in_a_phone_clears_the_flag(admin_client, anon, app):
     res = admin_client.post("/api/users", json={"name": "Rohit Field", "role": "sales_field"})
-    code = res.get_json()["user"]["code"]
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
     with app.app_context():
-        worker_id = Worker.query.filter_by(user_code=code).first().id
+        worker_id = Worker.query.filter_by(user_code=body["user"]["code"]).first().id
     admin_client.patch(f"/api/workforce/{worker_id}", json={"name": "Rohit Field", "phone": "9876500000"})
     rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
     assert rows["Rohit Field"]["needs_details"] is False

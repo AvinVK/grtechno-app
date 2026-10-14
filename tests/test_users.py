@@ -2,13 +2,21 @@ from datetime import date
 
 from app.extensions import db
 from app.models import Attendance, Lead, Module, User, Worker, utcnow
-from conftest import make_user, signed_in
+from conftest import csrf, make_user, signed_in
 
 
 def new_lead(client, **fields):
     res = client.post("/api/leads", json={"company": "Acme", **fields})
     assert res.status_code == 201, res.get_json()
     return res.get_json()
+
+
+def complete_setup(anon, userid, setup_code, pin="482915"):
+    """Walk a brand-new user through /set-pin, same as they would on their own phone - anon must be a
+    client that is not already signed in as someone else (set-pin bounces away otherwise)."""
+    return anon.post("/set-pin", data={
+        "csrf": csrf(anon), "userid": userid, "code": setup_code, "pin": pin, "confirm": pin,
+    })
 
 
 # ---------- the Users screen API is admin only ----------
@@ -35,9 +43,14 @@ def test_admin_adds_a_user_and_sees_the_setup_code_once(admin_client, app):
 
 # ---------- every non-admin user also shows up as an employee (Worker) ----------
 
-def test_adding_a_user_also_adds_a_matching_worker(admin_client, app):
+def test_a_new_user_is_not_an_employee_until_they_sign_in_for_the_first_time(admin_client, anon, app):
     res = admin_client.post("/api/users", json={"name": "Priya Enquiry", "role": "sales_office"})
-    code = res.get_json()["user"]["code"]
+    body = res.get_json()
+    code, userid, setup_code = body["user"]["code"], body["user"]["userid"], body["setup_code"]
+    with app.app_context():
+        assert Worker.query.filter_by(user_code=code).first() is None     # pending - not an employee yet
+
+    assert complete_setup(anon, userid, setup_code).status_code == 302
     with app.app_context():
         worker = Worker.query.filter_by(user_code=code).first()
         assert worker is not None
@@ -49,9 +62,20 @@ def test_the_admin_itself_gets_no_worker(admin_client, admin, app):
         assert Worker.query.filter_by(user_code=admin.code).first() is None
 
 
-def test_changing_a_users_role_updates_their_linked_worker_too(admin_client, app):
-    res = admin_client.post("/api/users", json={"name": "Rohit Field", "role": "sales_field"})
+def test_changing_a_pending_users_role_does_not_create_a_worker_yet(admin_client, app):
+    res = admin_client.post("/api/users", json={"name": "Still Pending", "role": "sales_field"})
     code = res.get_json()["user"]["code"]
+    admin_client.post(f"/api/users/{code}/role", json={"role": "sales_office"})
+    with app.app_context():
+        assert Worker.query.filter_by(user_code=code).first() is None
+
+
+def test_changing_an_active_users_role_updates_their_linked_worker_too(admin_client, anon, app):
+    res = admin_client.post("/api/users", json={"name": "Rohit Field", "role": "sales_field"})
+    body = res.get_json()
+    code, userid, setup_code = body["user"]["code"], body["user"]["userid"], body["setup_code"]
+    complete_setup(anon, userid, setup_code)
+
     res = admin_client.post(f"/api/users/{code}/role", json={"role": "sales_office"})
     assert res.status_code == 200
     with app.app_context():
