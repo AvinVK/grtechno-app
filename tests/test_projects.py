@@ -472,6 +472,46 @@ def test_only_the_admin_can_delete_a_project(client, admin_client, accounts_clie
         assert Attendance.query.one().project_id is None       # the attendance stays, just without a project
 
 
+# ---------- materials used (the project's own expense leg, from Inventory's issue ledger) ----------
+
+def add_material_and_issue(admin_client, project_id, name="Cement", quantity=10, rate=50):
+    material = admin_client.post("/api/inventory/materials", json={"name": name, "unit": "bags"}).get_json()["material"]
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": quantity * 10, "rate": rate})
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue",
+                             json={"quantity": quantity, "project_id": project_id, "note": "Foundation work"})
+    assert res.status_code == 201, res.get_json()
+    return material
+
+
+def test_project_detail_lists_materials_issued_to_it_and_their_total_cost(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Site With Materials"}).get_json()["project"]["id"]
+    add_material_and_issue(admin_client, pid, "Cement", quantity=10, rate=50)
+    add_material_and_issue(admin_client, pid, "TMT Bars", quantity=5, rate=60)
+
+    detail = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert detail["total_material_cost"] == 800                          # 10*50 + 5*60
+    materials = detail["materials"]
+    assert len(materials) == 2
+    assert {m["material_name"] for m in materials} == {"Cement", "TMT Bars"}
+    cement = next(m for m in materials if m["material_name"] == "Cement")
+    assert cement["quantity"] == 10 and cement["rate"] == 50 and cement["amount"] == 500
+    assert cement["note"] == "Foundation work" and cement["material_code"]
+
+
+def test_project_with_no_materials_issued_has_an_empty_list(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "No Materials Yet"}).get_json()["project"]["id"]
+    detail = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert detail["materials"] == [] and detail["total_material_cost"] == 0
+
+
+def test_materials_issued_to_a_different_project_do_not_show_up(admin_client):
+    pid1 = admin_client.post("/api/projects", json={"new_client_name": "Project One"}).get_json()["project"]["id"]
+    pid2 = admin_client.post("/api/projects", json={"new_client_name": "Project Two"}).get_json()["project"]["id"]
+    add_material_and_issue(admin_client, pid1, "Cement", quantity=10, rate=50)
+    detail = admin_client.get(f"/api/projects/{pid2}").get_json()
+    assert detail["materials"] == []
+
+
 def test_a_closed_project_can_still_be_deleted(client, admin_client):
     """TEMPORARY - closed/completed projects need the backfill cleanup too."""
     pid = make_project(client, admin_client)

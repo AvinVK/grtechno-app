@@ -30,7 +30,7 @@
 
   // The four sections of one project - a horizontally-scrolling chip row, same pattern as the stage
   // filters elsewhere, so it never depends on a fixed item count fitting a phone's width.
-  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['details', 'More details'], ['attendance', 'Attendance']];
+  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['details', 'More details'], ['attendance', 'Attendance']];
   const projectTabs = (id, active) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
     PROJECT_TABS.map(([slug, label]) => h('a', {
       class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
@@ -512,6 +512,7 @@
       return;
     }
     if (section === 'payments') renderPayments(data);
+    else if (section === 'materials') renderMaterials(data);
     else if (section === 'details') renderDetails(data);
     else if (section === 'attendance') renderAttendance(data);
     else renderDashboard(data);
@@ -962,8 +963,36 @@
     window.scrollTo(0, 0);
   }
 
+  // What's been issued to this project from Inventory (see app/inventory.py's stock-out ledger) - the
+  // material leg of the project's own running cost, same rate Inventory shows (what the stock actually
+  // cost at the time, not a guess). Read-only here; a correction happens from the material's own history
+  // in Inventory, same as everywhere else that ledger is shown.
+  function renderMaterials(data) {
+    const P = data.project;
+    const c = data.client;
+    const cur = data.currency;
+    const materials = data.materials || [];
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, 'materials'),
+      h('section', { class: 'p-section' },
+        h('div', { class: 'p-section-head' },
+          h('h3', {}, 'Materials used'),
+          materials.length ? h('span', { class: 'p-code' }, money(data.total_material_cost, cur)) : null),
+        materials.length
+          ? h('ul', { class: 'card-group' }, materials.map((m) => h('li', { class: 'p-row' },
+              h('span', { class: 'p-main' },
+                h('span', { class: 'row-title' }, `${m.material_code} · ${m.material_name}`),
+                h('span', { class: 'row-sub' },
+                  [fmtDate(m.entry_date), `${m.quantity} ${m.unit || ''}`.trim(), m.given_by_name ? `Given by ${m.given_by_name}` : null, m.note || null]
+                    .filter(Boolean).join(' · '))),
+              h('span', { class: 'row-value' }, money(m.amount, cur)))))
+          : h('p', { class: 'hint' }, 'No material has been issued to this project yet - see Inventory.'))));
+    window.scrollTo(0, 0);
+  }
+
   function route() {
-    const m = /^#p(\d+)(\/(payments|details|attendance))?$/.exec(window.location.hash);
+    const m = /^#p(\d+)(\/(payments|materials|details|attendance))?$/.exec(window.location.hash);
     if (m) return showDetail(Number(m[1]), m[3] || '');
     const add = /^#new(?:\/c(\d+))?$/.exec(window.location.hash);
     if (add) return showNew(add[1] ? Number(add[1]) : null);

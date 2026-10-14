@@ -12,7 +12,7 @@ from werkzeug.exceptions import abort
 from .auth import visible_clients, visible_projects
 from .constants import PAYMENT_MODES
 from .extensions import db
-from .models import Activity, Attendance, Client, Project, ProjectPayment, Service, User, WorkerAttendance, settings_for_client, utcnow
+from .models import Activity, Attendance, Client, MaterialMovement, Project, ProjectPayment, Service, User, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local
@@ -262,9 +262,31 @@ def create_project():
     return jsonify(_detail(project)), 201
 
 
+def _material_costs(project):
+    """What's been issued to this project (Inventory's own stock-out ledger - see app/inventory.py), for
+    the Materials tab: one row per issue, at whatever rate the stock actually cost at the time, same figure
+    Inventory itself shows. Not gated on the Inventory module - this is the project's own expense, not a
+    stock-management action."""
+    movements = (
+        MaterialMovement.query.filter_by(project_id=project.id, kind="out")
+        .order_by(MaterialMovement.entry_date.desc(), MaterialMovement.id.desc())
+        .all()
+    )
+    rows = [{
+        "id": mv.id, "material_id": mv.material_id, "material_name": mv.material.name,
+        "material_code": mv.material.code, "unit": mv.material.unit,
+        "quantity": float(mv.quantity), "rate": float(mv.rate), "amount": float(mv.amount),
+        "entry_date": mv.entry_date.isoformat(), "note": mv.note,
+        "given_by_name": mv.given_by.name if mv.given_by else None,
+    } for mv in movements]
+    total = float(sum((mv.amount for mv in movements), start=Decimal("0")))
+    return rows, total
+
+
 def _detail(project):
     client = project.client
     can_assign = g.user.sees_all
+    materials, total_material_cost = _material_costs(project)
     body = {
         "project": project.to_dict(detail=True),
         "client": {"id": client.id, "name": client.name, "contact_name": client.contact_name, "phone": client.phone},
@@ -272,6 +294,8 @@ def _detail(project):
         "currency": settings_for_client()["currency"],
         "payment_modes": PAYMENT_MODES,
         "can_assign_manager": can_assign,
+        "materials": materials,
+        "total_material_cost": total_material_cost,
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
             "started": (project.start_date or to_local(project.created_at).date()).isoformat(),   # local day, not UTC
