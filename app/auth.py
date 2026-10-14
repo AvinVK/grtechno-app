@@ -27,7 +27,8 @@ SETUP_CODE_DAYS = 7
 MAX_FAILURES = 5
 LOCKOUT = timedelta(minutes=5)
 PIN_LENGTH = 6
-CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O or 1/I so a code read aloud is not misheard
+CODE_ALPHABET = "23456789"   # digits only (no 0/1, read aloud or misread for O/I) - one keyboard to type
+                              # on a phone, instead of switching between letters and numbers typing it in
 PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "deploy.deploy", "static"}
 LOCKED_MESSAGE = "Too many wrong tries. Wait 5 minutes and try again."
 _DUMMY_HASH = generate_password_hash("not-a-real-password")
