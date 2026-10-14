@@ -684,6 +684,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
    than cutting its buttons off the bottom of a centred dialog. */
 .amount-sheet {
   display: grid; gap: 12px; width: 100%; max-width: 520px;
+  max-height: 90vh; overflow-y: auto;
   padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
   border-radius: var(--r-card) var(--r-card) 0 0;
   background: var(--panel);

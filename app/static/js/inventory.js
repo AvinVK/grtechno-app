@@ -112,14 +112,47 @@
     ];
   }
 
-  // A bulk-entry typo happens on quantity (and, for a stock-in, cost) more than anything else - this is a
-  // small sheet, not the full add form, so fixing one is quick. Everything else on the entry is carried
-  // over unchanged.
-  function editMovementSheet(materialId, mv, onSaved) {
+  // A bulk-entry mistake can be on any field, not just quantity - this edits everything the entry was
+  // ever saved with, same fields as its own add form (see movementForm below), just pre-filled and PATCHed
+  // instead of POSTed. `data` is the material detail response (suppliers/workers/projects/currency) it was
+  // loaded alongside.
+  function editMovementSheet(materialId, mv, data, onSaved) {
     const isIn = mv.kind === 'in';
+    const { currency } = data;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.quantity });
     const rate = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.rate }) : null;
+    const supplierSel = isIn ? supplierPicker(data.suppliers.map((s) => ({ value: s.id, label: s.name })), mv.supplier_id ?? '') : null;
+    const billNo = isIn ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off', value: mv.bill_no || '' }) : null;
+    const paymentMode = isIn ? selectField(PAYMENT_MODES, mv.payment_mode || 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
+    const gstPercent = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.gst_percent }) : null;
+    const gstAmount = isIn ? h('input', { type: 'text', disabled: true, value: money(mv.gst_amount, currency) }) : null;
+    const totalCost = isIn ? h('input', { type: 'text', disabled: true, value: money(mv.total_cost, currency) }) : null;
+    // A project that's since been completed drops out of the "current projects" list this picker is
+    // normally offered - keep this entry's own project selectable regardless, same as a lead's "previously
+    // picked" enquired-by.
+    const projectOptions = !isIn ? data.projects.map((p) => ({ value: p.id, label: `${p.code} · ${p.title}` })) : [];
+    if (!isIn && mv.project_id && !projectOptions.some((o) => o.value === mv.project_id)) {
+      projectOptions.push({ value: mv.project_id, label: mv.project_title ? `${mv.project_code} · ${mv.project_title}` : 'Previously picked' });
+    }
+    const project = !isIn ? selectField(projectOptions, mv.project_id ?? '', { title: 'Project', placeholder: 'Choose a project' }) : null;
+    const givenBy = !isIn ? selectField(data.workers.map((w) => ({ value: w.id, label: w.name })), mv.given_by_worker_id ?? '', { title: 'Given by', placeholder: 'Who gave it out' }) : null;
+    const date = dateField(mv.entry_date, { placeholder: 'Date' });
+    const note = h('input', { type: 'text', maxlength: 200, autocomplete: 'off', value: mv.note || '' });
+
+    if (isIn) {
+      const recalc = () => {
+        const q = Number(qty.value) || 0;
+        const r = Number(rate.value) || 0;
+        const g = Number(gstPercent.value) || 0;
+        const amount = q * r;
+        const gst = amount * g / 100;
+        gstAmount.value = money(gst, currency);
+        totalCost.value = money(amount + gst, currency);
+      };
+      [qty, rate, gstPercent].forEach((el) => el.addEventListener('input', recalc));
+    }
+
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save');
@@ -129,11 +162,24 @@
     saveBtn.onclick = async () => {
       saveBtn.disabled = true;
       errEl.textContent = '';
-      const body = isIn
-        ? { quantity: qty.value, rate: rate.value, supplier_id: mv.supplier_id, bill_no: mv.bill_no,
-            payment_mode: mv.payment_mode, gst_percent: mv.gst_percent, note: mv.note, entry_date: mv.entry_date }
-        : { quantity: qty.value, project_id: mv.project_id, given_by_worker_id: mv.given_by_worker_id,
-            note: mv.note, entry_date: mv.entry_date };
+      if (isIn && supplierSel.newSupplierName) {
+        try {
+          const created = await api('/api/inventory/suppliers', { method: 'POST', body: { name: supplierSel.newSupplierName } });
+          data.suppliers.push(created.supplier);
+          supplierSel.setOptions(data.suppliers.map((s) => ({ value: s.id, label: s.name })));
+          supplierSel.value = created.supplier.id;
+        } catch (err) {
+          errEl.textContent = (err.fields && err.fields.name) || err.message;
+          saveBtn.disabled = false;
+          return;
+        }
+      }
+      const body = { quantity: qty.value, entry_date: date.value, note: note.value };
+      if (isIn) Object.assign(body, {
+        rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
+        payment_mode: paymentMode.value, gst_percent: gstPercent.value || '0',
+      });
+      else Object.assign(body, { project_id: project.value ? Number(project.value) : null, given_by_worker_id: givenBy.value ? Number(givenBy.value) : null });
       try {
         await api(`/api/inventory/materials/${materialId}/movements/${mv.id}`, { method: 'PATCH', body });
         finish();
@@ -147,7 +193,15 @@
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, isIn ? 'Edit stock in' : 'Edit issue'),
       field('quantity', 'Quantity', qty),
-      isIn ? field('rate', 'Purchase cost', rate) : null,
+      isIn ? field('rate', 'Purchase cost', rate) : field('project_id', 'Project', project),
+      isIn ? field('supplier_id', 'Supplier name', supplierSel) : field('given_by_worker_id', 'Given by', givenBy),
+      isIn ? field('bill_no', 'Bill no', billNo) : null,
+      isIn ? field('payment_mode', 'Credit or cash', paymentMode) : null,
+      isIn ? field('gst_percent', 'GST %', gstPercent) : null,
+      isIn ? field('gst_amount', 'GST amt', gstAmount) : null,
+      isIn ? field('total_cost', 'Total cost', totalCost) : null,
+      field('entry_date', 'Date', date),
+      field('note', 'Remarks', note),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
     document.body.append(overlay);
@@ -164,8 +218,9 @@
     } catch (err) { toast(err.message, true); }
   }
 
-  function movementRow(materialId, mv, currency, onChanged) {
+  function movementRow(materialId, mv, data, onChanged) {
     const isIn = mv.kind === 'in';
+    const { currency } = data;
     const extra = isIn
       ? [mv.supplier_name, mv.bill_no ? `Bill ${mv.bill_no}` : null, mv.payment_mode ? (mv.payment_mode === 'credit' ? 'Credit' : 'Cash') : null]
       : [mv.given_by_name ? `Given by ${mv.given_by_name}` : null];
@@ -176,7 +231,7 @@
         h('span', { class: 'row-sub' }, [fmtDate(mv.entry_date), mv.project_title ? `${mv.project_code} · ${mv.project_title}` : null, ...extra, mv.note || null, mv.created_by_name ? `by ${mv.created_by_name}` : null].filter(Boolean).join(' · ')),
         h('span', { class: 'bill-links' },
           isIn ? billControl(materialId, mv, onChanged) : null,
-          h('button', { type: 'button', class: 'link-btn', onclick: () => editMovementSheet(materialId, mv, onChanged) }, 'Edit'),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => editMovementSheet(materialId, mv, data, onChanged) }, 'Edit'),
           h('button', { type: 'button', class: 'link-btn', onclick: () => deleteMovement(materialId, mv, onChanged) }, 'Delete'))),
       h('span', { class: 'row-value' }, money(isIn ? mv.total_cost : mv.amount, currency)));
   }
@@ -212,7 +267,7 @@
       h('section', { class: 'p-section' },
         h('h3', {}, 'History'),
         data.movements.length
-          ? h('ul', { class: 'card-group' }, data.movements.map((mv) => movementRow(m.id, mv, data.currency, () => showDetail(id))))
+          ? h('ul', { class: 'card-group' }, data.movements.map((mv) => movementRow(m.id, mv, data, () => showDetail(id))))
           : h('p', { class: 'hint' }, 'No stock-in or issue entries yet.'))));
   }
 
