@@ -28,9 +28,12 @@ def _open_projects():
 
 
 def _open_session():
-    """The session the signed-in person is currently in, if any - at most one of their rows for today ever
-    has no check_out_at (check_in below refuses a second one while one is open)."""
-    return Attendance.query.filter_by(user_code=g.user.code, work_date=date.today(), check_out_at=None).first()
+    """The session the signed-in person is currently in, if any - across every day, not just today. A
+    session left open past midnight (forgot to check out) must still block a new check-in the next day,
+    rather than quietly starting a second one while the first is still "open" (kohal, 2026-10-15 - a
+    forgotten Wed check-out was letting Thu check-in happen anyway)."""
+    return (Attendance.query.filter_by(user_code=g.user.code, check_out_at=None)
+            .order_by(Attendance.check_in_at.desc()).first())
 
 
 def _coord(payload, name, low, high, errors):

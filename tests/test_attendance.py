@@ -142,6 +142,27 @@ def test_cannot_check_out_twice(client):
     assert client.post("/api/attendance/check-out").status_code == 409
 
 
+def test_an_open_session_left_over_from_an_earlier_day_still_blocks_a_new_check_in(client, app, user):
+    """A forgotten check-out on, say, Wednesday must not let Thursday's check-in through anyway - it has to
+    be checked out first, same as a same-day open session (kohal, 2026-10-15, screenshot: Wed left "still
+    checked in", Thu allowed to check in regardless)."""
+    with app.app_context():
+        db.session.add(Attendance(
+            user_code=user.code, work_date=date.today() - timedelta(days=1), check_in_at=utcnow(),
+        ))
+        db.session.commit()
+    res = check_in(client)
+    assert res.status_code == 409
+
+    state = client.get("/api/attendance/state").get_json()
+    assert state["today"] is not None       # the old open session, surfaced so Check out still works
+    assert state["today"]["work_date"] == (date.today() - timedelta(days=1)).isoformat()
+
+    out = client.post("/api/attendance/check-out")
+    assert out.status_code == 200
+    assert check_in(client).status_code == 201     # now that it's closed, a fresh check-in works
+
+
 def test_history_shows_past_days(client, app, user):
     with app.app_context():
         db.session.add(Attendance(
