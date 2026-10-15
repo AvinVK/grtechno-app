@@ -14,12 +14,13 @@
     <div class="field">
       <label for="code">Setup code</label>
       <input id="code" name="code" autocomplete="off" inputmode="numeric" spellcheck="false"
-             placeholder="1234-5678" {% if userid %}autofocus{% endif %} required>
+             placeholder="XXXX-XXXX" {% if userid %}autofocus{% endif %} required>
+      <p class="hint">From your admin's message - not an example, your own code.</p>
     </div>
     <div class="field">
       <label for="userid">Userid</label>
       <input id="userid" name="userid" value="{{ userid }}" autocomplete="username" autocapitalize="none"
-             spellcheck="false" placeholder="name-1234" {% if not userid %}autofocus{% endif %} required>
+             spellcheck="false" placeholder="yourname-1234" {% if not userid %}autofocus{% endif %} required>
     </div>
     {% call pin_field('pin', 'New PIN', pin_length, 'new-password', attrs='minlength="' ~ pin_length ~ '" required') %}
       <p class="hint">Exactly {{ pin_length }} digits.</p>
