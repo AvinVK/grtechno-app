@@ -279,16 +279,8 @@
   function materialForm(material, data) {
     const isAdd = !material;
     const M = material || { name: '', unit: '', notes: '' };
-    const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
-    // Material name autopredict: a native <datalist> of every material already on file, so a near-duplicate
-    // (an extra space, a slightly different spelling) shows up while typing instead of only on save - see
-    // _material_fields' "already exists" check, which still has the final say.
-    const nameListId = `material-name-list-${Date.now()}`;
-    const nameList = h('datalist', { id: nameListId }, ((data && data.material_names) || [])
-      .filter((n) => n !== M.name)
-      .map((n) => h('option', { value: n })));
     const controls = {
-      name: text('text', M.name, { maxlength: 120, autocomplete: 'off', list: nameListId }),
+      name: nameSuggestField(M.name, (data && data.material_names) || []),
       unit: unitPicker((data && data.units) || [], M.unit || ''),
       notes: (() => { const t = h('textarea', { rows: 3 }); t.value = M.notes ?? ''; return t; })(),
     };
@@ -376,7 +368,6 @@
         }
       } },
       errorBox,
-      nameList,
       h('div', { class: 'form-grid' },
         field('name', 'Material name', controls.name, { wide: true }),
         field('unit', 'Unit', controls.unit),
@@ -477,6 +468,42 @@
     Object.defineProperty(wrap, 'value', {
       get: () => (sel.value === NEW ? typed.value.trim() : sel.value),
       set: (v) => { sel.value = v || ''; typed.hidden = true; },
+      configurable: true,
+    });
+    return wrap;
+  }
+
+  // Material name autopredict: a free-text field with a "did you mean" dropdown of its own, styled like the
+  // rest of the app instead of the phone's native autofill strip (kohal, 2026-10-15 - the browser's own
+  // keyboard-bar suggestion looked out of place). Narrows to materials already on file that contain what's
+  // typed so far, shown right under the field; picking one fills it in, typing something new is still fine
+  // either way - _material_fields' "already exists" check on save still has the final say.
+  function nameSuggestField(value, names) {
+    const input = h('input', { type: 'text', value: value ?? '', maxlength: 120, autocomplete: 'off' });
+    const list = h('ul', { class: 'name-suggest-list', role: 'listbox' });
+    list.hidden = true;
+    const wrap = h('div', { class: 'name-suggest' }, input, list);
+
+    const close = () => { list.hidden = true; clear(list); };
+    const showMatches = () => {
+      const q = input.value.trim().toLowerCase();
+      const matches = q ? names.filter((n) => n.toLowerCase() !== q && n.toLowerCase().includes(q)).slice(0, 6) : [];
+      clear(list);
+      if (!matches.length) { list.hidden = true; return; }
+      matches.forEach((n) => list.append(h('li', {
+        class: 'name-suggest-row', role: 'option', tabindex: '-1',
+        onmousedown: (e) => e.preventDefault(),      // keep focus on the field, so the click lands before blur closes the list
+        onclick: () => { input.value = n; close(); input.dispatchEvent(new Event('input', { bubbles: true })); },
+      }, n)));
+      list.hidden = false;
+    };
+    input.addEventListener('input', showMatches);
+    input.addEventListener('focus', showMatches);
+    input.addEventListener('blur', () => { setTimeout(close, 120); });
+
+    Object.defineProperty(wrap, 'value', {
+      get: () => input.value,
+      set: (v) => { input.value = v ?? ''; },
       configurable: true,
     });
     return wrap;
