@@ -280,9 +280,16 @@
     const isAdd = !material;
     const M = material || { name: '', unit: '', notes: '' };
     const text = (type, value, extra = {}) => h('input', { type, value: value ?? '', ...extra });
+    // Material name autopredict: a native <datalist> of every material already on file, so a near-duplicate
+    // (an extra space, a slightly different spelling) shows up while typing instead of only on save - see
+    // _material_fields' "already exists" check, which still has the final say.
+    const nameListId = `material-name-list-${Date.now()}`;
+    const nameList = h('datalist', { id: nameListId }, ((data && data.material_names) || [])
+      .filter((n) => n !== M.name)
+      .map((n) => h('option', { value: n })));
     const controls = {
-      name: text('text', M.name, { maxlength: 120, autocomplete: 'off' }),
-      unit: text('text', M.unit, { maxlength: 20, autocomplete: 'off', placeholder: 'bags, kg, pcs, mtr…' }),
+      name: text('text', M.name, { maxlength: 120, autocomplete: 'off', list: nameListId }),
+      unit: unitPicker((data && data.units) || [], M.unit || ''),
       notes: (() => { const t = h('textarea', { rows: 3 }); t.value = M.notes ?? ''; return t; })(),
     };
 
@@ -369,6 +376,7 @@
         }
       } },
       errorBox,
+      nameList,
       h('div', { class: 'form-grid' },
         field('name', 'Material name', controls.name, { wide: true }),
         field('unit', 'Unit', controls.unit),
@@ -443,6 +451,34 @@
       configurable: true,
     });
     wrap.setOptions = (newItems) => { list = newItems.map((i) => (typeof i === 'object' ? i : { value: i, label: i })); sel.setOptions(withExtras()); };
+    return wrap;
+  }
+
+  // A unit picker: the shared list (Meter, EA, LOT, JOB, PCS, KG, grown by whatever's been typed before -
+  // see MaterialUnit), plus "+ Add a new unit…". Material.unit is a plain string, not an id, so unlike
+  // supplierPicker there's no id to resolve after saving - `.value` already is the string to send, whether
+  // picked from the list or freshly typed, and the backend remembers a new one for next time on its own.
+  function unitPicker(items, value, opts = {}) {
+    const NEW = '__new_unit__';
+    const list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
+    // A material already saved with a unit that's since fallen off the shared list (or just predates it)
+    // still needs to show as itself, not blank.
+    const extra = value && !list.some((i) => i.value === value) ? [{ value, label: value }] : [];
+    const options = [{ value: '', label: 'Not set' }, ...list, ...extra, { value: NEW, label: '+ Add a new unit…' }];
+    const sel = selectField(options, value || '', { title: opts.title || 'Unit', placeholder: 'Choose a unit' });
+    const typed = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'New unit' });
+    typed.hidden = true;
+    typed.setAttribute('aria-label', 'New unit');
+    const wrap = h('div', { class: 'category-picker' }, sel, typed);
+    sel.addEventListener('change', () => {
+      typed.hidden = sel.value !== NEW;
+      if (!typed.hidden) typed.focus();
+    });
+    Object.defineProperty(wrap, 'value', {
+      get: () => (sel.value === NEW ? typed.value.trim() : sel.value),
+      set: (v) => { sel.value = v || ''; typed.hidden = true; },
+      configurable: true,
+    });
     return wrap;
   }
 

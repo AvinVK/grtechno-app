@@ -298,6 +298,48 @@ def test_materials_list_and_detail_carry_suppliers_and_workers_for_the_pickers(a
     assert wid in [w["id"] for w in data["workers"]]
 
 
+# ---------- unit picker (kohal, 2026-10-15: "for unit, need dropdown with these: Meter EA LOT JOB PCS KG ADD NEW") ----------
+
+def test_a_new_unit_is_remembered_for_the_picker_without_duplicating(admin_client):
+    add_material(admin_client, "Cement", unit="Bags")
+    units = admin_client.get("/api/inventory/materials").get_json()["units"]
+    assert "Bags" in units
+
+    # typed again, different case, on another material - not added twice
+    add_material(admin_client, "Sand", unit="bags")
+    units = admin_client.get("/api/inventory/materials").get_json()["units"]
+    assert units.count("Bags") == 1 and "bags" not in units
+
+
+def test_a_blank_unit_is_not_remembered(admin_client):
+    add_material(admin_client, "Cement", unit="")
+    units = admin_client.get("/api/inventory/materials").get_json()["units"]
+    assert "" not in units
+
+
+def test_editing_a_material_s_unit_grows_the_picker_too(admin_client):
+    material = add_material(admin_client, "Cement", unit="Bags")
+    res = admin_client.patch(f"/api/inventory/materials/{material['id']}", json={"name": "Cement", "unit": "KG"})
+    assert res.status_code == 200 and res.get_json()["material"]["unit"] == "KG"
+    units = admin_client.get("/api/inventory/materials").get_json()["units"]
+    assert "KG" in units
+
+
+def test_material_detail_also_carries_units_for_the_picker(admin_client):
+    material = add_material(admin_client, "Cement", unit="Bags")
+    data = admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()
+    assert "Bags" in data["units"]
+
+
+def test_materials_list_and_detail_carry_material_names_for_the_name_autopredict(admin_client):
+    add_material(admin_client, "Cement")
+    material = add_material(admin_client, "Steel Rod")
+    data = admin_client.get("/api/inventory/materials").get_json()
+    assert {"Cement", "Steel Rod"} <= set(data["material_names"])
+    data = admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()
+    assert {"Cement", "Steel Rod"} <= set(data["material_names"])
+
+
 def test_only_a_stock_in_entry_can_have_a_bill(admin_client):
     material = add_material(admin_client)
     mid = material["id"]

@@ -516,6 +516,19 @@ class Supplier(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
 
+class MaterialUnit(db.Model):
+    """The unit a material is counted in (Meter, EA, LOT...) - its own short list, same idea as Supplier,
+    seeded with the usual set and grown whenever someone types a new one on Add/Edit material. Material.unit
+    itself stays a plain string (see Material) - this table only backs the picker's suggestions, so a typo
+    or a one-off unit never needs a migration."""
+
+    __tablename__ = "material_units"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(20), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+
 class MaterialMovement(db.Model):
     """One stock-in (a purchase or receipt) or stock-out (issued to a project) entry for a material - a
     ledger, so the stock and value on the Material row can always be traced back to where they came from

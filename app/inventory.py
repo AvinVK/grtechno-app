@@ -17,7 +17,7 @@ from werkzeug.exceptions import abort
 from .auth import visible_projects
 from .extensions import db
 from .modules import check_module
-from .models import Material, MaterialMovement, Project, Supplier, Worker, settings_for_client
+from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -63,6 +63,9 @@ def _material_fields(payload, required=False):
         if clash is not None and request.view_args.get("material_id") != clash.id:
             f.errors["name"] = "A material with that name already exists"
             f.data.pop("name", None)
+    unit = f.data.get("unit")
+    if unit and not MaterialUnit.query.filter(db.func.lower(MaterialUnit.name) == unit.lower()).first():
+        db.session.add(MaterialUnit(name=unit))        # grow the picker's list - see MaterialUnit
     return f
 
 
@@ -201,6 +204,16 @@ def _suppliers_for_client():
     return [{"id": s.id, "name": s.name} for s in Supplier.query.order_by(Supplier.name).all()]
 
 
+def _units_for_client():
+    return [u.name for u in MaterialUnit.query.order_by(MaterialUnit.name).all()]
+
+
+def _material_names():
+    """Every material's name, for the Add/Edit material name field's autopredict - so a near-duplicate
+    ("Cement" vs "cement bags") gets caught by typing, not just by the "already exists" error on save."""
+    return [name for (name,) in db.session.query(Material.name).order_by(Material.name).all()]
+
+
 def _workers_for_client():
     """Who can be picked as "Given by" on an issue - anyone on the Employee management list, not just
     sales (unlike Enquired by on leads), since it's whoever physically hands the material over."""
@@ -215,6 +228,8 @@ def list_materials():
         projects=[{"id": p.id, "code": p.code, "title": p.title} for p in _current_projects()],
         suppliers=_suppliers_for_client(),
         workers=_workers_for_client(),
+        units=_units_for_client(),
+        material_names=_material_names(),
         total_stock_value=float(sum((m.stock_value for m in materials), start=0)),
         currency=settings_for_client()["currency"],
     )
@@ -246,6 +261,8 @@ def get_material(material_id):
         projects=[{"id": p.id, "code": p.code, "title": p.title} for p in _current_projects()],
         suppliers=_suppliers_for_client(),
         workers=_workers_for_client(),
+        units=_units_for_client(),
+        material_names=_material_names(),
         currency=settings_for_client()["currency"],
     )
 
