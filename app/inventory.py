@@ -58,7 +58,7 @@ def _movement_or_404(material: Material, movement_id: int) -> MaterialMovement:
 
 def _used_in_list(payload, f):
     """Which fire-protection system(s) a material is used in - any number of the fixed categories, plus
-    whatever was typed for "Other..specify". Not a Fields.choice (that's one value, not several), so this
+    whatever was typed for "Other - specify". Not a Fields.choice (that's one value, not several), so this
     is handled by hand and stored as JSON - see Material.used_in."""
     if "used_in" not in payload:
         return

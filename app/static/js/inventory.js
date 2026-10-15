@@ -374,7 +374,7 @@
         field('name', 'Material name', controls.name, { wide: true }),
         field('unit', 'Unit', controls.unit),
         field('frequency', 'Frequency used in material', controls.frequency),
-        field('used_in', 'Used in..', controls.used_in, { wide: true }),
+        field('used_in', 'Used in', controls.used_in, { wide: true }),
         field('notes', 'Notes', controls.notes, { wide: true }),
         showSupply ? field('quantity', 'Quantity', qty) : null,
         showSupply ? field('rate', 'Purchase cost', rate) : null,
@@ -540,7 +540,7 @@
       if (otherCb.checked) otherText.focus(); else otherText.value = '';
     });
     const wrap = h('div', { class: 'used-in-field' },
-      h('div', { class: 'check-grid' }, boxes.map((b) => b.row), h('label', { class: 'check-row' }, otherCb, h('span', {}, 'Other..specify'))),
+      h('div', { class: 'check-grid' }, boxes.map((b) => b.row), h('label', { class: 'check-row' }, otherCb, h('span', {}, 'Other - specify'))),
       otherText);
     Object.defineProperty(wrap, 'value', {
       get: () => {
