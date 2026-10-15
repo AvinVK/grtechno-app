@@ -1364,6 +1364,8 @@ a.p-client-name { color: var(--accent-dark); }
 .name-suggest-row { padding: 12px 14px; font: 400 15px/1.3 var(--font-body); cursor: pointer; }
 .name-suggest-row:hover, .name-suggest-row:focus-visible { background: var(--paper); outline: none; }
 
+.used-in-field { display: grid; gap: 8px; }
+
 /* ---------- Attendance ---------- */
 
 .att-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; max-width: 480px; margin: 0 auto 12px; }

@@ -9,6 +9,7 @@ entries - never edited directly, so the two always add up:
     already on the row, so the project's cost reflects what the stock actually cost, not a guess.
 """
 
+import json
 from decimal import Decimal
 
 from flask import Blueprint, g, jsonify, render_template, request
@@ -24,6 +25,9 @@ from .validation import Fields, api_errors
 
 bp = Blueprint("inventory", __name__)
 api_errors(bp)
+
+FREQUENCY_CHOICES = ("", "every_project", "special_project", "occasional")
+USED_IN_MAX_ITEMS = 10
 
 
 @bp.before_request
@@ -52,11 +56,37 @@ def _movement_or_404(material: Material, movement_id: int) -> MaterialMovement:
     return movement
 
 
+def _used_in_list(payload, f):
+    """Which fire-protection system(s) a material is used in - any number of the fixed categories, plus
+    whatever was typed for "Other..specify". Not a Fields.choice (that's one value, not several), so this
+    is handled by hand and stored as JSON - see Material.used_in."""
+    if "used_in" not in payload:
+        return
+    raw = payload.get("used_in")
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        f.errors["used_in"] = "Choose from the list"
+        return
+    cleaned, seen = [], set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        item = item.strip()[:60]
+        if not item or item.lower() in seen:
+            continue
+        seen.add(item.lower())
+        cleaned.append(item)
+    f.data["used_in"] = json.dumps(cleaned[:USED_IN_MAX_ITEMS])
+
+
 def _material_fields(payload, required=False):
     f = Fields(payload)
     f.text("name", 120, required=required, label="the material's name")
     f.text("unit", 20)
     f.text("notes", 400)
+    f.choice("frequency", FREQUENCY_CHOICES)
+    _used_in_list(payload, f)
     if f.data.get("name"):
         dupe = Material.query.filter(db.func.lower(Material.name) == f.data["name"].lower())
         clash = dupe.first()

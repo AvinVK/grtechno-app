@@ -340,6 +340,52 @@ def test_materials_list_and_detail_carry_material_names_for_the_name_autopredict
     assert {"Cement", "Steel Rod"} <= set(data["material_names"])
 
 
+# ---------- frequency and used-in (kohal, 2026-10-15) ----------
+
+def test_frequency_and_used_in_default_to_blank(admin_client):
+    material = add_material(admin_client)
+    assert material["frequency"] == "" and material["used_in"] == []
+
+
+def test_frequency_accepts_only_the_fixed_choices(admin_client):
+    res = admin_client.post("/api/inventory/materials", json={"name": "Hydrant valve", "frequency": "every_project"})
+    assert res.status_code == 201 and res.get_json()["material"]["frequency"] == "every_project"
+
+    res = admin_client.post("/api/inventory/materials", json={"name": "Odd one", "frequency": "sometimes"})
+    assert res.status_code == 422 and "frequency" in res.get_json()["fields"]
+
+
+def test_used_in_takes_more_than_one_category_plus_a_typed_other(admin_client):
+    res = admin_client.post("/api/inventory/materials", json={
+        "name": "GI Pipe", "used_in": ["Hydrant", "Sprinkler", "Deluge system"],
+    })
+    assert res.status_code == 201
+    assert set(res.get_json()["material"]["used_in"]) == {"Hydrant", "Sprinkler", "Deluge system"}
+
+
+def test_used_in_drops_blanks_and_duplicates_case_insensitively(admin_client):
+    res = admin_client.post("/api/inventory/materials", json={
+        "name": "Clamp", "used_in": ["Hydrant", "hydrant", "  ", "Sprinkler"],
+    })
+    assert res.status_code == 201
+    assert res.get_json()["material"]["used_in"] == ["Hydrant", "Sprinkler"]
+
+
+def test_used_in_must_be_a_list(admin_client):
+    res = admin_client.post("/api/inventory/materials", json={"name": "Bad shape", "used_in": "Hydrant"})
+    assert res.status_code == 422 and "used_in" in res.get_json()["fields"]
+
+
+def test_editing_a_material_updates_frequency_and_used_in(admin_client):
+    material = add_material(admin_client)
+    res = admin_client.patch(f"/api/inventory/materials/{material['id']}", json={
+        "name": material["name"], "frequency": "occasional", "used_in": ["Fire alarm", "Portable devices"],
+    })
+    assert res.status_code == 200
+    body = res.get_json()["material"]
+    assert body["frequency"] == "occasional" and body["used_in"] == ["Fire alarm", "Portable devices"]
+
+
 def test_only_a_stock_in_entry_can_have_a_bill(admin_client):
     material = add_material(admin_client)
     mid = material["id"]

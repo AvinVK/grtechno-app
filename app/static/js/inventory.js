@@ -278,10 +278,12 @@
   // a later purchase instead.
   function materialForm(material, data) {
     const isAdd = !material;
-    const M = material || { name: '', unit: '', notes: '' };
+    const M = material || { name: '', unit: '', notes: '', frequency: '', used_in: [] };
     const controls = {
       name: nameSuggestField(M.name, (data && data.material_names) || []),
       unit: unitPicker((data && data.units) || [], M.unit || ''),
+      frequency: selectField(FREQUENCY_OPTIONS, M.frequency || '', { title: 'Frequency', placeholder: 'Choose how often' }),
+      used_in: usedInField(M.used_in || [], USED_IN_OPTIONS),
       notes: (() => { const t = h('textarea', { rows: 3 }); t.value = M.notes ?? ''; return t; })(),
     };
 
@@ -371,6 +373,8 @@
       h('div', { class: 'form-grid' },
         field('name', 'Material name', controls.name, { wide: true }),
         field('unit', 'Unit', controls.unit),
+        field('frequency', 'Frequency used in material', controls.frequency),
+        field('used_in', 'Used in..', controls.used_in, { wide: true }),
         field('notes', 'Notes', controls.notes, { wide: true }),
         showSupply ? field('quantity', 'Quantity', qty) : null,
         showSupply ? field('rate', 'Purchase cost', rate) : null,
@@ -504,6 +508,46 @@
     Object.defineProperty(wrap, 'value', {
       get: () => input.value,
       set: (v) => { input.value = v ?? ''; },
+      configurable: true,
+    });
+    return wrap;
+  }
+
+  const FREQUENCY_OPTIONS = [
+    { value: '', label: 'Not set' },
+    { value: 'every_project', label: 'Every project' },
+    { value: 'special_project', label: 'Special project' },
+    { value: 'occasional', label: 'Occasional' },
+  ];
+
+  const USED_IN_OPTIONS = ['Hydrant', 'Pump house', 'Sprinkler', 'Fire alarm', 'Portable devices'];
+
+  // Which fire-protection system(s) a material is used in - any number of the fixed categories, checked
+  // inline (see the "Which states?" checklist pattern in users.js), plus Other with its own typed-in text.
+  // `.value` is an array - any ticked fixed category, and whatever was typed for Other if its box is ticked.
+  function usedInField(value, options) {
+    const chosen = new Set(value || []);
+    const otherExisting = (value || []).find((v) => !options.includes(v)) || '';
+    const boxes = options.map((opt) => {
+      const cb = h('input', { type: 'checkbox', checked: chosen.has(opt) });
+      return { opt, cb, row: h('label', { class: 'check-row' }, cb, h('span', {}, opt)) };
+    });
+    const otherCb = h('input', { type: 'checkbox', checked: !!otherExisting });
+    const otherText = h('input', { type: 'text', maxlength: 60, autocomplete: 'off', placeholder: 'Specify', value: otherExisting });
+    otherText.hidden = !otherExisting;
+    otherCb.addEventListener('change', () => {
+      otherText.hidden = !otherCb.checked;
+      if (otherCb.checked) otherText.focus(); else otherText.value = '';
+    });
+    const wrap = h('div', { class: 'used-in-field' },
+      h('div', { class: 'check-grid' }, boxes.map((b) => b.row), h('label', { class: 'check-row' }, otherCb, h('span', {}, 'Other..specify'))),
+      otherText);
+    Object.defineProperty(wrap, 'value', {
+      get: () => {
+        const picked = boxes.filter((b) => b.cb.checked).map((b) => b.opt);
+        if (otherCb.checked && otherText.value.trim()) picked.push(otherText.value.trim());
+        return picked;
+      },
       configurable: true,
     });
     return wrap;

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -479,6 +480,14 @@ class Material(db.Model):
     stock_qty = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     avg_rate = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     notes = db.Column(db.String(400), nullable=False, default="", server_default="")
+    # How often this material goes into a job - "every_project" / "special_project" / "occasional", or ""
+    # for not set yet. A small fixed set (see app/inventory.py's FREQUENCY_CHOICES), so this stores the key,
+    # not a display label.
+    frequency = db.Column(db.String(20), nullable=False, default="", server_default="")
+    # Which fire-protection system(s) it's used in - Hydrant, Pump house, Sprinkler, Fire alarm, Portable
+    # devices, or a typed-in "Other" - a material can span more than one, so this is a JSON list of strings
+    # in a plain text column rather than its own table; see Material.used_in_list / app/inventory.py.
+    used_in = db.Column(db.Text, nullable=False, default="", server_default="")
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default="1")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
@@ -497,11 +506,16 @@ class Material(db.Model):
     def stock_value(self):
         return (self.stock_qty * self.avg_rate).quantize(Decimal("0.01"))
 
+    @property
+    def used_in_list(self) -> list:
+        return json.loads(self.used_in) if self.used_in else []
+
     def to_dict(self) -> dict:
         return {
             "id": self.id, "code": self.code, "name": self.name, "unit": self.unit,
             "stock_qty": float(self.stock_qty), "avg_rate": float(self.avg_rate),
             "stock_value": float(self.stock_value), "notes": self.notes, "is_active": self.is_active,
+            "frequency": self.frequency, "used_in": self.used_in_list,
         }
 
 
