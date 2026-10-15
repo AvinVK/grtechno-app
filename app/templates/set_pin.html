@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_pin.html" import pin_field, login_hero %}
+{% from "_pin.html" import pin_field, code_field, login_hero %}
 {% block title %}Set PIN - Leads{% endblock %}
 {% block body_class %}page-login{% endblock %}
 {% block header %}{% endblock %}
@@ -11,12 +11,9 @@
     <h1>Set your PIN</h1>
     <p class="hint">Enter the setup code and userid your admin gave you, then choose a {{ pin_length }}-digit PIN.</p>
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-    <div class="field">
-      <label for="code">Setup code</label>
-      <input id="code" name="code" autocomplete="off" inputmode="numeric" spellcheck="false"
-             placeholder="XXXX-XXXX" {% if userid %}autofocus{% endif %} required>
-      <p class="hint">From your admin's message - not an example, your own code.</p>
-    </div>
+    {% call code_field('code', 'Setup code', attrs='required' ~ (' autofocus' if userid else '')) %}
+      <p class="hint">The first 4 are from your name; the last 4 are in your admin's message.</p>
+    {% endcall %}
     <div class="field">
       <label for="userid">Userid</label>
       <input id="userid" name="userid" value="{{ userid }}" autocomplete="username" autocapitalize="none"

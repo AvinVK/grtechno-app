@@ -13,6 +13,25 @@
 </div>
 {%- endmacro %}
 
+{# The setup code as 8 boxes, grouped 4-and-4 around a plain visual hyphen - so nobody has to type the
+   hyphen themselves (kohal, 2026-10-15). Same overlay trick as pin_field above, but alphanumeric and
+   uppercased rather than digits-only; see pin.js's `.code-entry` handling. #}
+{% macro code_field(id, label, attrs='') -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <div class="code-entry">
+    <input id="{{ id }}" name="{{ id }}" type="text" inputmode="text" maxlength="8" autocomplete="off"
+           autocapitalize="characters" spellcheck="false" class="code-input" {{ attrs|safe }}>
+    <div class="code-boxes" aria-hidden="true">
+      {% for _ in range(4) %}<span></span>{% endfor %}
+      <span class="code-sep">-</span>
+      {% for _ in range(4) %}<span></span>{% endfor %}
+    </div>
+  </div>
+  {{ caller() if caller is defined else '' }}
+</div>
+{%- endmacro %}
+
 {% macro login_hero() -%}
 <div class="login-hero">
   <span class="login-mark" aria-hidden="true">L</span>

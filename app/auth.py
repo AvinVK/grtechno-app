@@ -67,9 +67,21 @@ def pin_problem(pin: str, confirm: str):
     return None
 
 
+def _name_prefix(name: str) -> str:
+    """The setup code's first 4 characters - built from the person's own name, so the code visibly belongs
+    to them instead of reading as a random string they have to double-check against a list (kohal, 2026-10-
+    15). Padded with random characters from CODE_ALPHABET if the name has fewer than 4 letters/digits to
+    give - still unambiguous, just not fully name-derived for a very short name."""
+    letters = re.sub(r"[^A-Za-z0-9]", "", name or "").upper()[:4]
+    while len(letters) < 4:
+        letters += secrets.choice(CODE_ALPHABET)
+    return letters
+
+
 def issue_setup_code(user: User) -> str:
-    """Give the user a fresh one-time setup code and switch off their current PIN."""
-    raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+    """Give the user a fresh one-time setup code and switch off their current PIN. The first 4 characters
+    are their own name (see _name_prefix); the last 4 are the actual random secret."""
+    raw = _name_prefix(user.name) + "".join(secrets.choice(CODE_ALPHABET) for _ in range(4))
     user.setup_code_hash = generate_password_hash(raw)
     user.setup_code_expires = utcnow() + timedelta(days=SETUP_CODE_DAYS)
     user.password_hash = None

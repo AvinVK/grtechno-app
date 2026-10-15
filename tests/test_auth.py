@@ -124,6 +124,18 @@ def test_setup_code_rules(app, anon):
     assert b"expired" in set_pin(anon, user.userid, code, "731905").data
 
 
+def test_setup_code_starts_with_the_persons_own_name(app):
+    """kohal, 2026-10-15: the first 4 characters are built from the person's name, so the code visibly
+    belongs to them instead of reading as a random string - see auth._name_prefix."""
+    user, code = pending_user("Imtyaz Alarm Contractor")
+    assert code.split("-")[0] == "IMTY"
+    assert len(code.replace("-", "")) == 8
+
+    _, short_code = pending_user("Jo")     # fewer than 4 letters - padded out, not left ambiguous
+    prefix = short_code.split("-")[0]
+    assert len(prefix) == 4 and prefix.startswith("JO")
+
+
 def test_obvious_pins_are_refused(app, anon):
     user, code = pending_user()
     for weak in ("111111", "000000", "123456", "654321", "234567", "987654"):

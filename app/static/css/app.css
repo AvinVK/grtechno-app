@@ -816,6 +816,22 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .js .pin-input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; color: transparent; caret-color: transparent; }
 .js .pin-input[aria-invalid="true"] ~ .pin-boxes span { border-color: var(--signal); }
 
+/* The setup code as 8 boxes, grouped 4-and-4 around a plain hyphen that isn't a box itself (see _pin.html's
+   code_field and pin.js) - same idea as the PIN boxes above, just alphanumeric, shown as typed rather than
+   dots, and with a gap for the "-" nobody has to type. */
+.code-boxes { display: none; }
+.js .code-entry { position: relative; }
+.js .code-boxes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto repeat(4, minmax(0, 1fr)); align-items: center; gap: 8px; }
+.js .code-boxes span:not(.code-sep) {
+  display: grid; place-items: center; height: 52px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-control); background: #fff;
+  font: 500 20px/1 var(--font-num); font-variant-numeric: tabular-nums;
+}
+.js .code-boxes span.next { border: 2px solid var(--accent); }
+.js .code-sep { text-align: center; color: var(--muted); font: 500 20px/1 var(--font-num); }
+.js .code-input { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; color: transparent; caret-color: transparent; }
+.js .code-input[aria-invalid="true"] ~ .code-boxes span:not(.code-sep) { border-color: var(--signal); }
+
 /* ---------- Users (admin) ---------- */
 
 .users { display: grid; gap: 18px; max-width: 720px; margin: 0 auto; }
