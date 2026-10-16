@@ -165,8 +165,14 @@ def _day_status(day, present, worker, data_until, today, checked_in_now):
 
 def _person_row(worker, period, data_until, today):
     present = {a.work_date for a in worker.attendance if a.status == "present"}
-    # Only meaningful for a Worker linked to a User (see app/auth.py sync_worker_for_user) - whether that
-    # User currently has an open self-check-in session (app/attendance.py), right now.
+    # A Worker linked to a User (see app/auth.py sync_worker_for_user) also counts a day present from their
+    # own self-check-in (app/attendance.py) - only once it's approved (kohal, 2026-10-16: a pending one
+    # isn't a verified day's work yet, same rule as everywhere else that counts attendance), not just from
+    # the older WhatsApp import above. A day either source has is present; neither has to agree alone.
+    if worker.user_code:
+        present |= {a.work_date for a in
+                    Attendance.query.filter_by(user_code=worker.user_code, status="approved").all()}
+    # Whether that same User currently has an open self-check-in session, right now.
     checked_in_now = bool(worker.user_code) and (
         Attendance.query.filter_by(user_code=worker.user_code, work_date=today, check_out_at=None).first() is not None
     )
@@ -179,8 +185,9 @@ def _person_row(worker, period, data_until, today):
             "map_url": (WorkerAttendance._map_url(latest.check_in_lat, latest.check_in_lng)
                         or WorkerAttendance._map_url(latest.check_out_lat, latest.check_out_lng)),
         }
+    # Today first (kohal, 2026-10-16) - most recent day leftmost, not buried at the end.
     week = []
-    for back in range(WEEK_DAYS - 1, -1, -1):
+    for back in range(WEEK_DAYS):
         day = today - timedelta(days=back)
         week.append({"date": day.isoformat(), "status": _day_status(day, present, worker, data_until, today, checked_in_now)})
 

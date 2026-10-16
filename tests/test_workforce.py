@@ -5,7 +5,7 @@ see test_admin_can_still_pick_a_legacy_staff_category_worker_on_a_lead for why c
 from datetime import date, timedelta
 
 from app.extensions import db
-from app.models import Client, Project, Worker, WorkerAttendance
+from app.models import Attendance, Client, Project, Worker, WorkerAttendance
 from conftest import csrf
 
 
@@ -102,8 +102,9 @@ def test_last_week_dots_never_mark_days_past_the_data_as_absent(admin_client, ap
     with app.app_context():
         make("Sunny", role="welder", present=(2, 4))    # the latest data anyone has is 2 days ago
     week = by_name(admin_client.get("/api/workforce").get_json()["welder"])["Sunny"]["week"]
-    assert [d["status"] for d in week] == ["absent", "absent", "present", "absent", "present", "none", "none"]
-    assert week[-1]["date"] == date.today().isoformat()
+    # Today first now (kohal, 2026-10-16) - this is the old oldest-to-newest list, reversed.
+    assert [d["status"] for d in week] == ["none", "none", "present", "absent", "present", "absent", "absent"]
+    assert week[0]["date"] == date.today().isoformat()
 
 
 def test_sheet_counts_present_days_from_when_they_first_turned_up(admin_client, app):
@@ -355,12 +356,37 @@ def test_a_linked_user_with_an_open_session_shows_as_live_today(admin_client, an
         who = signed_in(app, db.session.get(User, body["user"]["code"]))
 
     rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
-    assert rows["Live Checkin Test"]["week"][-1]["status"] != "live"      # not checked in yet
+    assert rows["Live Checkin Test"]["week"][0]["status"] != "live"      # not checked in yet; today is first (kohal, 2026-10-16)
 
     assert who.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882}).status_code == 201
     rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
-    assert rows["Live Checkin Test"]["week"][-1]["status"] == "live"
+    assert rows["Live Checkin Test"]["week"][0]["status"] == "live"
 
     who.post("/api/attendance/check-out")
     rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
-    assert rows["Live Checkin Test"]["week"][-1]["status"] != "live"      # checked out - no longer live
+    assert rows["Live Checkin Test"]["week"][0]["status"] != "live"      # checked out - no longer live
+
+
+def test_an_approved_self_check_in_also_counts_as_a_present_day(admin_client, anon, app):
+    """kohal, 2026-10-16: the roster's dots only ever looked at the older WhatsApp-import attendance - a
+    linked User's own self-check-in (app/attendance.py) didn't count at all, so a real day's work there
+    showed no dot. Now it does, once approved (a pending one still doesn't - same rule as everywhere else)."""
+    res = admin_client.post("/api/users", json={"name": "Self Checkin Test", "role": "sales_field"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
+    with app.app_context():
+        from conftest import signed_in
+        from app.models import User
+        who = signed_in(app, db.session.get(User, body["user"]["code"]))
+
+    who.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882})
+    who.post("/api/attendance/check-out")
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
+    assert rows["Self Checkin Test"]["week"][0]["status"] == "none"      # pending - not counted yet
+
+    with app.app_context():
+        row = Attendance.query.filter_by(user_code=body["user"]["code"]).first()
+        row.status = "approved"
+        db.session.commit()
+    rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
+    assert rows["Self Checkin Test"]["week"][0]["status"] == "present"

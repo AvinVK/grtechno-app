@@ -71,7 +71,7 @@
       : 'No working day on record';
     // Checked in right now outranks "needs details" for this one slot - it's the more time-sensitive of
     // the two, and clears itself the moment they check out, unlike needs_details which can sit for a while.
-    const liveToday = p.week.length && p.week[p.week.length - 1].status === 'live';
+    const liveToday = p.week.length && p.week[0].status === 'live';   // today is first now (kohal, 2026-10-16)
     return h('li', { class: 'people-row-li' },
       h('button', { type: 'button', class: 'att-day people-row', onclick: () => openPerson(p, roles, onChange) },
         h('div', { class: 'att-day-top' },
