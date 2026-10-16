@@ -21,13 +21,6 @@
 
 {% block content %}
 <main id="view" class="view me" tabindex="-1">
-  {% if has_attendance %}
-  {# Filled in by me.js from /api/attendance/state, with check-in / check-out from attendance-core.js. #}
-  <section class="me-today" id="me-today" aria-live="polite" aria-label="Today">
-    <p class="me-today-status">Loading today…</p>
-  </section>
-  {% endif %}
-
   <section class="me-section" aria-labelledby="me-services">
     <div class="me-section-head"><h2 id="me-services">Services</h2></div>
     {{ services(nav_modules, summaries) }}
@@ -48,6 +41,5 @@
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   </form>
 </main>
-{% if has_attendance %}<script src="{{ asset('js/attendance-core.js') }}" defer></script>{% endif %}
 <script src="{{ asset('js/me.js') }}" defer></script>
 {% endblock %}

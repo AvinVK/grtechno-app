@@ -1,7 +1,8 @@
-"""The Me hub (/me): the phone's home for everything that isn't the Leads list - who you are, today's
-check-in, a tile per service you can open, the admin's Manage links, and Sign out. It replaces the side
-menu on phones; on wider screens the menu stays and /me is just another page. The bottom tabs come from
-base.html, like on every other page."""
+"""The Me hub (/me): the phone's home for everything that isn't the Leads list - who you are, a tile per
+service you can open, the admin's Manage links, and Sign out. Today's check-in itself lives on the
+Attendance tab now, not duplicated here (kohal, 2026-10-16) - this just shows the week's count on its tile,
+like every other service. Replaces the side menu on phones; on wider screens the menu stays and /me is just
+another page. The bottom tabs come from base.html, like on every other page."""
 
 from datetime import timedelta
 
@@ -50,7 +51,6 @@ def _summaries(keys) -> dict:
 def page():
     keys = {m.key for m in modules_for(g.user)}
     return render_template("me.html", summaries=_summaries(keys),
-                           has_attendance="attendance" in keys and not g.user.is_admin,   # no check-in card for the admin
                            # Users & roles / Employee management aren't in_nav (see modules_for), so they
                            # aren't in keys above - checked separately for the Me hub's own Manage section.
                            can_see_users=has_module(g.user, "users"),

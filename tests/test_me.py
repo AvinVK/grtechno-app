@@ -43,7 +43,7 @@ def test_a_tile_per_service_with_cheap_summaries(app, admin_client, admin):
         assert f'class="me-tile" href="{path}"' in html
     assert "0 open" in html and "1 client<" in html and "1 running" in html
     assert "Team attendance" in html and "checked in today" in html        # the admin's tile: the team, not a week
-    assert 'id="me-today"' not in html                                     # and no check-in card
+    assert 'id="me-today"' not in html                                     # no check-in card - that's the Attendance tab's job now
 
 
 def test_the_leads_tile_adds_an_overdue_count_once_there_is_one(app, admin_client):
@@ -60,24 +60,17 @@ def test_the_leads_tile_adds_an_overdue_count_once_there_is_one(app, admin_clien
     assert "2 open · 1 overdue</span>" in html
 
 
-def test_everyone_else_gets_the_today_card_and_their_week(app, client, user):
+def test_everyone_else_gets_their_week_on_the_attendance_tile_not_a_today_card(app, client, user):
+    """The Me hub used to duplicate today's check-in card here too - removed (kohal, 2026-10-16) now that
+    the bottom nav has its own Attendance tab for that; the tile here just keeps its one-line summary."""
     with app.app_context():
         monday = today_local() - timedelta(days=today_local().weekday())
         db.session.add(Attendance(user_code=user.code, work_date=monday, check_in_at=utcnow()))
         db.session.commit()
     html = client.get("/me").get_data(as_text=True)
-    assert 'id="me-today"' in html and "attendance-core.js" in html and "me.js" in html
-    assert "Your attendance" in html and "1 day this week" in html
-
-
-def test_no_today_card_without_attendance(app, admin_client):
-    from app.models import Module
-    with app.app_context():
-        db.session.get(Module, "attendance").is_active = False
-        db.session.commit()
-    html = admin_client.get("/me").get_data(as_text=True)
     assert 'id="me-today"' not in html and "attendance-core.js" not in html
     assert "me.js" in html                                              # still needed for the profile menu
+    assert "Your attendance" in html and "1 day this week" in html
 
 
 def test_bottom_nav_me_goes_to_the_hub(client):
