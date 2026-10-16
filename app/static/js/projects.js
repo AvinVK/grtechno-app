@@ -1011,7 +1011,11 @@
     const box = $('#material-requests-box');
     if (!box) return;
     const pending = data.requests || [];
-    const reload = () => loadMaterialRequests(projectId);
+    // Refreshes the whole tab, not just this box - a newly-sent request can land already approved (the
+    // requester was themselves eligible to approve it), which moves it straight into "Materials used"
+    // below, not into this pending list at all (kohal, 2026-10-16: reported seeing neither after
+    // requesting, because this used to only reload the pending list).
+    const reload = () => showDetail(projectId, 'materials');
     const rows = pending.map((r) => h('li', { class: 'p-row' },
       h('span', { class: 'chip chip-today' }, 'Pending'),
       h('span', { class: 'p-main' },
