@@ -75,12 +75,16 @@ def create_app(config_object=Config):
         modules = modules_for(user)
         key = g.get("module_key")
         on_leads = request.endpoint == "views.index"
-        # The bottom tabs show on every signed-in page for people with the Leads service. On the Leads page
-        # they switch views in place and app.js keeps them current; elsewhere they lead back into Leads and
-        # the Active tab's due count is counted here.
-        bottom_nav = any(m.key == "leads" for m in modules)
+        # The bottom tabs show on every signed-in page, for everyone - Leads/Clients/Projects/Inventory/
+        # Attendance each only appear for a role that actually has that module (see _bottom_nav.html), so a
+        # role without Leads still gets Me and whatever else it does have, rather than no nav bar at all
+        # (kohal, 2026-10-16: a Leads-less role landing on an empty page with nowhere to go). On the Leads
+        # page the tab switches views in place and app.js keeps it current; elsewhere it leads back into
+        # Leads and the Active tab's due count is counted here.
+        bottom_nav = True
+        has_leads = any(m.key == "leads" for m in modules)
         due_count = 0
-        if bottom_nav and not on_leads:
+        if has_leads and not on_leads:
             from .auth import visible_leads
             from .constants import OPEN_STAGES
             from .models import Lead

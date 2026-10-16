@@ -1,15 +1,18 @@
-{# The bottom tabs, on every signed-in page for people with the Leads service (base.html). Leads switches
-   the Leads app's own views in place - the active list and the add-lead form both live under this one tab
-   (app.js keeps it current, and the due badge up to date, across both); Clients, Projects, Inventory and
-   Me are their own pages, so "current" there is worked out here from the endpoint. Clients/Projects/
-   Inventory only show for a role that actually has that module, so there's never a tab here that just
-   403s. #}
+{# The bottom tabs, on every signed-in page (base.html). Leads switches the Leads app's own views in place -
+   the active list and the add-lead form both live under this one tab (app.js keeps it current, and the due
+   badge up to date, across both); Clients, Projects, Inventory, Attendance and Me are their own pages, so
+   "current" there is worked out here from the endpoint. Every tab but Me only shows for a role that
+   actually has that module, so there's never one here that just 403s - and a role with none of Leads/
+   Clients/Projects/Inventory/Attendance still gets Me, instead of no nav bar at all. #}
+{% set has_leads_tab = nav_modules|selectattr('key', 'equalto', 'leads')|list %}
 <nav class="bottom-nav" aria-label="Main">
+  {% if has_leads_tab %}
   <a class="bottom-nav-item" href="{{ leads_url }}#active" data-view="active" aria-label="Leads"{% if request.endpoint == 'views.index' %} aria-current="page"{% endif %}>
     <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
     <span aria-hidden="true">Leads</span>
     <b class="nav-badge"{% if not due_count %} hidden{% endif %}>{{ due_count or '' }}</b>
   </a>
+  {% endif %}
   {% if nav_modules|selectattr('key', 'equalto', 'clients')|list %}
   <a class="bottom-nav-item" href="{{ url_for('clients.page') }}"{% if request.endpoint == 'clients.page' %} aria-current="page"{% endif %}>
     <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V7l8-4v18"/><path d="M11 9l10 4v8"/><path d="M2 21h20M7 9h.01M7 13h.01M7 17h.01M16 17h.01M16 13h.01"/></svg></span>
@@ -28,9 +31,17 @@
     <span>Inventory</span>
   </a>
   {% endif %}
-  {# Every other pushed screen (attendance, users, workforce...) is reached from the Me hub too, so it stays
-     "current" there by default - only Leads/Clients/Projects/Inventory claim their own tab explicitly. #}
-  <a class="bottom-nav-item" href="{{ url_for('me.page') }}"{% if request.endpoint not in ('views.index', 'clients.page', 'projects.page', 'inventory.page') %} aria-current="page"{% endif %}>
+  {% if nav_modules|selectattr('key', 'equalto', 'attendance')|list %}
+  <a class="bottom-nav-item" href="{{ url_for('attendance.page') }}"{% if request.endpoint == 'attendance.page' %} aria-current="page"{% endif %}>
+    <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18M9 15l2 2 4-4"/></svg></span>
+    <span>Attendance</span>
+  </a>
+  {% endif %}
+  {# Every other pushed screen (users, workforce...) is reached from the Me hub too, so it stays "current"
+     there by default - only Leads/Clients/Projects/Inventory/Attendance claim their own tab explicitly, and
+     Leads only when it actually has a tab here (a role without it is never "on Leads" by landing on / -
+     see views.index's redirect for everyone else). #}
+  <a class="bottom-nav-item" href="{{ url_for('me.page') }}"{% if request.endpoint not in ('clients.page', 'projects.page', 'inventory.page', 'attendance.page') and not (has_leads_tab and request.endpoint == 'views.index') %} aria-current="page"{% endif %}>
     <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
     <span>Me</span>
   </a>

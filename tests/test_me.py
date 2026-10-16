@@ -6,6 +6,8 @@ from app.extensions import db
 from app.models import Attendance, Client, Lead, Project, utcnow
 from app.timeutil import today_local
 
+from conftest import make_user, signed_in
+
 
 def test_me_needs_sign_in(anon):
     assert anon.get("/me").status_code == 302
@@ -117,11 +119,11 @@ def test_api_me_patch_requires_a_phone_key(client):
 
 def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
     # Clients/Projects claim their own tab as current and skip the back chevron since the tabs already
-    # get you back; Inventory claims its tab too but keeps the chevron anyway (it goes deeper than one
-    # level - list -> material -> stock-in/issue); every other pushed screen defaults to Me and keeps the
-    # chevron alongside the tabs.
+    # get you back; Inventory and Attendance claim their tab too but keep the chevron anyway (Inventory goes
+    # deeper than one level - list -> material -> stock-in/issue; Attendance's own history view does too);
+    # every other pushed screen defaults to Me and keeps the chevron alongside the tabs.
     current_tab = {"/clients": '/clients" aria-current="page"', "/projects": '/projects" aria-current="page"',
-                    "/inventory": '/inventory" aria-current="page"'}
+                    "/inventory": '/inventory" aria-current="page"', "/attendance": '/attendance" aria-current="page"'}
     no_back = {"/clients", "/projects"}
     for who, url in ((client, "/attendance"), (admin_client, "/users"), (admin_client, "/workforce"),
                      (admin_client, "/attendance-sheet"), (admin_client, "/clients"), (admin_client, "/projects"),
@@ -132,9 +134,14 @@ def test_every_page_keeps_the_bottom_tabs_with_me_current(client, admin_client):
         assert ('id="appbar-back"' in html) == (url not in no_back), url
 
 
-def test_without_leads_other_pages_get_a_back_arrow_instead(accounts_client):
+def test_without_leads_other_pages_still_get_the_bottom_tabs(accounts_client):
+    """A role with no Leads access (kohal, 2026-10-16: used to mean no bottom nav at all on any page,
+    stranding a role like Accountant or Welder with only the appbar back arrow) still gets the tabs it does
+    have (Clients here), with Leads itself simply absent - never a tab here that just 403s."""
     html = accounts_client.get("/clients").get_data(as_text=True)
-    assert 'id="appbar-back" href="/me"' in html and 'class="bottom-nav"' not in html
+    assert 'class="bottom-nav"' in html and '/clients" aria-current="page"' in html
+    assert 'href="/#active"' not in html and 'aria-label="Leads"' not in html   # no Leads tab for this role
+    assert "appbar-back" not in html                                            # Clients claims its own tab
     assert "appbar-back" not in accounts_client.get("/me").get_data(as_text=True)
 
 
@@ -157,6 +164,25 @@ def test_hub_shows_the_due_count_on_the_active_tab(app, client, user):
     assert '<b class="nav-badge">1</b>' in client.get("/me").get_data(as_text=True)
 
 
-def test_no_bottom_tabs_without_leads(app, manager_client):
+def test_bottom_tabs_show_whatever_modules_a_role_has_without_leads(app, manager_client):
     html = manager_client.get("/me").get_data(as_text=True)          # project managers have no Leads service
-    assert 'class="bottom-nav"' not in html and "page-plain" in html
+    assert 'class="bottom-nav"' in html and "page-plain" in html
+    assert 'aria-label="Leads"' not in html
+    assert 'href="/projects" aria-current="page"' not in html        # Me, not Projects, is current here
+    assert "Attendance</span>" in html and "Projects</span>" in html
+
+
+def test_a_role_with_no_modules_at_all_still_gets_the_me_tab(app):
+    """A role added on the fly (see app/roles.py's add_role - "no module access yet") that nobody has set up
+    access for yet: used to land on a dead "no services" page with no way out at all (kohal, 2026-10-16,
+    screenshot). Now still gets a bottom nav with just Me, so there's always somewhere to go."""
+    from app.models import Role
+    with app.app_context():
+        db.session.add(Role(key="brand_new_role", name="Brand New Role", sees_all=False))
+        db.session.commit()
+    stranded = make_user("Nobody Yet", role="brand_new_role")
+    c = signed_in(app, stranded)
+    html = c.get("/").get_data(as_text=True)
+    assert "You cannot open any services yet" in html
+    assert 'class="bottom-nav"' in html and 'href="/me" aria-current="page"' in html
+    assert 'aria-label="Leads"' not in html and "Projects</span>" not in html and "Attendance</span>" not in html
