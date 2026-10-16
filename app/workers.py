@@ -136,11 +136,20 @@ def get_staff(worker_id):
 
 def _period():
     """The days the Attendance sheet counts: up to the last day any attendance was recorded (never past
-    today), at most PERIOD_DAYS long. The data arrives through imports, not live, so "today" can be past
-    the end of it; days after data_until are "no data yet", never absent. None when there is no data."""
-    first, last = db.session.query(func.min(WorkerAttendance.work_date), func.max(WorkerAttendance.work_date)).one()
-    if last is None:
+    today), at most PERIOD_DAYS long. Data arrives two ways - the older WhatsApp import (WorkerAttendance)
+    and a linked User's own self-check-in (Attendance, approved only) - so the window is the union of
+    whichever of the two has anything at all (kohal, 2026-10-16: a person with only self-check-in data and
+    no WorkerAttendance rows at all used to get no period, so their own real days never showed in their
+    popup, even though the roster's week dots - on a fixed 7-day window, not this one - already had them).
+    days after data_until are "no data yet", never absent. None when there is no data from either source."""
+    wa_first, wa_last = db.session.query(func.min(WorkerAttendance.work_date), func.max(WorkerAttendance.work_date)).one()
+    att_first, att_last = (db.session.query(func.min(Attendance.work_date), func.max(Attendance.work_date))
+                            .filter(Attendance.status == "approved").one())
+    lasts = [d for d in (wa_last, att_last) if d is not None]
+    if not lasts:
         return None, None
+    first = min(d for d in (wa_first, att_first) if d is not None)
+    last = max(lasts)
     end = min(last, date.today())
     return (max(first, end - timedelta(days=PERIOD_DAYS - 1)), end), last
 
@@ -148,6 +157,35 @@ def _period():
 def _own_start(worker, start):
     """Nobody is counted absent from before they first turned up."""
     return max(start, worker.first_seen) if worker.first_seen else start
+
+
+def _attendance_records(worker, start, end):
+    """One person's attendance in [start, end], combining the older WhatsApp-import rows (WorkerAttendance)
+    with a linked User's own self-check-in (app/attendance.py, approved only - kohal, 2026-10-16: the same
+    gap as _person_row's week dots, now in the person popup/full record too) - the WhatsApp import wins for
+    a day both happen to cover, same as everywhere else that's the primary source. A self-check-in day's
+    several sessions (a lunch break, a second site) are folded into one row, with their hours summed, so
+    this still reads as "one day" the way WorkerAttendance always has."""
+    by_day = {}
+    for a in worker.attendance:
+        if start <= a.work_date <= end:
+            by_day[a.work_date] = a.to_dict()
+    if worker.user_code:
+        self_rows = (Attendance.query
+                     .filter_by(user_code=worker.user_code, status="approved")
+                     .filter(Attendance.work_date >= start, Attendance.work_date <= end)
+                     .order_by(Attendance.work_date, Attendance.check_in_at).all())
+        for day in {r.work_date for r in self_rows} - set(by_day):
+            sessions = [r for r in self_rows if r.work_date == day]
+            hours = [s.hours for s in sessions if s.hours is not None]
+            row = sessions[0].to_dict()
+            row["hours"] = round(sum(hours), 1) if hours else None
+            # Self-check-in has no "someone said they were absent" concept the way WorkerAttendance does -
+            # a row only exists because they checked in, so "approved" (this function's own filter) always
+            # means "present" here, not the approval status verbatim.
+            row["status"] = "present"
+            by_day[day] = row
+    return [by_day[d] for d in sorted(by_day)]
 
 
 def _day_status(day, present, worker, data_until, today, checked_in_now):
@@ -228,10 +266,12 @@ def person(worker_id):
         abort(404)
     period, data_until = _period()
     own = None
-    if period and _own_start(worker, period[0]) <= period[1]:
-        own = {"start": _own_start(worker, period[0]).isoformat(), "end": period[1].isoformat()}
-    records = [a.to_dict() for a in worker.attendance
-               if own and own["start"] <= a.work_date.isoformat() <= own["end"]]
+    records = []
+    if period:
+        own_start = _own_start(worker, period[0])
+        if own_start <= period[1]:
+            own = {"start": own_start.isoformat(), "end": period[1].isoformat()}
+            records = _attendance_records(worker, own_start, period[1])
     roles = {r.key: r.name for r in Role.query.filter(Role.key != "admin").order_by(Role.name)}
     return jsonify(worker=worker.to_dict(detail=True), period=own, attendance=records, roles=roles,
                    payment_modes=PAYMENT_MODES, currency=settings_for_client()["currency"],

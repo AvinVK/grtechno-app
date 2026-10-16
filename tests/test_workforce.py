@@ -131,6 +131,35 @@ def test_person_lists_their_days_within_the_period(admin_client, app):
     assert admin_client.get("/api/workforce/9999").status_code == 404
 
 
+def test_person_also_lists_their_approved_self_check_in_days(admin_client, anon, app):
+    """kohal, 2026-10-16: the same gap as the roster dots (_person_row), now fixed in the person popup/full
+    record too - a linked User's own self-check-in only counted here once approved, and a day the WhatsApp
+    import already covers isn't duplicated. No WorkerAttendance data anywhere, on purpose - a person with
+    only self-check-in data used to get no period at all (_period only ever looked at WorkerAttendance), so
+    their own real days never showed here even though the roster's dots already had them."""
+    res = admin_client.post("/api/users", json={"name": "Self Checkin Person", "role": "sales_field"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
+    with app.app_context():
+        from conftest import signed_in
+        from app.models import User
+        who = signed_in(app, db.session.get(User, body["user"]["code"]))
+        wid = db.session.query(Worker.id).filter_by(user_code=body["user"]["code"]).scalar()
+
+    who.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882})
+    who.post("/api/attendance/check-out")
+    detail = admin_client.get(f"/api/workforce/{wid}").get_json()
+    assert detail["attendance"] == []          # still pending - not counted yet
+
+    with app.app_context():
+        row = Attendance.query.filter_by(user_code=body["user"]["code"]).first()
+        row.status = "approved"
+        db.session.commit()
+    detail = admin_client.get(f"/api/workforce/{wid}").get_json()
+    assert len(detail["attendance"]) == 1
+    assert detail["attendance"][0]["status"] == "present" and detail["attendance"][0]["work_date"] == date.today().isoformat()
+
+
 def test_no_data_means_no_period(admin_client, app):
     with app.app_context():
         wid = make("Nobody yet", role="welder")
