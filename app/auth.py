@@ -200,15 +200,17 @@ def visible_projects():
 # manager *now* versus when the request went in.
 
 def can_approve_issue(user, project) -> bool:
-    """An issue ('out') to a project: the admin, that project's own manager, or a site supervisor currently
-    checked into that exact project right now (an open Attendance session with project_id set to it) -
-    being a site supervisor elsewhere, or having checked into it earlier today and since checked out,
-    isn't enough."""
+    """An issue ('out') to a project: the admin, any project manager - every one of them, not just whoever
+    happens to be that specific project's assigned manager_code (kohal, 2026-10-16: "project manager should
+    have access to approve any request, he is the pm for all of the projects" - the same role that already
+    sees every project, see visible_projects) - or a site supervisor currently checked into that exact
+    project right now (an open Attendance session with project_id set to it); being a site supervisor
+    elsewhere, or having checked into it earlier today and since checked out, isn't enough."""
     if user.is_admin:
         return True
     if project is None:
         return False
-    if user.code == project.manager_code:
+    if user.role_key == "project_manager":
         return True
     if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
         return Attendance.query.filter_by(user_code=user.code, project_id=project.id, check_out_at=None).first() is not None

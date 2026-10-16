@@ -579,6 +579,26 @@ def test_a_request_from_the_projects_own_manager_is_approved_immediately(app, cl
     assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
 
 
+def test_any_project_manager_can_approve_any_projects_request_not_just_their_own(app, client, admin_client, accounts_client):
+    """kohal, 2026-10-16: "project manager should have access to approve any request, he is the pm for all
+    of the projects" - Project manager is one role covering every project (see visible_projects), not a
+    per-project assignment, so approval works the same way: any project manager, whether or not they're
+    this particular project's own manager_code."""
+    pid = make_project(client, admin_client)        # left unassigned - no manager_code at all
+    mat_id = stocked_material(admin_client)
+    other_pm = make_user("Rohan Manager", role="project_manager")
+    other_pm_client = signed_in(app, other_pm)
+
+    res = accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+    movement_id = res.get_json()["request"]["id"]
+    assert res.get_json()["request"]["status"] == "pending"
+
+    res = other_pm_client.post(f"/api/projects/{pid}/material-requests/{movement_id}/approve")
+    assert res.status_code == 200
+    assert res.get_json()["request"]["status"] == "approved" and res.get_json()["request"]["approved_by_name"] == "Rohan Manager"
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
+
+
 def test_a_request_from_a_site_supervisor_checked_in_there_is_approved_immediately(app, client, admin_client):
     pid = make_project(client, admin_client)
     mat_id = stocked_material(admin_client)
