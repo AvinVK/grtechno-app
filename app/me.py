@@ -9,10 +9,10 @@ from datetime import timedelta
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from . import categories
-from .auth import visible_clients, visible_leads, visible_projects
+from .auth import can_approve_issue, can_approve_stock_in, visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
 from .extensions import db
-from .models import Attendance, Client, Lead, LeadSurvey, Project, SiteCategory, SiteCategoryRequest
+from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest
 from .modules import has_module, modules_for
 from .timeutil import today_local
 
@@ -55,6 +55,31 @@ def page():
                            # aren't in keys above - checked separately for the Me hub's own Manage section.
                            can_see_users=has_module(g.user, "users"),
                            can_see_workforce=has_module(g.user, "workforce"))
+
+
+@bp.get("/api/me/material-approvals")
+def material_approvals():
+    """Pending material issues/stock-ins the signed-in person specifically can act on right now (kohal,
+    2026-10-16: "i want to see the requests in me tab") - same eligibility as the approve routes themselves
+    (see auth.can_approve_issue / can_approve_stock_in), just gathered from every pending movement instead
+    of checking one project or all of Inventory at a time. Not gated on the Inventory or Projects module -
+    a site supervisor with neither still needs to see what's waiting on them."""
+    pending = MaterialMovement.query.filter_by(status="pending").order_by(MaterialMovement.created_at).all()
+    rows = []
+    for mv in pending:
+        can_act = can_approve_issue(g.user, mv.project) if mv.kind == "out" else can_approve_stock_in(g.user)
+        if not can_act:
+            continue
+        rows.append({
+            "id": mv.id, "kind": mv.kind, "material_id": mv.material_id,
+            "material_name": mv.material.name, "material_code": mv.material.code,
+            "quantity": float(mv.quantity), "unit": mv.material.unit,
+            "project_id": mv.project_id, "project_title": mv.project.title if mv.project else None,
+            "project_code": mv.project.code if mv.project else None,
+            "requested_by": mv.created_by.name if mv.created_by else None,
+            "note": mv.note,
+        })
+    return jsonify(approvals=rows)
 
 
 @bp.get("/api/me")

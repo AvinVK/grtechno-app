@@ -28,6 +28,16 @@
 
   {{ manage(can_see_users, can_see_workforce) }}
 
+  {# Material issues/stock-ins waiting on the signed-in person specifically - a project manager, a site
+     supervisor currently checked in somewhere, an accountant, an office assistant, or the admin (see
+     app/me.py's _material_approvals). Nothing to do with the Inventory or Projects module access - this is
+     "what needs me right now", gathered from wherever it's waiting instead of checking every project and
+     all of Inventory one at a time. #}
+  <section class="me-section" id="me-material-approvals" aria-labelledby="me-material-approvals-h" hidden>
+    <div class="me-section-head"><h2 id="me-material-approvals-h">Pending approvals</h2><span class="chip chip-role">Materials</span></div>
+    <div id="me-material-approvals-list" class="card-group me-rows"></div>
+  </section>
+
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}
   {% if current_user.is_admin %}
   <section class="me-section" id="me-approvals" aria-labelledby="me-approvals-h" hidden>

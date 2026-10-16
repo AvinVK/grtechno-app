@@ -9,6 +9,18 @@ from app.timeutil import today_local
 from conftest import make_user, signed_in
 
 
+def add_project(admin_client, name="Orchid Heights"):
+    res = admin_client.post("/api/projects", json={"new_client_name": name})
+    assert res.status_code == 201, res.get_json()
+    return res.get_json()["project"]["id"]
+
+
+def stocked_material(admin_client, name="Cement"):
+    res = admin_client.post("/api/inventory/materials", json={"name": name, "unit": "bags", "quantity": 20, "rate": 10})
+    assert res.status_code == 201, res.get_json()
+    return res.get_json()["material"]["id"]
+
+
 def test_me_needs_sign_in(anon):
     assert anon.get("/me").status_code == 302
 
@@ -179,3 +191,50 @@ def test_a_role_with_no_modules_at_all_still_gets_the_me_tab(app):
     assert "You cannot open any services yet" in html
     assert 'class="bottom-nav"' in html and 'href="/me" aria-current="page"' in html
     assert 'aria-label="Leads"' not in html and "Projects</span>" not in html and "Attendance</span>" not in html
+
+
+# ---------- material approvals on the Me hub (kohal, 2026-10-16: "i want to see the requests in me tab") ----------
+
+def test_a_project_manager_sees_a_pending_issue_they_can_approve(app, client, admin_client):
+    pid = add_project(admin_client)
+    mat_id = stocked_material(admin_client)
+    manager = make_user("Priya Manager", role="project_manager")
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
+    accounts = make_user("Anil Accounts", role="accounts")
+    accounts_client = signed_in(app, accounts)
+    accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+
+    pm_client = signed_in(app, manager)
+    data = pm_client.get("/api/me/material-approvals").get_json()
+    assert len(data["approvals"]) == 1
+    row = data["approvals"][0]
+    assert row["kind"] == "out" and row["material_name"] == "Cement" and row["project_id"] == pid
+    assert row["requested_by"] == "Anil Accounts"
+
+    # the requester themselves isn't the one who can act on it
+    assert accounts_client.get("/api/me/material-approvals").get_json()["approvals"] == []
+
+
+def test_an_accountant_sees_a_pending_stock_in_they_can_approve(app):
+    director = signed_in(app, make_user("Dilip Director", role="company_director"))
+    mat = director.post("/api/inventory/materials", json={"name": "Cement", "unit": "bags"}).get_json()["material"]
+    director.post(f"/api/inventory/materials/{mat['id']}/stock-in", json={"quantity": 10, "rate": 5})
+
+    accounts_client = signed_in(app, make_user("Anil Accounts", role="accounts"))
+    data = accounts_client.get("/api/me/material-approvals").get_json()
+    assert len(data["approvals"]) == 1
+    row = data["approvals"][0]
+    assert row["kind"] == "in" and row["material_id"] == mat["id"] and row["requested_by"] == "Dilip Director"
+
+    # the director themselves can't approve their own stock-in
+    assert director.get("/api/me/material-approvals").get_json()["approvals"] == []
+
+
+def test_material_approvals_is_empty_for_someone_with_nothing_to_approve(app, client, admin_client):
+    pid = add_project(admin_client)
+    mat_id = stocked_material(admin_client)
+    accounts_client = signed_in(app, make_user("Anil Accounts", role="accounts"))
+    accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+
+    welder_client = signed_in(app, make_user("Wendy Welder", role="welder"))
+    assert welder_client.get("/api/me/material-approvals").get_json()["approvals"] == []
