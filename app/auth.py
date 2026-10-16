@@ -170,16 +170,55 @@ def visible_leads():
     return query
 
 
+#  Site supervisor and Alarm Tech cum site supervisor were set up as the same access from the start
+# (kohal's access matrix, 2026-10-14: "Site supervisor = same as Alarm Tech cum site sup") - both get a
+# project only once they've actually checked into it (kohal, 2026-10-16), not by ownership/management.
+SITE_SUPERVISOR_ROLE_KEYS = {"supervisor", "alarm_tech_cum_site_supervisor"}
+
+
 def visible_projects():
-    """Projects this person may see: everything for the admin and for roles marked sees_all (Accounts), only
-    their assigned state(s) for a sub-admin, otherwise only the projects they created or manage."""
+    """Projects this person may see: everything for the admin, for roles marked sees_all (Accounts), and
+    for Project manager specifically (kohal, 2026-10-16 - deliberately not sees_all itself, to avoid also
+    granting its other powers: everyone's attendance, deleting a record, assigning project managers). Only
+    their assigned state(s) for a sub-admin. A site supervisor only sees a project once they've checked
+    into it via Attendance - not by ownership/management, unlike everyone else's fallback below."""
     query = Project.query
-    if g.user.sees_all:
+    if g.user.sees_all or g.user.role_key == "project_manager":
         return query
     if g.user.role_key == "sub_admin":
         states = g.user.state_names
         return query.filter(Project.site_state.in_(states)) if states else query.filter(sa_false())
+    if g.user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
+        checked_in = (db.session.query(Attendance.project_id)
+                      .filter(Attendance.user_code == g.user.code, Attendance.project_id.isnot(None)))
+        return query.filter(Project.id.in_(checked_in))
     return query.filter(or_(Project.owner_code == g.user.code, Project.manager_code == g.user.code))
+
+
+# Who may approve a material movement (kohal, 2026-10-16) - see MaterialMovement.status. Checked fresh at
+# approval time, not fixed when the request was made, so it doesn't matter who's on site or assigned as
+# manager *now* versus when the request went in.
+
+def can_approve_issue(user, project) -> bool:
+    """An issue ('out') to a project: the admin, that project's own manager, or a site supervisor currently
+    checked into that exact project right now (an open Attendance session with project_id set to it) -
+    being a site supervisor elsewhere, or having checked into it earlier today and since checked out,
+    isn't enough."""
+    if user.is_admin:
+        return True
+    if project is None:
+        return False
+    if user.code == project.manager_code:
+        return True
+    if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
+        return Attendance.query.filter_by(user_code=user.code, project_id=project.id, check_out_at=None).first() is not None
+    return False
+
+
+def can_approve_stock_in(user) -> bool:
+    """A stock-in ('in'): the admin, or an accountant / office assistant - "office incharge" in kohal's own
+    words, 2026-10-16."""
+    return user.is_admin or user.role_key in ("accounts", "office_assistant")
 
 
 def visible_clients():

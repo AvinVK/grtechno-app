@@ -1,7 +1,7 @@
 from datetime import date
 
 from app.extensions import db
-from app.models import Attendance, Client, Lead, Project, ProjectPayment, RoleModule, Service, User
+from app.models import Attendance, Client, Lead, Project, ProjectPayment, RoleModule, Service, User, utcnow
 from conftest import make_user, signed_in, win_lead
 
 
@@ -131,8 +131,10 @@ def test_projects_visibility_and_manager_assignment(app, client, admin_client, m
     pid = make_project(client, admin_client)
     assert [p["code"] for p in admin_client.get("/api/projects").get_json()["projects"]] == ["PRJ-0001"]
     assert len(accounts_client.get("/api/projects").get_json()["projects"]) == 1              # sees_all role
-    assert manager_client.get("/api/projects").get_json()["projects"] == []                  # not theirs yet
-    assert manager_client.get(f"/api/projects/{pid}").status_code == 404
+    # Project manager sees every project, not just their own (kohal, 2026-10-16) - assigning as its manager
+    # only changes who can edit/reassign it, not who can see it.
+    assert [p["id"] for p in manager_client.get("/api/projects").get_json()["projects"]] == [pid]
+    assert manager_client.get(f"/api/projects/{pid}").status_code == 200
 
     detail = admin_client.get(f"/api/projects/{pid}").get_json()
     assert detail["can_assign_manager"] is True and [m["name"] for m in detail["managers"]] == ["Priya Manager"]
@@ -143,6 +145,21 @@ def test_projects_visibility_and_manager_assignment(app, client, admin_client, m
     assert mine["can_assign_manager"] is False and "managers" not in mine
     assert manager_client.patch(f"/api/projects/{pid}", json={"manager_code": None}).status_code == 403
     assert manager_client.patch(f"/api/projects/{pid}", json={"title": "Renamed by PM"}).status_code == 200
+
+
+def test_site_supervisor_only_sees_projects_theyve_checked_into(app, client, admin_client):
+    """kohal, 2026-10-16: a site supervisor's project list isn't ownership/management like everyone else's
+    fallback - it's whichever projects they've actually checked Attendance into, site by site."""
+    visited = make_project(client, admin_client, company="Site They Visited")
+    other = make_project(client, admin_client, company="Site They Never Went To")
+    supervisor = make_user("Site Sam", role="supervisor")
+    db.session.add(Attendance(user_code=supervisor.code, work_date=date.today(),
+                               project_id=visited, check_in_at=utcnow()))
+    db.session.commit()
+    sup_client = signed_in(app, supervisor)
+    assert [p["id"] for p in sup_client.get("/api/projects").get_json()["projects"]] == [visited]
+    assert sup_client.get(f"/api/projects/{visited}").status_code == 200
+    assert sup_client.get(f"/api/projects/{other}").status_code == 404
 
 
 def test_manager_code_must_be_a_project_manager(client, admin_client, user):
@@ -530,3 +547,120 @@ def test_a_closed_project_can_still_be_deleted(client, admin_client):
     dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
     assert dash["can_delete"] is True
     assert admin_client.delete(f"/api/projects/{pid}").status_code == 204
+
+
+# ---------- material requests (kohal, 2026-10-16) ----------
+#
+# "to assign material to the project, there should be an approval needed from either the site supervisor
+# who has currently checked in on that site or project manager"
+
+def stocked_material(admin_client, qty=20, name="Cement"):
+    res = admin_client.post("/api/inventory/materials", json={"name": name, "unit": "bags", "quantity": qty, "rate": 10})
+    assert res.status_code == 201, res.get_json()
+    return res.get_json()["material"]["id"]
+
+
+def check_in_on(client, project_id):
+    res = client.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882, "project_id": project_id})
+    assert res.status_code == 201, res.get_json()
+
+
+def test_a_request_from_the_projects_own_manager_is_approved_immediately(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    manager = make_user("Priya Manager", role="project_manager")
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
+    mat_id = stocked_material(admin_client)
+    pm = signed_in(app, manager)
+
+    res = pm.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+    assert res.status_code == 201
+    body = res.get_json()["request"]
+    assert body["status"] == "approved" and body["approved_by_name"] == "Priya Manager"
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
+
+
+def test_a_request_from_a_site_supervisor_checked_in_there_is_approved_immediately(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    mat_id = stocked_material(admin_client)
+    supervisor = make_user("Site Sam", role="supervisor")
+    sup_client = signed_in(app, supervisor)
+    check_in_on(sup_client, pid)
+
+    res = sup_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+    assert res.status_code == 201
+    assert res.get_json()["request"]["status"] == "approved"
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
+
+
+def test_a_supervisor_not_checked_in_there_cant_even_see_the_project(app, client, admin_client):
+    """visible_projects() already hides a project from a site supervisor until they've checked into it, so
+    there's nothing to request here in the first place - not a 403, a 404, same as everywhere else that
+    scoping applies."""
+    pid = make_project(client, admin_client)
+    mat_id = stocked_material(admin_client)
+    supervisor = make_user("Site Sam", role="supervisor")
+    sup_client = signed_in(app, supervisor)
+    res = sup_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+    assert res.status_code == 404
+
+
+def test_a_request_from_accounts_waits_for_the_project_manager_or_supervisor(app, client, admin_client, accounts_client):
+    pid = make_project(client, admin_client)
+    manager = make_user("Priya Manager", role="project_manager")
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
+    mat_id = stocked_material(admin_client)
+
+    res = accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+    assert res.status_code == 201
+    body = res.get_json()["request"]
+    assert body["status"] == "pending" and body["approved_by_name"] is None
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 20   # untouched
+
+    movement_id = body["id"]
+    pm = signed_in(app, manager)
+    # the accountant can't approve their own request - only the manager or a checked-in supervisor can
+    assert accounts_client.post(f"/api/projects/{pid}/material-requests/{movement_id}/approve").status_code == 403
+    res = pm.post(f"/api/projects/{pid}/material-requests/{movement_id}/approve")
+    assert res.status_code == 200
+    assert res.get_json()["request"]["status"] == "approved"
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
+
+
+def test_rejecting_a_material_request_leaves_stock_untouched(app, client, admin_client, accounts_client):
+    pid = make_project(client, admin_client)
+    manager = make_user("Priya Manager", role="project_manager")
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
+    mat_id = stocked_material(admin_client)
+    movement_id = accounts_client.post(f"/api/projects/{pid}/material-requests",
+                                        json={"material_id": mat_id, "quantity": 5}).get_json()["request"]["id"]
+    pm = signed_in(app, manager)
+    res = pm.post(f"/api/projects/{pid}/material-requests/{movement_id}/reject")
+    assert res.status_code == 200 and res.get_json()["request"]["status"] == "rejected"
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 20
+
+
+def test_material_requests_lists_pending_ones_and_who_can_approve(app, client, admin_client, accounts_client):
+    pid = make_project(client, admin_client)
+    manager = make_user("Priya Manager", role="project_manager")
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
+    mat_id = stocked_material(admin_client)
+    accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+
+    pm = signed_in(app, manager)
+    data = pm.get(f"/api/projects/{pid}/material-requests").get_json()
+    assert len(data["requests"]) == 1 and data["requests"][0]["status"] == "pending"
+    assert data["can_approve"] is True
+    assert any(m["id"] == mat_id for m in data["materials"])
+
+    data = accounts_client.get(f"/api/projects/{pid}/material-requests").get_json()
+    assert data["can_approve"] is False                      # accounts can request, but not approve this one
+
+
+def test_requesting_more_than_whats_in_stock_is_rejected(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    mat_id = stocked_material(admin_client, qty=3)
+    manager = make_user("Priya Manager", role="project_manager")
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
+    pm = signed_in(app, manager)
+    res = pm.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
+    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]

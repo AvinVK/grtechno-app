@@ -546,7 +546,15 @@ class MaterialUnit(db.Model):
 class MaterialMovement(db.Model):
     """One stock-in (a purchase or receipt) or stock-out (issued to a project) entry for a material - a
     ledger, so the stock and value on the Material row can always be traced back to where they came from
-    or where they went."""
+    or where they went.
+
+    Some movements need sign-off before they count (kohal, 2026-10-16): an issue ('out') from someone who
+    isn't themselves the project's manager or currently checked into that site needs approval from whoever
+    is; a stock-in ('in') from someone who isn't themselves an accountant/office assistant needs approval
+    from one. A movement stays `status='pending'` - excluded from _recompute_material's replay, so it has
+    no effect on stock_qty/avg_rate at all - until approved. Rejected the same way, permanently. Everything
+    else (an eligible person's own request, and every movement from before this existed) is 'approved'
+    straight away."""
 
     __tablename__ = "material_movements"
 
@@ -574,12 +582,17 @@ class MaterialMovement(db.Model):
     given_by_worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True, index=True)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    # Approval (see the class docstring) - pending | approved | rejected.
+    status = db.Column(db.String(10), nullable=False, default="approved", server_default="approved")
+    approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
 
     material = db.relationship("Material", back_populates="movements")
     project = db.relationship("Project")
     supplier = db.relationship("Supplier")
     given_by = db.relationship("Worker")
-    created_by = db.relationship("User")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_code])
 
     def to_dict(self) -> dict:
         return {
@@ -596,6 +609,9 @@ class MaterialMovement(db.Model):
             "given_by_worker_id": self.given_by_worker_id, "given_by_name": self.given_by.name if self.given_by else None,
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),
+            "status": self.status,
+            "approved_by_name": self.approved_by.name if self.approved_by else None,
+            "approved_at": _iso(self.approved_at),
         }
 
 

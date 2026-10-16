@@ -114,22 +114,18 @@
     }
   }
 
-  /* A day with more than one check-in/out that day - each session's times joined on one line ("7:00 am –
-     1:00 pm, 2:00 pm – 7:00 pm"), with the day's total hours where a single session's row would show its
-     own. work_label is shown only when every session agrees on it (rare to differ - a lunch break back to
-     the same project, say); otherwise left off rather than showing just one of several. */
+  /* A day with more than one check-in/out that day - one line per session ("7:00 am – 1:00 pm · Sprinkler
+     install", "2:00 pm – 7:00 pm · Office work"), so which project each stretch of the day was against
+     stays visible even when it changed session to session, not just the times joined together (kohal,
+     2026-10-16). The day's total hours shows where a single session's row would show its own. */
   function groupedDayRow(title, sessions, onDeleted) {
     const totalHours = sessions.reduce((sum, a) => sum + (a.hours || 0), 0);
-    const sameLabel = sessions.every((a) => a.work_label === sessions[0].work_label) ? sessions[0].work_label : null;
-    const times = [];
-    sessions.forEach((a, i) => {
-      if (i > 0) times.push(', ');
-      times.push(timesText(a));
-    });
+    const lines = sessions.map((a) => h('span', { class: 'att-day-sub-line' },
+      a.work_label ? [a.work_label, ' · ', timesText(a)] : timesText(a)));
     return dayRow({
       title,
       right: h('span', { class: 'att-day-hours' }, totalHours ? `${roundHours(totalHours)} h` : ''),
-      sub: sameLabel ? [sameLabel, ' · ', ...times] : times,
+      sub: lines,
       hours: totalHours,
       links: [onDeleted ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); deleteOneOf(sessions, onDeleted); } }, 'Delete') : null],
     });

@@ -151,20 +151,26 @@ window.ATT = (() => {
   /* Check in: explain why the location is needed (unless we already have one), fetch it once, let the
      person pick what they're working on (narrowed to projects near them), then record it. Resolves the
      server's reply, or null if they backed out at any step. Throws the API's error, or a "no location"
-     one, for the caller to show. `projects` is the list /api/attendance/state returns. */
-  async function checkIn(projects, { location = null } = {}) {
+     one, for the caller to show. `projects` is the list /api/attendance/state returns. `required` is that
+     same response's `location_required` - off only for local dev testing (see app/config.py's
+     REQUIRE_ATTENDANCE_LOCATION, never on in prod), in which case this skips asking for a location at all
+     rather than just tolerating it failing. */
+  async function checkIn(projects, { location = null, required = true } = {}) {
     let here = location;
-    if (!here) {
+    if (!here && required) {
       if (!(await explainLocationIsRequired())) return null;
       here = await getLocation();
       if (!here) throw new Error("We couldn't get your location. Allow location access for this site in your browser, then try again.");
     }
-    const choice = await pickProject(projects, '', nearestDistrict(here));
+    const choice = await pickProject(projects, '', here ? nearestDistrict(here) : null);
     if (choice === undefined) return null;                      // closed the list without choosing
     const marketing = choice === 'marketing';
     return window.LD.api('/api/attendance/check-in', {
       method: 'POST',
-      body: { project_id: marketing ? null : choice || null, work: marketing ? 'marketing' : 'office', lat: here.lat, lng: here.lng },
+      body: {
+        project_id: marketing ? null : choice || null, work: marketing ? 'marketing' : 'office',
+        lat: here ? here.lat : null, lng: here ? here.lng : null,
+      },
     });
   }
 
@@ -193,8 +199,9 @@ window.ATT = (() => {
         button.disabled = true;
         button.textContent = 'Checking in\u2026';
         try {
-          if (await checkIn(data.projects)) {
-            toast('Checked in with your location');
+          const required = data.location_required !== false;
+          if (await checkIn(data.projects, { required })) {
+            toast(required ? 'Checked in with your location' : 'Checked in');
             await onChange();
             return;
           }
@@ -236,7 +243,7 @@ window.ATT = (() => {
       h('p', { class: 'me-today-status' }, status),
       big,
       button,
-      !t ? h('p', { class: 'me-today-note' }, 'Uses your location once') : null,
+      !t && data.location_required !== false ? h('p', { class: 'me-today-note' }, 'Uses your location once') : null,
     ].filter(Boolean));
   }
 

@@ -1,11 +1,13 @@
 """Attendance (the Attendance service): everyone checks themselves in and out, as many times a day as they
 like (a lunch break, a second site), optionally against a running project. A location is required to check
-in - enforced here, not only by the screen, so it cannot be skipped by calling the API directly. Admin and
-any sees_all role (Accounts) can see everyone's; everyone else sees only their own."""
+in - enforced here, not only by the screen, so it cannot be skipped by calling the API directly - unless
+REQUIRE_ATTENDANCE_LOCATION is switched off in a local .env (kohal, 2026-10-16: "just in dev", never set on
+prod - see app/config.py). Admin and any sees_all role (Accounts) can see everyone's; everyone else sees
+only their own."""
 
 from datetime import date
 
-from flask import Blueprint, g, jsonify, render_template, request
+from flask import Blueprint, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
 from .auth import visible_attendance
@@ -86,6 +88,7 @@ def state():
         ],
         history=[a.to_dict() for a in history],
         can_see_team=g.user.sees_all,
+        location_required=current_app.config["REQUIRE_ATTENDANCE_LOCATION"],
     )
 
 
@@ -116,7 +119,8 @@ def check_in():
 
     lat = _coord(payload, "lat", -90, 90, f.errors)
     lng = _coord(payload, "lng", -180, 180, f.errors)
-    if (lat is None or lng is None) and "lat" not in f.errors and "lng" not in f.errors:
+    location_required = current_app.config["REQUIRE_ATTENDANCE_LOCATION"]
+    if location_required and (lat is None or lng is None) and "lat" not in f.errors and "lng" not in f.errors:
         f.errors["lat"] = "Turn on location and try again. Location is required to check in."
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422

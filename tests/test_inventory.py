@@ -1,10 +1,11 @@
-"""Inventory: materials, their stock/cost, and the stock-in / issue ledger that moves them. Admin only,
-for now - see app/reference_data.ADMIN_ONLY_MODULES."""
+"""Inventory: materials, their stock/cost, and the stock-in / issue ledger that moves them."""
 
 import io
 
 from app.extensions import db
 from app.models import Material, Worker
+
+from conftest import make_user, signed_in
 
 
 def add_material(admin_client, name="Cement", unit="bags"):
@@ -491,3 +492,99 @@ def test_deleting_an_issue_restores_the_stock(admin_client):
     res = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{movement_id}")
     assert res.status_code == 200
     assert res.get_json()["material"]["stock_qty"] == 100
+
+
+# ---------- stock-in approval (kohal, 2026-10-16: "approval should be needed of accountant or office incharge") ----------
+
+def director_client(app):
+    return signed_in(app, make_user("Dilip Director", role="company_director"))
+
+
+def office_assistant_client(app):
+    return signed_in(app, make_user("Oza Assistant", role="office_assistant"))
+
+
+def test_stock_in_by_an_accountant_is_approved_straight_away(app, accounts_client):
+    material = add_material(accounts_client)
+    res = accounts_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    assert res.status_code == 201
+    body = res.get_json()
+    assert body["movement"]["status"] == "approved" and body["movement"]["approved_by_name"] == "Anil Accounts"
+    assert body["material"]["stock_qty"] == 10
+
+
+def test_stock_in_by_an_office_assistant_is_approved_straight_away(app):
+    oa = office_assistant_client(app)
+    material = add_material(oa)
+    res = oa.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    assert res.status_code == 201 and res.get_json()["movement"]["status"] == "approved"
+
+
+def test_stock_in_by_company_director_waits_for_an_accountant(app, accounts_client):
+    director = director_client(app)
+    material = add_material(director)
+    res = director.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    assert res.status_code == 201
+    body = res.get_json()
+    assert body["movement"]["status"] == "pending" and body["movement"]["approved_by_name"] is None
+    assert body["material"]["stock_qty"] == 0          # not counted yet
+
+    movement_id = body["movement"]["id"]
+    # the director themselves can't approve their own request
+    res = director.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve")
+    assert res.status_code == 403
+
+    res = accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["movement"]["status"] == "approved" and body["movement"]["approved_by_name"] == "Anil Accounts"
+    assert body["material"]["stock_qty"] == 10
+
+
+def test_rejecting_a_pending_stock_in_leaves_stock_untouched(app, accounts_client):
+    director = director_client(app)
+    material = add_material(director)
+    movement_id = director.post(f"/api/inventory/materials/{material['id']}/stock-in",
+                                 json={"quantity": 10, "rate": 5}).get_json()["movement"]["id"]
+    res = accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/reject")
+    assert res.status_code == 200
+    assert res.get_json()["movement"]["status"] == "rejected"
+    assert res.get_json()["material"]["stock_qty"] == 0
+
+
+def test_cannot_approve_or_reject_a_movement_twice(app, accounts_client):
+    director = director_client(app)
+    material = add_material(director)
+    movement_id = director.post(f"/api/inventory/materials/{material['id']}/stock-in",
+                                 json={"quantity": 10, "rate": 5}).get_json()["movement"]["id"]
+    assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve").status_code == 200
+    assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve").status_code == 409
+    assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/reject").status_code == 409
+
+
+def test_an_issue_by_admin_is_approved_straight_away(admin_client):
+    """The admin can always approve anything, including their own issue (auth.can_approve_issue) - unlike
+    every other Inventory-access role (Accountant, Office Assistant, Company Director...), none of which are
+    automatically the project's manager or a checked-in site supervisor just by having Inventory access."""
+    material = add_material(admin_client)
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    pid = add_project(admin_client)
+    issued = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
+    assert issued.status_code == 201 and issued.get_json()["movement"]["status"] == "approved"
+    assert issued.get_json()["material"]["stock_qty"] == 9
+
+
+def test_an_issue_by_someone_who_cant_approve_it_waits_for_the_project(app, accounts_client):
+    director = director_client(app)
+    material = add_material(accounts_client)
+    accounts_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    pid = add_project(accounts_client)
+    issued = director.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
+    assert issued.status_code == 201
+    body = issued.get_json()
+    assert body["movement"]["status"] == "pending"
+    assert body["material"]["stock_qty"] == 10                       # untouched until approved
+    movement_id = body["movement"]["id"]
+    # inventory.py refuses to approve an 'out' movement - must go through the project
+    res = accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve")
+    assert res.status_code == 422

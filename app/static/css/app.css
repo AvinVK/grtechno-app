@@ -1461,6 +1461,8 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 /* Times and hours set inside running text (a row's "9:05 am – 5:50 pm", "8.5 h total"). */
 .att-num { font-family: var(--font-num); font-weight: 500; font-variant-numeric: tabular-nums; }
 .att-day-sub { color: var(--muted); font-size: 13px; }
+.att-day-sub-line { display: block; }
+.att-day-sub-line + .att-day-sub-line { margin-top: 2px; }
 .att-bar { height: 4px; margin-top: 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .att-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--warn); }
 .att-bar > i.full { background: var(--ok); }

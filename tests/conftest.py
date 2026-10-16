@@ -15,6 +15,10 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     SECRET_KEY = "test-secret-not-a-placeholder-key"
+    # Pinned regardless of a local .env (kohal, 2026-10-16's REQUIRE_ATTENDANCE_LOCATION=0, "just in dev") -
+    # the test suite must behave the same on every machine, not however that developer's own .env happens
+    # to be set. Tests that want it off set app.config directly instead (see test_attendance.py).
+    REQUIRE_ATTENDANCE_LOCATION = True
 
 
 @pytest.fixture

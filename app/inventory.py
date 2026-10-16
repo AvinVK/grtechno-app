@@ -15,10 +15,10 @@ from decimal import Decimal
 from flask import Blueprint, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
-from .auth import visible_projects
+from .auth import can_approve_issue, can_approve_stock_in, visible_projects
 from .extensions import db
 from .modules import check_module
-from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client
+from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client, utcnow
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -137,12 +137,23 @@ def _supply_fields(payload, *, require_quantity):
     return f, wants_stock
 
 
+def _status_fields(approved):
+    """status/approved_by/approved_at for a new movement - approved straight away if the person creating it
+    is themselves someone who could approve it, otherwise left pending for whoever can (see
+    auth.can_approve_issue / can_approve_stock_in, kohal, 2026-10-16)."""
+    return dict(
+        status="approved" if approved else "pending",
+        approved_by_code=g.user.code if approved else None,
+        approved_at=utcnow() if approved else None,
+    )
+
+
 def _apply_stock_in(material, data):
+    """Create a stock-in movement. Stock itself (stock_qty/avg_rate) is never touched directly here - even
+    when this request is approved on the spot, _recompute_material (called right after, by the caller) is
+    the one source of truth for the blend, so an approved-later request goes through exactly the same math
+    as one approved immediately."""
     qty, rate = data["quantity"], data["rate"]
-    new_qty = material.stock_qty + qty
-    blended = ((material.stock_qty * material.avg_rate) + (qty * rate)) / new_qty
-    material.avg_rate = blended.quantize(Decimal("0.01"))
-    material.stock_qty = new_qty
     amount = qty * rate
     gst_percent = data.get("gst_percent") or Decimal("0")
     gst_amount = (amount * gst_percent / Decimal("100")).quantize(Decimal("0.01"))
@@ -152,6 +163,7 @@ def _apply_stock_in(material, data):
         supplier_id=data.get("supplier_id"), bill_no=data.get("bill_no", ""),
         payment_mode=data.get("payment_mode", ""), gst_percent=gst_percent, gst_amount=gst_amount,
         total_cost=amount + gst_amount,
+        **_status_fields(can_approve_stock_in(g.user)),
     )
     db.session.add(movement)
     return movement
@@ -175,10 +187,12 @@ class _NegativeStock(Exception):
 
 def _recompute_material(material):
     """Rebuild stock_qty/avg_rate (and, since an issue draws down at whatever the average happened to be at
-    the time, every issue's own rate/amount snapshot) from scratch by replaying every movement for this
-    material in date order. Needed after editing or deleting any one entry - avg_rate is a running weighted
-    average, so touching one entry can change every average calculated after it, not just that row."""
-    movements = (MaterialMovement.query.filter_by(material_id=material.id)
+    the time, every issue's own rate/amount snapshot) from scratch by replaying every *approved* movement
+    for this material in date order - a pending or rejected one (see MaterialMovement.status) never
+    happened as far as stock is concerned, so it's skipped here, not just hidden in the UI. Needed after
+    editing, deleting or approving any one entry - avg_rate is a running weighted average, so touching one
+    entry can change every average calculated after it, not just that row."""
+    movements = (MaterialMovement.query.filter_by(material_id=material.id, status="approved")
                  .order_by(MaterialMovement.entry_date, MaterialMovement.id).all())
     stock_qty = Decimal("0")
     avg_rate = Decimal("0")
@@ -275,9 +289,13 @@ def add_material():
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     material = Material(**f.data)
     db.session.add(material)
+    movement = None
     if wants_stock:
-        db.session.flush()         # stock_qty/avg_rate need their column defaults applied before blending
-    movement = _apply_stock_in(material, sf.data) if wants_stock else None
+        db.session.flush()         # stock_qty/avg_rate need their column defaults applied before recompute
+        movement = _apply_stock_in(material, sf.data)
+        db.session.flush()
+        if movement.status == "approved":
+            _recompute_material(material)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict() if movement else None), 201
 
@@ -294,6 +312,7 @@ def get_material(material_id):
         units=_units_for_client(),
         material_names=_material_names(),
         currency=settings_for_client()["currency"],
+        can_approve_stock_in=can_approve_stock_in(g.user),
     )
 
 
@@ -334,6 +353,9 @@ def stock_in(material_id):
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     movement = _apply_stock_in(material, f.data)
+    db.session.flush()
+    if movement.status == "approved":
+        _recompute_material(material)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
@@ -381,14 +403,18 @@ def issue(material_id):
     _validate_given_by(payload, f)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+    project = db.session.get(Project, f.data["project_id"])
     qty, rate = f.data["quantity"], material.avg_rate
-    material.stock_qty -= qty
     movement = MaterialMovement(
         material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
         project_id=f.data["project_id"], note=f.data.get("note", ""), entry_date=f.data["entry_date"],
         created_by_code=g.user.code, given_by_worker_id=f.data.get("given_by_worker_id"),
+        **_status_fields(can_approve_issue(g.user, project)),
     )
     db.session.add(movement)
+    db.session.flush()
+    if movement.status == "approved":
+        _recompute_material(material)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
@@ -434,6 +460,65 @@ def update_movement(material_id, movement_id):
     except _NegativeStock:
         db.session.rollback()
         return jsonify(error="That leaves an issue later on exceeding what was in stock at the time - check the quantities around it."), 422
+    db.session.commit()
+    return jsonify(material=material.to_dict(), movement=movement.to_dict())
+
+
+def approve_movement(movement, approver):
+    """Approve a pending movement (see MaterialMovement.status) - the caller has already checked the
+    approver is allowed to (can_approve_stock_in for a stock-in, can_approve_issue for an issue; see
+    app/auth.py). Shared by this module's own stock-in approve route and app/projects.py's issue approve
+    route, so both kinds go through the exact same recompute, not two copies of it."""
+    movement.status = "approved"
+    movement.approved_by_code = approver.code
+    movement.approved_at = utcnow()
+    _recompute_material(movement.material)
+
+
+def reject_movement(movement, approver):
+    """Reject a pending movement - permanent, same as a deleted one, but the row (and who turned it down)
+    stays on record instead of disappearing."""
+    movement.status = "rejected"
+    movement.approved_by_code = approver.code
+    movement.approved_at = utcnow()
+
+
+def _pending_or_409(movement):
+    if movement.status != "pending":
+        abort(409, "This entry isn't waiting for approval.")
+
+
+@bp.post("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>/approve")
+def approve_stock_in(material_id, movement_id):
+    """Only a stock-in goes through here - an issue is approved from the project it was requested for (see
+    app/projects.py's material-requests routes), since the person approving it (a site supervisor currently
+    on that site, or its manager) may have no reason to ever open Inventory at all."""
+    material = _material_or_404(material_id)
+    movement = _movement_or_404(material, movement_id)
+    if movement.kind != "in":
+        abort(422, "Approve an issue from its project instead.")
+    _pending_or_409(movement)
+    if not can_approve_stock_in(g.user):
+        abort(403, "Only an accountant or office assistant can approve a stock-in.")
+    try:
+        approve_movement(movement, g.user)
+    except _NegativeStock:
+        db.session.rollback()
+        return jsonify(error="Approving this would leave an issue dated after it exceeding what was in stock at the time."), 422
+    db.session.commit()
+    return jsonify(material=material.to_dict(), movement=movement.to_dict())
+
+
+@bp.post("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>/reject")
+def reject_stock_in(material_id, movement_id):
+    material = _material_or_404(material_id)
+    movement = _movement_or_404(material, movement_id)
+    if movement.kind != "in":
+        abort(422, "Reject an issue from its project instead.")
+    _pending_or_409(movement)
+    if not can_approve_stock_in(g.user):
+        abort(403, "Only an accountant or office assistant can reject a stock-in.")
+    reject_movement(movement, g.user)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict())
 

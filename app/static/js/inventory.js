@@ -218,21 +218,47 @@
     } catch (err) { toast(err.message, true); }
   }
 
+  // Pending/rejected show right next to the +Stock in / -Issued chip (approved is the common case, so it
+  // gets no chip of its own - see MaterialMovement.status).
+  function statusChip(mv) {
+    if (mv.status === 'pending') return h('span', { class: 'chip chip-today' }, 'Pending approval');
+    if (mv.status === 'rejected') return h('span', { class: 'chip chip-off' }, 'Rejected');
+    return null;
+  }
+
+  async function approveOrRejectStockIn(materialId, mv, approve, onChanged) {
+    const label = approve ? 'Approve' : 'Reject';
+    if (!approve) {
+      const sure = await confirm(`Reject this stock-in? It never counted toward stock, so there's nothing to undo.`, { ok: 'Reject', danger: true, title: 'Reject stock-in' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/inventory/materials/${materialId}/movements/${mv.id}/${approve ? 'approve' : 'reject'}`, { method: 'POST' });
+      toast(approve ? 'Stock-in approved' : 'Stock-in rejected');
+      await onChanged();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
   function movementRow(materialId, mv, data, onChanged) {
     const isIn = mv.kind === 'in';
     const { currency } = data;
     const extra = isIn
       ? [mv.supplier_name, mv.bill_no ? `Bill ${mv.bill_no}` : null, mv.payment_mode ? (mv.payment_mode === 'credit' ? 'Credit' : 'Cash') : null]
       : [mv.given_by_name ? `Given by ${mv.given_by_name}` : null];
+    const canApprove = isIn && mv.status === 'pending' && data.can_approve_stock_in;
     return h('li', { class: 'p-row' },
       h('span', { class: `chip ${isIn ? 'chip-active' : 'chip-off'}` }, isIn ? '+ Stock in' : '− Issued'),
       h('span', { class: 'p-main' },
-        h('span', { class: 'row-title' }, `${mv.quantity} ${isIn ? 'at ' + money(mv.rate, currency) : ''}`.trim()),
+        h('span', { class: 'row-title' }, `${mv.quantity} ${isIn ? 'at ' + money(mv.rate, currency) : ''}`.trim(), ' ', statusChip(mv)),
         h('span', { class: 'row-sub' }, [fmtDate(mv.entry_date), mv.project_title ? `${mv.project_code} · ${mv.project_title}` : null, ...extra, mv.note || null, mv.created_by_name ? `by ${mv.created_by_name}` : null].filter(Boolean).join(' · ')),
         h('span', { class: 'bill-links' },
           isIn ? billControl(materialId, mv, onChanged) : null,
           h('button', { type: 'button', class: 'link-btn', onclick: () => editMovementSheet(materialId, mv, data, onChanged) }, 'Edit'),
-          h('button', { type: 'button', class: 'link-btn', onclick: () => deleteMovement(materialId, mv, onChanged) }, 'Delete'))),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => deleteMovement(materialId, mv, onChanged) }, 'Delete'),
+          canApprove ? h('button', { type: 'button', class: 'link-btn', onclick: () => approveOrRejectStockIn(materialId, mv, true, onChanged) }, 'Approve') : null,
+          canApprove ? h('button', { type: 'button', class: 'link-btn', onclick: () => approveOrRejectStockIn(materialId, mv, false, onChanged) }, 'Reject') : null)),
       h('span', { class: 'row-value' }, money(isIn ? mv.total_cost : mv.amount, currency)));
   }
 

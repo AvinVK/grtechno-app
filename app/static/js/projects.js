@@ -512,7 +512,7 @@
       return;
     }
     if (section === 'payments') renderPayments(data);
-    else if (section === 'materials') renderMaterials(data);
+    else if (section === 'materials') { renderMaterials(data); loadMaterialRequests(id); }
     else if (section === 'details') renderDetails(data);
     else if (section === 'attendance') renderAttendance(data);
     else renderDashboard(data);
@@ -966,7 +966,9 @@
   // What's been issued to this project from Inventory (see app/inventory.py's stock-out ledger) - the
   // material leg of the project's own running cost, same rate Inventory shows (what the stock actually
   // cost at the time, not a guess). Read-only here; a correction happens from the material's own history
-  // in Inventory, same as everywhere else that ledger is shown.
+  // in Inventory, same as everywhere else that ledger is shown. Only an *approved* issue ever lands here -
+  // a pending or rejected request never drew down stock, so it's not a real cost yet (see
+  // loadMaterialRequests, right above this list, for those - kohal, 2026-10-16).
   function renderMaterials(data) {
     const P = data.project;
     const c = data.client;
@@ -975,6 +977,7 @@
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'materials'),
+      h('section', { class: 'p-section', id: 'material-requests-box' }, h('p', { class: 'loading' }, 'Loading requests…')),
       h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
           h('h3', {}, 'Materials used'),
@@ -989,6 +992,99 @@
               h('span', { class: 'row-value' }, money(m.amount, cur)))))
           : h('p', { class: 'hint' }, 'No material has been issued to this project yet - see Inventory.'))));
     window.scrollTo(0, 0);
+  }
+
+  /* Material requests for this project (kohal, 2026-10-16: "to assign material to the project, there
+     should be an approval needed from either the site supervisor who has currently checked in on that site
+     or project manager"). A separate call from the project's own detail fetch, since it needs its own
+     reload after requesting/approving/rejecting without re-fetching the whole project. */
+  async function loadMaterialRequests(projectId) {
+    const box = $('#material-requests-box');
+    if (!box) return;                      // navigated away already
+    let data;
+    try { data = await api(`/api/projects/${projectId}/material-requests`); }
+    catch (err) { clear(box).append(h('p', { class: 'hint' }, err.message)); return; }
+    renderMaterialRequestsBox(projectId, data);
+  }
+
+  function renderMaterialRequestsBox(projectId, data) {
+    const box = $('#material-requests-box');
+    if (!box) return;
+    const pending = data.requests || [];
+    const reload = () => loadMaterialRequests(projectId);
+    const rows = pending.map((r) => h('li', { class: 'p-row' },
+      h('span', { class: 'chip chip-today' }, 'Pending'),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
+        h('span', { class: 'row-sub' },
+          [`${r.quantity} ${r.unit || ''}`.trim(), r.note || null, r.created_by_name ? `Requested by ${r.created_by_name}` : null]
+            .filter(Boolean).join(' · ')),
+        data.can_approve ? h('span', { class: 'bill-links' },
+          h('button', { type: 'button', class: 'link-btn', onclick: () => respondToRequest(projectId, r.id, true, reload) }, 'Approve'),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => respondToRequest(projectId, r.id, false, reload) }, 'Reject')) : null)));
+    clear(box).append(
+      h('div', { class: 'p-section-head' },
+        h('h3', {}, 'Material requests'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openRequestMaterial(projectId, data.materials, reload) }, '+ Request material')),
+      pending.length
+        ? h('ul', { class: 'card-group' }, rows)
+        : h('p', { class: 'hint' }, 'No pending requests.'));
+  }
+
+  async function respondToRequest(projectId, movementId, approve, reload) {
+    if (!approve) {
+      const sure = await confirm("Reject this request? It never drew down stock, so there's nothing to undo.", { ok: 'Reject', danger: true, title: 'Reject request' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/projects/${projectId}/material-requests/${movementId}/${approve ? 'approve' : 'reject'}`, { method: 'POST' });
+      toast(approve ? 'Material request approved' : 'Material request rejected');
+      reload();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  // A small form to ask for material - whoever can already approve it (the project's manager, or a site
+  // supervisor currently checked in there) has it go through immediately; anyone else's goes in as pending.
+  function openRequestMaterial(projectId, materials, reload) {
+    const materialSel = selectField(materials.map((m) => ({ value: m.id, label: `${m.code} · ${m.name} (${m.stock_qty} ${m.unit || ''} in stock)` })), '', { title: 'Material', placeholder: 'Choose a material' });
+    const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' });
+    const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Send request');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          const res = await api(`/api/projects/${projectId}/material-requests`, {
+            method: 'POST', body: { material_id: materialSel.value, quantity: qtyInput.value, note: noteInput.value },
+          });
+          toast(res.request.status === 'approved' ? 'Material issued' : 'Request sent for approval');
+          overlay.remove();
+          reload();
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      field('material_id', 'Material', materialSel, { wide: true }),
+      field('quantity', 'Quantity', qtyInput),
+      field('note', 'Note', noteInput, { wide: true }),
+      h('div', { class: 'confirm-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => overlay.remove() }, 'Cancel'),
+        saveBtn));
+    const card = h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Request material' },
+      h('h2', {}, 'Request material'), form);
+    const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) overlay.remove(); } }, card);
+    document.body.append(overlay);
+    materialSel.focus?.();
   }
 
   function route() {

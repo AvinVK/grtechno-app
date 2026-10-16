@@ -94,6 +94,24 @@ def test_a_bad_location_is_rejected(client):
     assert res.status_code == 422 and "lat" in res.get_json()["fields"]
 
 
+def test_state_reports_whether_a_location_is_required(client):
+    assert client.get("/api/attendance/state").get_json()["location_required"] is True
+
+
+def test_location_can_be_switched_off_for_local_dev_only(app, client):
+    """REQUIRE_ATTENDANCE_LOCATION=0 - a local .env only, never prod (kohal, 2026-10-16: "just in dev") -
+    see app/config.py. Never read from an actual .env in tests; set directly on the app's own config."""
+    with app.app_context():
+        app.config["REQUIRE_ATTENDANCE_LOCATION"] = False
+        try:
+            assert client.get("/api/attendance/state").get_json()["location_required"] is False
+            res = client.post("/api/attendance/check-in", json={})
+            assert res.status_code == 201
+            assert res.get_json()["today"]["check_in_lat"] is None
+        finally:
+            app.config["REQUIRE_ATTENDANCE_LOCATION"] = True
+
+
 def test_team_register_also_carries_the_location(client, admin_client):
     check_in(client)
     record = admin_client.get("/api/attendance/team").get_json()["records"][0]
