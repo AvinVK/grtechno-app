@@ -408,6 +408,23 @@ def test_dashboard_shows_start_brought_by_and_who_worked_on_it(app, client, admi
     assert dash["started"] == "2026-01-05" and dash["start_date_set"] is True
 
 
+def test_a_pending_check_in_does_not_count_toward_the_teams_days(app, client, admin_client, user):
+    """kohal, 2026-10-16: a check-in needs approval (see Attendance.status) - until then it isn't a verified
+    day's work, so it's left off the project's own team/days tally."""
+    pid = make_project(client, admin_client)
+    res = client.post("/api/attendance/check-in", json={"lat": 21.1458, "lng": 79.0882, "project_id": pid})
+    assert res.get_json()["today"]["status"] == "pending"
+    dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
+    assert dash["team"] == []
+
+    with app.app_context():
+        row = Attendance.query.filter_by(user_code=user.code, project_id=pid).first()
+        row.status = "approved"
+        db.session.commit()
+    dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
+    assert [(m["name"], m["days"]) for m in dash["team"]] == [(user.name, 1)]
+
+
 def test_recording_the_final_amount_moves_status_to_final_estimate_sent(client, admin_client):
     pid = make_project(client, admin_client)
     admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "status": "running"})

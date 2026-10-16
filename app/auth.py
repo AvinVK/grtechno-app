@@ -223,6 +223,23 @@ def can_approve_stock_in(user) -> bool:
     return user.is_admin or user.role_key in ("accounts", "office_assistant")
 
 
+def can_approve_attendance(user, project) -> bool:
+    """A check-in/check-out record (kohal, 2026-10-16: "Attendance should be approved by project manager or
+    site supervisor who is checked in on tha project"): the admin or Company Director always - the universal
+    fallback, since office/marketing work has no project to approve against, and a site supervisor can't
+    approve their own attendance just by being the one checked in - any project manager, or a site
+    supervisor currently checked into that exact project right now."""
+    if user.is_admin or user.role_key == "company_director":
+        return True
+    if project is None:
+        return False
+    if user.role_key == "project_manager":
+        return True
+    if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
+        return Attendance.query.filter_by(user_code=user.code, project_id=project.id, check_out_at=None).first() is not None
+    return False
+
+
 def visible_clients():
     """Clients this person may see: everything for sees_all, only their assigned state(s) for a sub-admin,
     otherwise the ones they created plus the clients of projects they manage."""

@@ -1458,6 +1458,7 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .att-day-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .att-day-date { font: 600 15px/1.2 var(--font-display); }
 .att-day-hours { font: 500 15px/1.2 var(--font-num); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.att-day-right { display: flex; align-items: center; gap: 6px; }
 /* Times and hours set inside running text (a row's "9:05 am – 5:50 pm", "8.5 h total"). */
 .att-num { font-family: var(--font-num); font-weight: 500; font-variant-numeric: tabular-nums; }
 .att-day-sub { color: var(--muted); font-size: 13px; }

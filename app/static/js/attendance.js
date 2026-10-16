@@ -66,6 +66,14 @@
       : [h('span', { class: 'att-num' }, fmtTime(a.check_in_at)), ' – still checked in'];
   }
 
+  // Pending/rejected shows right next to the time - approved (the common case) gets no chip of its own
+  // (see Attendance.status, kohal, 2026-10-16).
+  function statusChip(a) {
+    if (a.status === 'pending') return h('span', { class: 'chip chip-today' }, 'Pending');
+    if (a.status === 'rejected') return h('span', { class: 'chip chip-off' }, 'Rejected');
+    return null;
+  }
+
   /* 4px bar filled to hours/9 (a full day plus lunch), green once it reaches 8 h, amber when shorter. */
   function hoursBar(hours) {
     if (hours == null) return null;
@@ -87,7 +95,7 @@
   function recordRow(title, a, onDeleted) {
     return dayRow({
       title,
-      right: h('span', { class: 'att-day-hours' }, a.hours != null ? `${a.hours} h` : ''),
+      right: h('span', { class: 'att-day-right' }, statusChip(a), h('span', { class: 'att-day-hours' }, a.hours != null ? `${a.hours} h` : '')),
       sub: a.work_label ? [a.work_label, ' · ', timesText(a)] : timesText(a),
       hours: a.hours,
       links: [mapLink(a), onDeleted ? deleteLink(a, onDeleted) : null],
@@ -121,7 +129,7 @@
   function groupedDayRow(title, sessions, onDeleted) {
     const totalHours = sessions.reduce((sum, a) => sum + (a.hours || 0), 0);
     const lines = sessions.map((a) => h('span', { class: 'att-day-sub-line' },
-      a.work_label ? [a.work_label, ' · ', timesText(a)] : timesText(a)));
+      a.work_label ? [a.work_label, ' · ', timesText(a)] : timesText(a), statusChip(a) ? [' ', statusChip(a)] : null));
     return dayRow({
       title,
       right: h('span', { class: 'att-day-hours' }, totalHours ? `${roundHours(totalHours)} h` : ''),
@@ -158,8 +166,14 @@
         if (day < firstDay || day > todayDate) continue;
         const sessions = byDay.get(dayKey(day));
         if (sessions && sessions.length) {
-          worked += 1;
-          total += sessions.reduce((sum, a) => sum + (a.hours || 0), 0);
+          // Only an approved session counts toward the week's days/hours (see Attendance.status) - a
+          // pending or rejected one still shows in the row itself (with its own chip), just not counted
+          // here yet.
+          const approved = sessions.filter((a) => a.status === 'approved');
+          if (approved.length) {
+            worked += 1;
+            total += approved.reduce((sum, a) => sum + (a.hours || 0), 0);
+          }
           rows.push(sessions.length === 1 ? recordRow(shortDate(day), sessions[0], onDeleted) : groupedDayRow(shortDate(day), sessions, onDeleted));
         } else if (day < todayDate && day.getDay() !== 0) {
           absent += 1;

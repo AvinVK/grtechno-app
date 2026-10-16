@@ -153,6 +153,63 @@
   load();
 })();
 
+/* Attendance waiting specifically on the signed-in person - same approvers as the material section above
+   (kohal, 2026-10-16: "Attendance should be approved by project manager or site supervisor who is checked
+   in on tha project"), see auth.can_approve_attendance. Hidden when nothing's waiting. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-attendance-approvals');
+  if (!section) return;
+  const list = document.getElementById('me-attendance-approvals-list');
+  const { h, clear, api, toast, confirm } = window.LD;
+
+  function fmtTime(iso) {
+    return iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }) : '';
+  }
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/attendance/approvals');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = data.approvals.length === 0;
+    clear(list);
+    data.approvals.forEach((r) => list.append(approvalRow(r)));
+  }
+
+  async function act(r, action) {
+    if (action === 'reject') {
+      const sure = await confirm('Reject this attendance record? This cannot be undone.', { ok: 'Reject', danger: true, title: 'Reject record' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/attendance/${r.id}/${action}`, { method: 'POST' });
+      toast(action === 'approve' ? 'Approved' : 'Rejected');
+      load();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function approvalRow(r) {
+    const times = r.check_out_at ? `${fmtTime(r.check_in_at)} – ${fmtTime(r.check_out_at)}` : `${fmtTime(r.check_in_at)} – still checked in`;
+    return h('div', { class: 'card me-row approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, r.user_name),
+        h('span', { class: 'hint' }, [r.work_label, times].filter(Boolean).join(' · ')),
+        r.notes ? h('span', { class: 'hint' }, r.notes) : null),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')));
+  }
+
+  load();
+})();
+
 /* Admin only: site categories people typed in that aren't on the list yet. Each waits here until the
    admin approves it (it joins the list) or points it at an existing category (every survey and client
    using the typed name moves over). Hidden when nothing is waiting. */

@@ -722,7 +722,15 @@ class Attendance(db.Model):
     grouped back into a day's sessions for display (see app/attendance.py and the history view). At most
     one of a person's rows for a given day has no check_out_at yet - that's the session they're currently
     in, if any (see check_in below, which refuses a second one while one is still open). project_id is who
-    they worked for that session and is optional, for office staff with no site to pick."""
+    they worked for that session and is optional, for office staff with no site to pick.
+
+    Needs sign-off before it counts (kohal, 2026-10-16): the admin, Company Director, that project's
+    manager, or a site supervisor currently checked into that exact project can approve it; office/marketing
+    work (no project) needs the admin or Company Director specifically, since there's no project to approve
+    against (see auth.can_approve_attendance). The check-in/check-out itself is never blocked by this -
+    `status='pending'` only excludes a record from day/week counts and summaries until approved, same as a
+    pending MaterialMovement is excluded from stock; see _recompute_material's sibling reasoning. Rejected,
+    permanently, the same way. Every existing record, from before this existed, is 'approved'."""
 
     __tablename__ = "attendance"
 
@@ -738,9 +746,14 @@ class Attendance(db.Model):
     # With no project: "" is office work, "marketing" is marketing work.
     work_kind = db.Column(db.String(20), nullable=False, default="", server_default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    # Approval (see the class docstring) - pending | approved | rejected.
+    status = db.Column(db.String(10), nullable=False, default="approved", server_default="approved")
+    approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
 
-    user = db.relationship("User")
+    user = db.relationship("User", foreign_keys=[user_code])
     project = db.relationship("Project")
+    approved_by = db.relationship("User", foreign_keys=[approved_by_code])
 
     @property
     def hours(self):
@@ -767,6 +780,9 @@ class Attendance(db.Model):
             "check_in_lat": self.check_in_lat, "check_in_lng": self.check_in_lng,
             "check_in_map_url": self.check_in_map_url,
             "notes": self.notes, "hours": self.hours,
+            "status": self.status,
+            "approved_by_name": self.approved_by.name if self.approved_by else None,
+            "approved_at": _iso(self.approved_at),
         }
 
 

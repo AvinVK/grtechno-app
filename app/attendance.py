@@ -10,7 +10,7 @@ from datetime import date
 from flask import Blueprint, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
-from .auth import visible_attendance
+from .auth import can_approve_attendance, visible_attendance
 from .extensions import db
 from .models import Attendance, Project, User, utcnow
 from .modules import check_module
@@ -125,10 +125,14 @@ def check_in():
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
+    approved = can_approve_attendance(g.user, project)
     row = Attendance(
         user_code=g.user.code, work_date=date.today(), project_id=project.id if project else None,
         check_in_at=utcnow(), check_in_lat=lat, check_in_lng=lng, notes=f.data.get("notes", ""),
         work_kind="marketing" if work == "marketing" and project is None else "",
+        status="approved" if approved else "pending",
+        approved_by_code=g.user.code if approved else None,
+        approved_at=utcnow() if approved else None,
     )
     db.session.add(row)
     db.session.commit()
@@ -158,6 +162,40 @@ def delete_record(record_id):
     db.session.delete(row)
     db.session.commit()
     return "", 204
+
+
+@bp.get("/api/attendance/approvals")
+def approvals():
+    """Pending attendance records the signed-in person can act on right now (see auth.can_approve_attendance)
+    - a project manager, a site supervisor currently checked in somewhere, the admin, or Company Director.
+    Same shape as /api/me/material-approvals, which pulls from here too for the Me hub's own section."""
+    pending = Attendance.query.filter_by(status="pending").order_by(Attendance.created_at).all()
+    return jsonify(approvals=[a.to_dict() for a in pending if can_approve_attendance(g.user, a.project)])
+
+
+def _approve_or_reject(record_id, status):
+    row = db.session.get(Attendance, record_id)
+    if row is None:
+        abort(404)
+    if row.status != "pending":
+        abort(409, "This record isn't waiting for approval.")
+    if not can_approve_attendance(g.user, row.project):
+        abort(403, "Only this project's manager, a site supervisor currently checked in there, the admin or Company Director can act on this.")
+    row.status = status
+    row.approved_by_code = g.user.code
+    row.approved_at = utcnow()
+    db.session.commit()
+    return jsonify(record=row.to_dict())
+
+
+@bp.post("/api/attendance/<int:record_id>/approve")
+def approve_record(record_id):
+    return _approve_or_reject(record_id, "approved")
+
+
+@bp.post("/api/attendance/<int:record_id>/reject")
+def reject_record(record_id):
+    return _approve_or_reject(record_id, "rejected")
 
 
 @bp.get("/api/attendance/team")

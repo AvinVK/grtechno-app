@@ -3,6 +3,8 @@ from datetime import date, timedelta
 from app.extensions import db
 from app.models import Attendance, Client, Project, utcnow
 
+from conftest import make_user, signed_in
+
 LOC = {"lat": 21.1458, "lng": 79.0882}          # Nagpur, used wherever a test just needs some valid location
 
 
@@ -272,3 +274,112 @@ def test_office_work_is_the_default_without_a_project(client):
 def test_an_unknown_kind_of_work_is_refused(client):
     res = client.post("/api/attendance/check-in", json={"work": "napping", "lat": 21.1, "lng": 79.0})
     assert res.status_code == 422 and "work" in res.get_json()["fields"]
+
+
+# ---------- approval (kohal, 2026-10-16: "Attendance should be approved by project manager or site
+# supervisor who is checked in on tha project") ----------
+
+def test_office_work_needs_admin_or_company_director_to_approve(client):
+    today = check_in(client).get_json()["today"]
+    assert today["status"] == "pending" and today["approved_by_name"] is None
+
+
+def test_check_in_by_the_admin_is_impossible_so_company_director_is_the_fallback(app):
+    director = signed_in(app, make_user("Dilip Director", role="company_director"))
+    today = director.post("/api/attendance/check-in", json=LOC).get_json()["today"]
+    assert today["status"] == "approved" and today["approved_by_name"] == "Dilip Director"
+
+
+def test_check_in_against_a_project_by_someone_unconnected_to_it_is_pending(app, client):
+    with app.app_context():
+        project = make_project()
+        pid = project.id
+    today = check_in(client, project_id=pid).get_json()["today"]
+    assert today["status"] == "pending"
+
+
+def test_check_in_by_the_projects_own_manager_is_approved_immediately(app):
+    with app.app_context():
+        pid = make_project().id
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    today = pm_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]
+    assert today["status"] == "approved" and today["approved_by_name"] == "Priya Manager"
+
+
+def test_a_site_supervisors_own_check_in_still_waits_for_approval(app):
+    """They can't be "the currently checked-in supervisor" approving themselves - only the project manager,
+    admin or Company Director can sign off their own attendance there."""
+    with app.app_context():
+        pid = make_project().id
+    supervisor = make_user("Site Sam", role="supervisor")
+    sup_client = signed_in(app, supervisor)
+    today = sup_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]
+    assert today["status"] == "pending"
+
+
+def test_approving_an_attendance_record(app, client):
+    with app.app_context():
+        pid = make_project().id
+    today = check_in(client, project_id=pid).get_json()["today"]
+    record_id = today["id"]
+
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    res = pm_client.post(f"/api/attendance/{record_id}/approve")
+    assert res.status_code == 200
+    assert res.get_json()["record"]["status"] == "approved" and res.get_json()["record"]["approved_by_name"] == "Priya Manager"
+
+
+def test_only_an_eligible_person_can_approve_or_reject(app, client):
+    with app.app_context():
+        pid = make_project().id
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    other = signed_in(app, make_user("Someone Else"))
+    assert other.post(f"/api/attendance/{record_id}/approve").status_code == 403
+    assert other.post(f"/api/attendance/{record_id}/reject").status_code == 403
+
+
+def test_cannot_approve_or_reject_twice(app, client):
+    with app.app_context():
+        pid = make_project().id
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    manager = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    assert manager.post(f"/api/attendance/{record_id}/approve").status_code == 200
+    assert manager.post(f"/api/attendance/{record_id}/approve").status_code == 409
+    assert manager.post(f"/api/attendance/{record_id}/reject").status_code == 409
+
+
+def test_checking_in_or_out_never_needs_approval_first(client):
+    """The check-in/check-out action itself is never blocked by approval - only counts/reports are (see
+    the next tests) - otherwise someone could get stuck unable to check out until somebody approves."""
+    assert check_in(client).status_code == 201
+    assert client.post("/api/attendance/check-out").status_code == 200
+    assert check_in(client).status_code == 201     # checking in again still works, still just goes pending
+
+
+def test_a_pending_day_is_excluded_from_the_weekly_count(app, client, user):
+    check_in(client)
+    client.post("/api/attendance/check-out")
+    assert client.get("/api/me").get_json()                      # sanity: still signed in
+    html = client.get("/me").get_data(as_text=True)
+    assert "0 days this week" in html                             # pending, so it doesn't count yet
+
+    with app.app_context():
+        row = Attendance.query.filter_by(user_code=user.code).first()
+        row.status = "approved"
+        db.session.commit()
+    html = client.get("/me").get_data(as_text=True)
+    assert "1 day this week" in html
+
+
+def test_attendance_approvals_lists_only_what_this_person_can_act_on(app, client):
+    with app.app_context():
+        pid = make_project().id
+    check_in(client, project_id=pid)
+
+    manager = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    assert len(manager.get("/api/attendance/approvals").get_json()["approvals"]) == 1
+
+    welder = signed_in(app, make_user("Wendy Welder", role="welder"))
+    assert welder.get("/api/attendance/approvals").get_json()["approvals"] == []

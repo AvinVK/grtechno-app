@@ -38,6 +38,14 @@
     <div id="me-material-approvals-list" class="card-group me-rows"></div>
   </section>
 
+  {# Attendance waiting on the signed-in person specifically, same idea and same approvers as the material
+     section above (see auth.can_approve_attendance) - office/marketing work needs the admin or Company
+     Director, since there's no project to approve against. #}
+  <section class="me-section" id="me-attendance-approvals" aria-labelledby="me-attendance-approvals-h" hidden>
+    <div class="me-section-head"><h2 id="me-attendance-approvals-h">Pending approvals</h2><span class="chip chip-role">Attendance</span></div>
+    <div id="me-attendance-approvals-list" class="card-group me-rows"></div>
+  </section>
+
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}
   {% if current_user.is_admin %}
   <section class="me-section" id="me-approvals" aria-labelledby="me-approvals-h" hidden>

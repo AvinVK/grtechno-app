@@ -120,7 +120,8 @@ def _team(project):
         row["days"] += 1
         row["last_day"] = max(row["last_day"] or day, day)
 
-    for a in Attendance.query.filter_by(project_id=project.id):
+    # Only an approved day counts (see Attendance.status) - a pending one isn't a verified day's work yet.
+    for a in Attendance.query.filter_by(project_id=project.id, status="approved"):
         add(("user", a.user_code), a.user.name, "App user", a.work_date)
     for a in WorkerAttendance.query.filter_by(project_id=project.id, status="present"):
         add(("worker", a.worker_id), a.worker.name, a.worker.category.capitalize(), a.work_date)

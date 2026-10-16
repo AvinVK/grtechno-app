@@ -36,7 +36,10 @@ def _summaries(keys) -> dict:
             out["attendance"] = f"{n} checked in today"
         else:
             monday = today - timedelta(days=today.weekday())
-            n = Attendance.query.filter(Attendance.user_code == g.user.code, Attendance.work_date >= monday).count()
+            # Only an approved day counts here (see Attendance.status) - a pending one isn't a verified
+            # day's work yet.
+            n = Attendance.query.filter(Attendance.user_code == g.user.code, Attendance.work_date >= monday,
+                                         Attendance.status == "approved").count()
             out["attendance"] = f"{n} day{'' if n == 1 else 's'} this week"
     if "clients" in keys:
         n = visible_clients().count()
