@@ -27,7 +27,7 @@ from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, s
 from .modules import can_write, check_module
 from .validation import Fields, parse_money
 
-EMPLOYMENT_TYPES = ("regular", "daily_wages")
+EMPLOYMENT_TYPES = ("regular", "daily_wages", "contractor")
 
 WINDOW_DAYS = 14           # how many days back the one-off WhatsApp import covers; shown next to each count
 PERIOD_DAYS = 30           # the Attendance sheet looks back at most this far from the last day with data
@@ -311,18 +311,19 @@ def _employee_fields(payload):
         else:
             data["role_key"] = raw_role
 
-    # Salary or daily wages (kohal, 2026-10-17: "make salary or daily wages as binary and dropdown... it
-    # can be either of the one and not text, single selection") - a plain "not set" is no longer offered
-    # once the field is touched at all; an existing worker saved before this change can still sit with ""
-    # until their own record is next edited. The amount that goes with it is a whole-rupee figure, not
-    # money with paise - per month for a salary, per day for daily wages - and is required together with
-    # the type, since showing the box at all (see people.js) means it needs a number in it.
+    # Salary, daily wages, or contractor (kohal, 2026-10-17: "make salary or daily wages as binary and
+    # dropdown... single selection"; kohal, 2026-10-17 later the same day: "add contractor as well") - a
+    # plain "not set" is no longer offered once the field is touched at all; an existing worker saved before
+    # this change can still sit with "" until their own record is next edited. The amount that goes with it
+    # is a whole-rupee figure, not money with paise - per month for a salary, per day for daily wages, or
+    # the contract amount for a contractor - and is required together with the type, since showing the box
+    # at all (see people.js) means it needs a number in it.
     if "employment_type" in payload:
         raw = payload["employment_type"]
         if raw in EMPLOYMENT_TYPES:
             data["employment_type"] = raw
         else:
-            errors["employment_type"] = "Choose salary or daily wages"
+            errors["employment_type"] = "Choose salary, daily wages, or contractor"
 
     if "wage_amount" in payload:
         raw = payload["wage_amount"]

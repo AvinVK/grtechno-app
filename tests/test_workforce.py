@@ -267,11 +267,24 @@ def test_editing_an_employee_captures_full_hr_details(admin_client, app):
     assert body["reference"] == "Referred by Ramesh"
 
 
-def test_employment_type_must_be_regular_or_daily_wages(admin_client, app):
+def test_employment_type_must_be_regular_daily_wages_or_contractor(admin_client, app):
     with app.app_context():
         wid = make("X")
-    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "employment_type": "contractor"})
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "employment_type": "freelance"})
     assert res.status_code == 422 and "employment_type" in res.get_json()["fields"]
+
+
+def test_a_contractor_is_a_valid_employment_type_with_its_own_amount(admin_client, app):
+    """kohal, 2026-10-17: "add contractor as well and then contract amount below same as salary and
+    wages" - a third option alongside Salary/Daily wages, same whole-rupee amount requirement."""
+    with app.app_context():
+        wid = make("X")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={
+        "name": "X", "employment_type": "contractor", "wage_amount": "150000",
+    })
+    assert res.status_code == 200
+    body = res.get_json()["worker"]
+    assert body["employment_type"] == "contractor" and body["wage_amount"] == 150000.0
 
 
 def test_employment_type_can_no_longer_be_left_blank(admin_client, app):
