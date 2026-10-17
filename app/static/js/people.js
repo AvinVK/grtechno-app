@@ -283,7 +283,7 @@
     return close;
   }
 
-  const EMPLOYMENT_TYPES = [{ value: 'regular', label: 'Regular' }, { value: 'daily_wages', label: 'Daily wages' }];
+  const EMPLOYMENT_TYPES = [{ value: 'regular', label: 'Salary' }, { value: 'daily_wages', label: 'Daily wages' }];
 
   // Every employee now arrives from Users & roles (see app/auth.py sync_worker_for_user) - this is Edit
   // only, no more Add. w is the worker to prefill from (its detail fields, e.g. age/qualification/..., are
@@ -300,13 +300,29 @@
     const skillsInput = text('skills', { maxlength: 400, autocomplete: 'off' });
     const phoneInput = text('phone', { type: 'tel', maxlength: 40, autocomplete: 'off' });
     const joiningInput = dateField(w.joining_date || '', { placeholder: 'Joining date' });
-    const employmentSel = selectField(
-      [{ value: '', label: 'Not set' }, ...EMPLOYMENT_TYPES], w.employment_type || '',
-      { title: 'Joining as', placeholder: 'Not set' });
-    const wageInput = text('wage_amount', { type: 'number', min: '0', step: 'any', inputmode: 'decimal' });
+    // Salary or daily wages (kohal, 2026-10-17: "make salary or daily wages as binary and dropdown...
+    // single selection") - always one of the two, never a blank "not set" once this form touches it; an
+    // existing worker saved before this change defaults here to Salary until actually edited and saved.
+    // The amount box below it swaps its own label/placeholder to match - "per month" for a salary, "per
+    // day" for daily wages - and takes a whole rupee figure, not paise (see _employee_fields server-side).
+    const employmentSel = selectField(EMPLOYMENT_TYPES, w.employment_type || 'regular', { title: 'Salary or daily wages' });
+    const wageInput = h('input', {
+      type: 'number', min: '1', step: '1', inputmode: 'numeric',
+      value: w.wage_amount != null ? String(Math.round(w.wage_amount)) : '',
+    });
     const pfInput = text('pf_number', { maxlength: 60, autocomplete: 'off' });
     const esicInput = text('esic_number', { maxlength: 60, autocomplete: 'off' });
     const referenceInput = text('reference', { maxlength: 200, autocomplete: 'off' });
+
+    const wageField = field('wage_amount', 'Monthly salary', wageInput);
+    const wageLabel = wageField.querySelector('label');
+    const updateWageField = () => {
+      const isWages = employmentSel.value === 'daily_wages';
+      wageLabel.textContent = isWages ? 'Daily wage' : 'Monthly salary';
+      wageInput.placeholder = isWages ? 'Rupees per day' : 'Rupees per month';
+    };
+    employmentSel.addEventListener('change', updateWageField);
+    updateWageField();
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);
@@ -357,8 +373,8 @@
         field('skills', 'Skills', skillsInput, { wide: true }),
         field('phone', 'Mobile number', phoneInput),
         field('joining_date', 'Joining date', joiningInput),
-        field('employment_type', 'Joining as', employmentSel),
-        field('wage_amount', 'Salary or wages', wageInput),
+        field('employment_type', 'Salary or daily wages', employmentSel),
+        wageField,
         field('pf_number', 'PF number', pfInput),
         field('esic_number', 'ESIC number', esicInput),
         field('reference', 'Reference', referenceInput, { wide: true })),
@@ -490,7 +506,7 @@
 
   /* ---------- one employee: HR details, and the salary/wages log ---------- */
 
-  const EMPLOYMENT_LABEL = { regular: 'Regular', daily_wages: 'Daily wages' };
+  const EMPLOYMENT_LABEL = { regular: 'Salary', daily_wages: 'Daily wages' };
   const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
 
   function detailsSection(w) {

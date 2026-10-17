@@ -274,6 +274,28 @@ def test_employment_type_must_be_regular_or_daily_wages(admin_client, app):
     assert res.status_code == 422 and "employment_type" in res.get_json()["fields"]
 
 
+def test_employment_type_can_no_longer_be_left_blank(admin_client, app):
+    """kohal, 2026-10-17: "it can be either of the one and not text, single selection" - once the field is
+    sent at all, it must be one of the two, not a plain "not set" the way it used to accept."""
+    with app.app_context():
+        wid = make("X")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "employment_type": ""})
+    assert res.status_code == 422 and "employment_type" in res.get_json()["fields"]
+
+
+def test_wage_amount_must_be_a_whole_number_and_is_required_once_sent(admin_client, app):
+    with app.app_context():
+        wid = make("X")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "wage_amount": ""})
+    assert res.status_code == 422 and "wage_amount" in res.get_json()["fields"]
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "wage_amount": "22000.50"})
+    assert res.status_code == 422 and "wage_amount" in res.get_json()["fields"]
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "wage_amount": "0"})
+    assert res.status_code == 422 and "wage_amount" in res.get_json()["fields"]
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "X", "wage_amount": "25000"})
+    assert res.status_code == 200 and res.get_json()["worker"]["wage_amount"] == 25000.0
+
+
 def test_age_must_be_a_plausible_number(admin_client, app):
     with app.app_context():
         wid = make("X")
