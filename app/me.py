@@ -9,7 +9,7 @@ from datetime import timedelta
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from . import categories
-from .auth import can_approve_issue, can_approve_stock_in, visible_clients, visible_leads, visible_projects
+from .auth import can_approve_stock_in, visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
 from .extensions import db
 from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest
@@ -62,16 +62,15 @@ def page():
 
 @bp.get("/api/me/material-approvals")
 def material_approvals():
-    """Pending material issues/stock-ins the signed-in person specifically can act on right now (kohal,
-    2026-10-16: "i want to see the requests in me tab") - same eligibility as the approve routes themselves
-    (see auth.can_approve_issue / can_approve_stock_in), just gathered from every pending movement instead
-    of checking one project or all of Inventory at a time. Not gated on the Inventory or Projects module -
-    a site supervisor with neither still needs to see what's waiting on them."""
-    pending = MaterialMovement.query.filter_by(status="pending").order_by(MaterialMovement.created_at).all()
+    """Pending stock-ins the signed-in person specifically can approve right now (kohal, 2026-10-16: "i want
+    to see the requests in me tab"), same eligibility as Inventory's own approve route (auth.
+    can_approve_stock_in). An issue request moved to its own tab inside Inventory (kohal, 2026-10-17) rather
+    than being approved from here or from the project - anyone with Inventory access already sees it there,
+    so it's dropped from this list rather than shown twice with no way to act on it from here."""
+    pending = MaterialMovement.query.filter_by(status="pending", kind="in").order_by(MaterialMovement.created_at).all()
     rows = []
     for mv in pending:
-        can_act = can_approve_issue(g.user, mv.project) if mv.kind == "out" else can_approve_stock_in(g.user)
-        if not can_act:
+        if not can_approve_stock_in(g.user):
             continue
         rows.append({
             "id": mv.id, "kind": mv.kind, "material_id": mv.material_id,

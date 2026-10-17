@@ -92,10 +92,11 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 })();
 
-/* Material issues/stock-ins waiting specifically on the signed-in person - a project manager, a site
-   supervisor currently checked in somewhere, an accountant, an office assistant, or the admin (kohal,
-   2026-10-16: "i want to see the requests in me tab"). Not gated on module access, same as the approve
-   routes themselves aren't - see app/me.py's material_approvals. Hidden when nothing's waiting. */
+/* Stock-ins waiting specifically on the signed-in person - an accountant, an office assistant, or the admin
+   (kohal, 2026-10-16: "i want to see the requests in me tab"). Issue requests moved to their own Material
+   requests tab inside Inventory (kohal, 2026-10-17) - this section only ever sees a stock-in now (see
+   app/me.py's material_approvals, which drops issue-type rows entirely). Not gated on module access, same
+   as the approve route itself isn't. Hidden when nothing's waiting. */
 (() => {
   'use strict';
 
@@ -117,19 +118,13 @@
     data.approvals.forEach((r) => list.append(approvalRow(r)));
   }
 
-  function approvalPath(r, action) {
-    return r.kind === 'out'
-      ? `/api/projects/${r.project_id}/material-requests/${r.id}/${action}`
-      : `/api/inventory/materials/${r.material_id}/movements/${r.id}/${action}`;
-  }
-
   async function act(r, action) {
     if (action === 'reject') {
       const sure = await confirm("Reject this request? It never drew down stock, so there's nothing to undo.", { ok: 'Reject', danger: true, title: 'Reject request' });
       if (!sure) return;
     }
     try {
-      await api(approvalPath(r, action), { method: 'POST' });
+      await api(`/api/inventory/materials/${r.material_id}/movements/${r.id}/${action}`, { method: 'POST' });
       toast(action === 'approve' ? 'Approved' : 'Rejected');
       load();
     } catch (err) {
@@ -138,12 +133,10 @@
   }
 
   function approvalRow(r) {
-    const what = r.kind === 'out' ? 'Issue to' : 'Stock in';
-    const where = r.kind === 'out' && r.project_title ? `${r.project_code} · ${r.project_title}` : null;
     return h('div', { class: 'card me-row approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.material_code} · ${r.material_name}`),
-        h('span', { class: 'hint' }, [`${what} ${r.quantity} ${r.unit || ''}`.trim(), where].filter(Boolean).join(' · ')),
+        h('span', { class: 'hint' }, `Stock in ${r.quantity} ${r.unit || ''}`.trim()),
         h('span', { class: 'hint' }, [r.requested_by ? `Requested by ${r.requested_by}` : null, r.note || null].filter(Boolean).join(' · '))),
       h('div', { class: 'approval-actions' },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),

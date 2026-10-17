@@ -510,12 +510,21 @@ class Material(db.Model):
     def used_in_list(self) -> list:
         return json.loads(self.used_in) if self.used_in else []
 
+    @property
+    def pending_requested_qty(self) -> Decimal:
+        """Still owed to pending issue requests (kohal, 2026-10-17: "a flag for that material saying we need
+        min of 2 of these next time we stock in") - the total a stock-in should cover at minimum to clear
+        every project waiting on this material, not just get stock_qty back above zero."""
+        return sum((mv.quantity for mv in self.movements if mv.kind == "out" and mv.status == "pending"),
+                   start=Decimal("0"))
+
     def to_dict(self) -> dict:
         return {
             "id": self.id, "code": self.code, "name": self.name, "unit": self.unit,
             "stock_qty": float(self.stock_qty), "avg_rate": float(self.avg_rate),
             "stock_value": float(self.stock_value), "notes": self.notes, "is_active": self.is_active,
             "frequency": self.frequency, "used_in": self.used_in_list,
+            "pending_requested_qty": float(self.pending_requested_qty),
         }
 
 
@@ -548,13 +557,19 @@ class MaterialMovement(db.Model):
     ledger, so the stock and value on the Material row can always be traced back to where they came from
     or where they went.
 
-    Some movements need sign-off before they count (kohal, 2026-10-16): an issue ('out') from someone who
-    isn't themselves the project's manager or currently checked into that site needs approval from whoever
-    is; a stock-in ('in') from someone who isn't themselves an accountant/office assistant needs approval
-    from one. A movement stays `status='pending'` - excluded from _recompute_material's replay, so it has
-    no effect on stock_qty/avg_rate at all - until approved. Rejected the same way, permanently. Everything
-    else (an eligible person's own request, and every movement from before this existed) is 'approved'
-    straight away."""
+    Some movements need sign-off before they count: a stock-in ('in') from someone who isn't themselves an
+    accountant/office assistant needs approval from one (kohal, 2026-10-16). An issue ('out') always starts
+    as a request now (kohal, 2026-10-17) - approved from Inventory's own Material requests tab by anyone
+    with Inventory access, who records there who physically took it out, how it was transported and when
+    (given_by_worker_id/transport_mode/transported_at) - a direct issue from Inventory itself (not a
+    project's request) still goes straight to 'approved', since whoever's doing it is already the one
+    handing it over. Approving less than what was asked for (not enough in stock) splits the request: this
+    row becomes the approved amount, and a new 'pending' row for the shortfall takes its place, surfacing
+    again once there's enough stock - see inventory.py's approve_issue_request.
+
+    A movement stays `status='pending'` - excluded from _recompute_material's replay, so it has no effect on
+    stock_qty/avg_rate at all - until approved. Rejected the same way, permanently. Every movement from
+    before any of this existed is 'approved'."""
 
     __tablename__ = "material_movements"
 
@@ -577,9 +592,13 @@ class MaterialMovement(db.Model):
     gst_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount * gst_percent / 100
     total_cost = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount + gst_amount
     bill_filename = db.Column(db.String(80), nullable=True)
-    # Issue (stock-out) only - who physically handed the material over, not who happened to be signed in
-    # and recorded the entry (created_by_code, below).
+    # Issue (stock-out) only - who physically took the material out of the store, not who happened to be
+    # signed in and recorded the entry (created_by_code, below); how it got from the store to the project,
+    # and when that actually happened - filled in at approval time for a request, or on the spot for a
+    # direct issue (kohal, 2026-10-17).
     given_by_worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True, index=True)
+    transport_mode = db.Column(db.String(40), nullable=False, default="", server_default="")
+    transported_at = db.Column(db.DateTime, nullable=True)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     # Approval (see the class docstring) - pending | approved | rejected.
@@ -607,6 +626,7 @@ class MaterialMovement(db.Model):
             "total_cost": float(self.total_cost),
             "bill_url": f"/uploads/materials/{self.bill_filename}" if self.bill_filename else None,
             "given_by_worker_id": self.given_by_worker_id, "given_by_name": self.given_by.name if self.given_by else None,
+            "transport_mode": self.transport_mode, "transported_at": _iso(self.transported_at),
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),
             "status": self.status,

@@ -1016,16 +1016,16 @@
     // below, not into this pending list at all (kohal, 2026-10-16: reported seeing neither after
     // requesting, because this used to only reload the pending list).
     const reload = () => showDetail(projectId, 'materials');
+    // Approving/rejecting moved to Inventory's own Material requests tab (kohal, 2026-10-17) - anyone with
+    // Inventory access handles it from there now, not from the project itself, since approving also means
+    // recording who physically took the material out and how. This box is read-only: what's still waiting.
     const rows = pending.map((r) => h('li', { class: 'p-row' },
       h('span', { class: 'chip chip-today' }, 'Pending'),
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
         h('span', { class: 'row-sub' },
           [`${r.quantity} ${r.unit || ''}`.trim(), r.note || null, r.created_by_name ? `Requested by ${r.created_by_name}` : null]
-            .filter(Boolean).join(' · ')),
-        data.can_approve ? h('span', { class: 'bill-links' },
-          h('button', { type: 'button', class: 'link-btn', onclick: () => respondToRequest(projectId, r.id, true, reload) }, 'Approve'),
-          h('button', { type: 'button', class: 'link-btn', onclick: () => respondToRequest(projectId, r.id, false, reload) }, 'Reject')) : null)));
+            .filter(Boolean).join(' · ')))));
     clear(box).append(
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Material requests'),
@@ -1033,20 +1033,6 @@
       pending.length
         ? h('ul', { class: 'card-group' }, rows)
         : h('p', { class: 'hint' }, 'No pending requests.'));
-  }
-
-  async function respondToRequest(projectId, movementId, approve, reload) {
-    if (!approve) {
-      const sure = await confirm("Reject this request? It never drew down stock, so there's nothing to undo.", { ok: 'Reject', danger: true, title: 'Reject request' });
-      if (!sure) return;
-    }
-    try {
-      await api(`/api/projects/${projectId}/material-requests/${movementId}/${approve ? 'approve' : 'reject'}`, { method: 'POST' });
-      toast(approve ? 'Material request approved' : 'Material request rejected');
-      reload();
-    } catch (err) {
-      toast(err.message, true);
-    }
   }
 
   // A small form to ask for material - whoever can already approve it (the project's manager, or a site

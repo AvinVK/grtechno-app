@@ -10,12 +10,13 @@ entries - never edited directly, so the two always add up:
 """
 
 import json
+from datetime import datetime
 from decimal import Decimal
 
 from flask import Blueprint, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
-from .auth import can_approve_issue, can_approve_stock_in, visible_projects
+from .auth import can_approve_stock_in, visible_projects
 from .extensions import db
 from .modules import check_module
 from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client, utcnow
@@ -28,6 +29,9 @@ api_errors(bp)
 
 FREQUENCY_CHOICES = ("", "every_project", "special_project", "occasional")
 USED_IN_MAX_ITEMS = 10
+# A fixed set of suggestions for "how it was transported" - free text is still accepted (see
+# _transport_fields), same "pick one or type your own" shape as Unit.
+TRANSPORT_MODES = ("Own vehicle", "Company vehicle", "Courier", "Hand carried")
 
 
 @bp.before_request
@@ -138,9 +142,10 @@ def _supply_fields(payload, *, require_quantity):
 
 
 def _status_fields(approved):
-    """status/approved_by/approved_at for a new movement - approved straight away if the person creating it
-    is themselves someone who could approve it, otherwise left pending for whoever can (see
-    auth.can_approve_issue / can_approve_stock_in, kohal, 2026-10-16)."""
+    """status/approved_by/approved_at for a new movement - a stock-in is approved straight away if the
+    person creating it is themselves someone who could approve it (auth.can_approve_stock_in), otherwise
+    left pending for whoever can; an issue straight from Inventory (not a project's request) is always
+    approved on the spot - whoever's creating it already has Inventory access (kohal, 2026-10-16/17)."""
     return dict(
         status="approved" if approved else "pending",
         approved_by_code=g.user.code if approved else None,
@@ -169,14 +174,36 @@ def _apply_stock_in(material, data):
     return movement
 
 
-def _validate_given_by(payload, f):
+def _validate_given_by(payload, f, *, required=False):
     given_by_worker_id = payload.get("given_by_worker_id")
-    if given_by_worker_id not in (None, ""):
-        worker = db.session.get(Worker, int(given_by_worker_id)) if str(given_by_worker_id).isdigit() else None
-        if worker is None:
-            f.errors["given_by_worker_id"] = "Pick who gave it out"
-        else:
-            f.data["given_by_worker_id"] = worker.id
+    if given_by_worker_id in (None, ""):
+        if required:
+            f.errors.setdefault("given_by_worker_id", "Pick who took the material")
+        return
+    worker = db.session.get(Worker, int(given_by_worker_id)) if str(given_by_worker_id).isdigit() else None
+    if worker is None:
+        f.errors["given_by_worker_id"] = "Pick who took the material"
+    else:
+        f.data["given_by_worker_id"] = worker.id
+
+
+def _transport_fields(payload, f, *, required):
+    """How the material got from the store to the project, and when (kohal, 2026-10-17) - required when
+    approving a request (that's the point of the whole flow), optional on a direct issue from Inventory
+    itself, which can note it but isn't forced to."""
+    mode = str(payload.get("transport_mode") or "").strip()[:40]
+    if mode:
+        f.data["transport_mode"] = mode
+    elif required:
+        f.errors.setdefault("transport_mode", "Choose how it was transported")
+    raw = payload.get("transported_at")
+    if raw not in (None, ""):
+        try:
+            f.data["transported_at"] = datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            f.errors["transported_at"] = "Enter a valid date and time"
+    elif required:
+        f.data["transported_at"] = utcnow()
 
 
 class _NegativeStock(Exception):
@@ -276,6 +303,9 @@ def list_materials():
         material_names=_material_names(),
         total_stock_value=float(sum((m.stock_value for m in materials), start=0)),
         currency=settings_for_client()["currency"],
+        # For the Material requests tab's badge (kohal, 2026-10-17) - cheap enough to just count here
+        # rather than make the list page wait on a second request only to show a number on a tab.
+        pending_request_count=MaterialMovement.query.filter_by(kind="out", status="pending").count(),
     )
 
 
@@ -395,26 +425,30 @@ def delete_bill(material_id, movement_id):
 
 @bp.post("/api/inventory/materials/<int:material_id>/issue")
 def issue(material_id):
+    """Issue straight from Inventory - not a project's request (see app/projects.py's material-requests,
+    and this module's own material_requests/approve_material_request below) - so it's approved on the spot:
+    whoever's doing this already has Inventory access, and is the one handing the material over right now
+    (kohal, 2026-10-17)."""
     material = _material_or_404(material_id)
     payload = _payload()
     f = _movement_fields(payload, needs_project=True)
     if f.data.get("quantity") is not None and f.data["quantity"] > material.stock_qty:
         f.errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
     _validate_given_by(payload, f)
+    _transport_fields(payload, f, required=False)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
-    project = db.session.get(Project, f.data["project_id"])
     qty, rate = f.data["quantity"], material.avg_rate
     movement = MaterialMovement(
         material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
         project_id=f.data["project_id"], note=f.data.get("note", ""), entry_date=f.data["entry_date"],
         created_by_code=g.user.code, given_by_worker_id=f.data.get("given_by_worker_id"),
-        **_status_fields(can_approve_issue(g.user, project)),
+        transport_mode=f.data.get("transport_mode", ""), transported_at=f.data.get("transported_at"),
+        **_status_fields(True),
     )
     db.session.add(movement)
     db.session.flush()
-    if movement.status == "approved":
-        _recompute_material(material)
+    _recompute_material(material)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
@@ -466,9 +500,8 @@ def update_movement(material_id, movement_id):
 
 def approve_movement(movement, approver):
     """Approve a pending movement (see MaterialMovement.status) - the caller has already checked the
-    approver is allowed to (can_approve_stock_in for a stock-in, can_approve_issue for an issue; see
-    app/auth.py). Shared by this module's own stock-in approve route and app/projects.py's issue approve
-    route, so both kinds go through the exact same recompute, not two copies of it."""
+    approver is allowed to (can_approve_stock_in for a stock-in; every route in this module already needs
+    Inventory access for an issue, see auth.can_approve_issue)."""
     movement.status = "approved"
     movement.approved_by_code = approver.code
     movement.approved_at = utcnow()
@@ -490,9 +523,8 @@ def _pending_or_409(movement):
 
 @bp.post("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>/approve")
 def approve_stock_in(material_id, movement_id):
-    """Only a stock-in goes through here - an issue is approved from the project it was requested for (see
-    app/projects.py's material-requests routes), since the person approving it (a site supervisor currently
-    on that site, or its manager) may have no reason to ever open Inventory at all."""
+    """Only a stock-in goes through here - an issue request is approved from the Material requests tab
+    below (approve_material_request), which also records who took the material out and how."""
     material = _material_or_404(material_id)
     movement = _movement_or_404(material, movement_id)
     if movement.kind != "in":
@@ -514,13 +546,104 @@ def reject_stock_in(material_id, movement_id):
     material = _material_or_404(material_id)
     movement = _movement_or_404(material, movement_id)
     if movement.kind != "in":
-        abort(422, "Reject an issue from its project instead.")
+        abort(422, "Reject an issue request from the Material requests tab instead.")
     _pending_or_409(movement)
     if not can_approve_stock_in(g.user):
         abort(403, "Only an accountant or office assistant can reject a stock-in.")
     reject_movement(movement, g.user)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict())
+
+
+# ---------- Material requests (kohal, 2026-10-17) ----------
+#
+# Every pending issue ('out') request, gathered from every project, in one place - "anyone with Inventory
+# access can approve", so this needs nothing beyond the blueprint's own check_module("inventory") gate
+# above; approving records who physically took the material out of the store, how, and when. Asking for
+# more than what's in stock approves only what's there and splits the rest into a new pending request for
+# the same project, which surfaces here again once there's enough stock.
+
+def _material_request_dict(movement):
+    d = movement.to_dict()
+    d["material_name"] = movement.material.name
+    d["material_code"] = movement.material.code
+    d["unit"] = movement.material.unit
+    d["stock_qty"] = float(movement.material.stock_qty)
+    return d
+
+
+@bp.get("/api/inventory/material-requests")
+def material_requests():
+    pending = (MaterialMovement.query.filter_by(kind="out", status="pending")
+               .order_by(MaterialMovement.created_at).all())
+    return jsonify(
+        requests=[_material_request_dict(mv) for mv in pending],
+        workers=_workers_for_client(),
+        transport_modes=list(TRANSPORT_MODES),
+    )
+
+
+@bp.post("/api/inventory/material-requests/<int:movement_id>/approve")
+def approve_material_request(movement_id):
+    movement = MaterialMovement.query.filter_by(id=movement_id, kind="out").first()
+    if movement is None:
+        abort(404)
+    _pending_or_409(movement)
+    material = movement.material
+    requested = movement.quantity
+    payload = _payload()
+
+    f = Fields(payload)
+    f.money("quantity", nullable=False)
+    qty = f.data.get("quantity")
+    if qty is None:
+        f.errors.setdefault("quantity", "Enter a quantity greater than 0")
+    elif qty <= 0:
+        f.errors["quantity"] = "Enter a quantity greater than 0"
+    elif qty > requested:
+        f.errors["quantity"] = f"Only {requested} {material.unit or ''} was requested".strip()
+    elif qty > material.stock_qty:
+        f.errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
+    _validate_given_by(payload, f, required=True)
+    _transport_fields(payload, f, required=True)
+    if f.errors:
+        return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+
+    shortfall = requested - qty
+    movement.quantity = qty
+    movement.given_by_worker_id = f.data.get("given_by_worker_id")
+    movement.transport_mode = f.data.get("transport_mode", "")
+    movement.transported_at = f.data.get("transported_at")
+    remainder = None
+    if shortfall > 0:
+        # The part that couldn't be covered stays as its own pending request against the same project, so
+        # it's still there - and still flagged (see Material.pending_requested_qty) - once more stock comes
+        # in, instead of silently losing track of what was short.
+        remainder = MaterialMovement(
+            material=material, kind="out", quantity=shortfall, rate=movement.rate, amount=shortfall * movement.rate,
+            project_id=movement.project_id, note=movement.note, entry_date=movement.entry_date,
+            created_by_code=movement.created_by_code, status="pending",
+        )
+        db.session.add(remainder)
+    try:
+        approve_movement(movement, g.user)
+    except _NegativeStock:
+        db.session.rollback()
+        return jsonify(error="Approving this would leave stock negative - check what else has moved since it was requested."), 422
+    db.session.commit()
+    return jsonify(material=material.to_dict(), movement=_material_request_dict(movement),
+                    remainder=_material_request_dict(remainder) if remainder else None)
+
+
+@bp.post("/api/inventory/material-requests/<int:movement_id>/reject")
+def reject_material_request(movement_id):
+    movement = MaterialMovement.query.filter_by(id=movement_id, kind="out").first()
+    if movement is None:
+        abort(404)
+    _pending_or_409(movement)
+    reject_movement(movement, g.user)
+    db.session.commit()
+    return jsonify(movement=_material_request_dict(movement))
 
 
 @bp.delete("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>")

@@ -195,24 +195,19 @@ def test_a_role_with_no_modules_at_all_still_gets_the_me_tab(app):
 
 # ---------- material approvals on the Me hub (kohal, 2026-10-16: "i want to see the requests in me tab") ----------
 
-def test_a_project_manager_sees_a_pending_issue_they_can_approve(app, client, admin_client):
+def test_a_pending_issue_request_no_longer_shows_on_the_me_hub(app, client, admin_client):
+    """kohal, 2026-10-17: issue approval moved to its own tab inside Inventory - the Me hub's own section
+    only ever shows a pending stock-in now (see the next test), not an issue request, even for a role (here,
+    a project manager) that used to see it there."""
     pid = add_project(admin_client)
     mat_id = stocked_material(admin_client)
     manager = make_user("Priya Manager", role="project_manager")
     admin_client.patch(f"/api/projects/{pid}", json={"manager_code": manager.code})
-    accounts = make_user("Anil Accounts", role="accounts")
-    accounts_client = signed_in(app, accounts)
+    accounts_client = signed_in(app, make_user("Anil Accounts", role="accounts"))
     accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
 
     pm_client = signed_in(app, manager)
-    data = pm_client.get("/api/me/material-approvals").get_json()
-    assert len(data["approvals"]) == 1
-    row = data["approvals"][0]
-    assert row["kind"] == "out" and row["material_name"] == "Cement" and row["project_id"] == pid
-    assert row["requested_by"] == "Anil Accounts"
-
-    # the requester themselves isn't the one who can act on it
-    assert accounts_client.get("/api/me/material-approvals").get_json()["approvals"] == []
+    assert pm_client.get("/api/me/material-approvals").get_json()["approvals"] == []
 
 
 def test_an_accountant_sees_a_pending_stock_in_they_can_approve(app):

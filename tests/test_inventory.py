@@ -562,29 +562,122 @@ def test_cannot_approve_or_reject_a_movement_twice(app, accounts_client):
     assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/reject").status_code == 409
 
 
-def test_an_issue_by_admin_is_approved_straight_away(admin_client):
-    """The admin can always approve anything, including their own issue (auth.can_approve_issue) - unlike
-    every other Inventory-access role (Accountant, Office Assistant, Company Director...), none of which are
-    automatically the project's manager or a checked-in site supervisor just by having Inventory access."""
-    material = add_material(admin_client)
-    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
-    pid = add_project(admin_client)
-    issued = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
-    assert issued.status_code == 201 and issued.get_json()["movement"]["status"] == "approved"
-    assert issued.get_json()["material"]["stock_qty"] == 9
-
-
-def test_an_issue_by_someone_who_cant_approve_it_waits_for_the_project(app, accounts_client):
-    director = director_client(app)
+def test_a_direct_issue_from_inventory_is_always_approved_straight_away(app, accounts_client):
+    """kohal, 2026-10-17: issuing straight from Inventory (not a project's request - see "Material
+    requests" below) is approved on the spot for anyone who can reach it at all, since Inventory access is
+    now the only thing approving an issue ever requires."""
     material = add_material(accounts_client)
     accounts_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
     pid = add_project(accounts_client)
-    issued = director.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
-    assert issued.status_code == 201
-    body = issued.get_json()
-    assert body["movement"]["status"] == "pending"
-    assert body["material"]["stock_qty"] == 10                       # untouched until approved
-    movement_id = body["movement"]["id"]
-    # inventory.py refuses to approve an 'out' movement - must go through the project
-    res = accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve")
+    for who in (accounts_client, director_client(app)):
+        issued = who.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
+        assert issued.status_code == 201 and issued.get_json()["movement"]["status"] == "approved"
+
+
+# ---------- Material requests tab (kohal, 2026-10-17) ----------
+#
+# "the approval request should go to a new subtab inside inventory called material requests. now anyone
+# with inventory access can approve the request. but before approving the request, the physical transport
+# of material needs to be recorded as well."
+
+def pending_request(admin_client, app, qty=5, stock=20, material_name="Cement"):
+    """A pending issue request - from a project manager, who (since 2026-10-17) has no Inventory access of
+    their own and so can't approve their own request just by asking for it."""
+    material = add_material(admin_client, name=material_name)
+    mat_id = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mat_id}/stock-in", json={"quantity": stock, "rate": 10})
+    pid = add_project(admin_client)
+    pm = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    res = pm.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": qty})
+    assert res.status_code == 201 and res.get_json()["request"]["status"] == "pending", res.get_json()
+    return mat_id, pid, res.get_json()["request"]["id"]
+
+
+def test_material_requests_lists_pending_issues_from_any_project(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app)
+    add_worker(admin_client)
+    data = accounts_client.get("/api/inventory/material-requests").get_json()
+    assert len(data["requests"]) == 1
+    row = data["requests"][0]
+    assert row["id"] == movement_id and row["material_id"] == mat_id and row["project_id"] == pid
+    assert row["quantity"] == 5 and row["stock_qty"] == 20
+    assert any(w["name"] for w in data["workers"])                      # the "who took it" picker
+    assert "Own vehicle" in data["transport_modes"]
+
+
+def test_approving_a_request_needs_who_took_it_and_how(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app)
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={"quantity": 5})
     assert res.status_code == 422
+    assert "given_by_worker_id" in res.get_json()["fields"] and "transport_mode" in res.get_json()["fields"]
+
+
+def test_approving_a_request_records_who_transported_it(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app)
+    wid = add_worker(accounts_client, "Ramesh Storekeeper")
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle", "transported_at": "2026-10-17T10:30:00",
+    })
+    assert res.status_code == 200
+    mv = res.get_json()["movement"]
+    assert mv["status"] == "approved" and mv["given_by_name"] == "Ramesh Storekeeper"
+    assert mv["transport_mode"] == "Own vehicle" and mv["transported_at"] is not None
+    assert res.get_json()["remainder"] is None
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
+
+
+def test_approving_less_than_requested_splits_the_remainder_into_a_new_pending_request(app, admin_client, accounts_client):
+    """kohal, 2026-10-17: "say if stock has 5 pipes and request was raised for 7 pipes then approval can
+    only be done for 5 pipes and 2 pipes should be flagged for stock in of that material"."""
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=7, stock=5)
+    wid = add_worker(accounts_client)
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": 5, "given_by_worker_id": wid, "transport_mode": "Hand carried",
+    })
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["movement"]["status"] == "approved" and body["movement"]["quantity"] == 5
+    assert body["remainder"]["status"] == "pending" and body["remainder"]["quantity"] == 2
+    assert body["remainder"]["project_id"] == pid and body["remainder"]["material_id"] == mat_id
+    assert body["material"]["stock_qty"] == 0
+    # the flag: still owed to pending requests, for whoever does the next stock-in
+    assert body["material"]["pending_requested_qty"] == 2
+
+    data = accounts_client.get("/api/inventory/material-requests").get_json()
+    assert len(data["requests"]) == 1 and data["requests"][0]["id"] == body["remainder"]["id"]
+
+
+def test_cannot_approve_more_than_requested_or_more_than_stock(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=5, stock=20)
+    too_much = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={"quantity": 6})
+    assert too_much.status_code == 422 and "quantity" in too_much.get_json()["fields"]
+
+    mat_id2, pid2, movement_id2 = pending_request(admin_client, app, qty=7, stock=5, material_name="Sand")
+    over_stock = accounts_client.post(f"/api/inventory/material-requests/{movement_id2}/approve", json={"quantity": 7})
+    assert over_stock.status_code == 422 and "quantity" in over_stock.get_json()["fields"]
+
+
+def test_rejecting_a_material_request(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app)
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/reject")
+    assert res.status_code == 200 and res.get_json()["movement"]["status"] == "rejected"
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 20
+    assert accounts_client.get("/api/inventory/material-requests").get_json()["requests"] == []
+
+
+def test_cannot_approve_or_reject_a_material_request_twice(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app)
+    wid = add_worker(accounts_client)
+    accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                          json={"quantity": 5, "given_by_worker_id": wid, "transport_mode": "Courier"})
+    again = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                                  json={"quantity": 5, "given_by_worker_id": wid, "transport_mode": "Courier"})
+    assert again.status_code == 409
+    assert accounts_client.post(f"/api/inventory/material-requests/{movement_id}/reject").status_code == 409
+
+
+def test_a_welder_without_inventory_access_cannot_approve_a_request(app, admin_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app)
+    welder = signed_in(app, make_user("Wendy Welder", role="welder"))
+    assert welder.get("/api/inventory/material-requests").status_code == 403
+    assert welder.post(f"/api/inventory/material-requests/{movement_id}/approve", json={"quantity": 5}).status_code == 403

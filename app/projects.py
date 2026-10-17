@@ -457,15 +457,13 @@ def delete_project(project_id):
     return "", 204
 
 
-# ---------- material requests (kohal, 2026-10-16) ----------
+# ---------- material requests (kohal, 2026-10-16, updated 2026-10-17) ----------
 #
-# Issuing material to a project needs approval from the site supervisor currently checked into that exact
-# project, or its manager (see auth.can_approve_issue) - not from Inventory itself, since the person
-# approving it may have no reason to ever open that module. These routes live here, gated by the Projects
-# module like everything else on this page, reached through the project both sides can already see (see
-# visible_projects - a site supervisor already only sees a project once checked into it; a project manager
-# sees every project). The actual stock bookkeeping (approve_movement/_recompute_material) still lives in
-# app/inventory.py - imported as `inv` above - so there's exactly one place that does that math.
+# Asking for material against a project lives here, gated by the Projects module like everything else on
+# this page. Approving one doesn't, any more - see app/inventory.py's own Material requests tab
+# (material_requests/approve_material_request there) - anyone with Inventory access can, and recording who
+# physically took it out, how, and when is an Inventory-side action. This project page just shows what's
+# pending, read-only, and lets anyone who can see the project ask for more.
 
 def _material_request_dict(movement):
     d = movement.to_dict()
@@ -478,13 +476,12 @@ def _material_request_dict(movement):
 @bp.get("/api/projects/<int:project_id>/material-requests")
 def material_requests(project_id):
     """Pending (not yet approved or rejected) issue requests for this project, plus the active material
-    list to request from and whether the signed-in person can approve what's pending here right now."""
+    list to request from."""
     project = _project_or_404(project_id)
     pending = (MaterialMovement.query.filter_by(project_id=project.id, kind="out", status="pending")
                .order_by(MaterialMovement.created_at).all())
     return jsonify(
         requests=[_material_request_dict(mv) for mv in pending],
-        can_approve=can_approve_issue(g.user, project),
         materials=[{"id": m.id, "code": m.code, "name": m.name, "unit": m.unit, "stock_qty": float(m.stock_qty)}
                    for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
     )
@@ -492,9 +489,10 @@ def material_requests(project_id):
 
 @bp.post("/api/projects/<int:project_id>/material-requests")
 def request_material(project_id):
-    """Ask for material to be issued to this project. Auto-approved on the spot if the person asking could
-    approve it anyway (their own project, or they're the supervisor checked in there right now); otherwise
-    it waits - visible right here, and in the material's own history in Inventory, as pending."""
+    """Ask for material to be issued to this project. Auto-approved on the spot only if the person asking
+    already has Inventory access themselves (same rule as issuing directly from Inventory); otherwise it
+    waits for someone who does - visible right here, and in the material's own history in Inventory, as
+    pending - see app/inventory.py's Material requests tab."""
     project = _project_or_404(project_id)
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
@@ -512,12 +510,17 @@ def request_material(project_id):
     if material is None or not material.is_active:
         errors["material_id"] = "Pick a material"
 
+    # Asking for more than what's currently in stock is fine - that's the point of a request someone else
+    # has to approve (kohal, 2026-10-17: "say if stock has 5 pipes and request was raised for 7 pipes"), as
+    # long as it's actually going to wait for that approval. One that's approved on the spot still can't
+    # exceed stock, same as issuing directly from Inventory never could.
+    approved = can_approve_issue(g.user)
     qty = f.data.get("quantity")
     if qty is None:
         errors.setdefault("quantity", "Enter a quantity greater than 0")
     elif qty <= 0:
         errors["quantity"] = "Enter a quantity greater than 0"
-    elif material is not None and qty > material.stock_qty:
+    elif approved and material is not None and qty > material.stock_qty:
         errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
@@ -527,7 +530,7 @@ def request_material(project_id):
         material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
         project_id=project.id, note=f.data.get("note", ""), entry_date=today_local(),
         created_by_code=g.user.code,
-        **inv._status_fields(can_approve_issue(g.user, project)),
+        **inv._status_fields(approved),
     )
     db.session.add(movement)
     db.session.flush()
@@ -535,37 +538,3 @@ def request_material(project_id):
         inv._recompute_material(material)
     db.session.commit()
     return jsonify(request=_material_request_dict(movement)), 201
-
-
-@bp.post("/api/projects/<int:project_id>/material-requests/<int:movement_id>/approve")
-def approve_material_request(project_id, movement_id):
-    project = _project_or_404(project_id)
-    movement = MaterialMovement.query.filter_by(id=movement_id, project_id=project.id, kind="out").first()
-    if movement is None:
-        abort(404)
-    if movement.status != "pending":
-        abort(409, "This request isn't waiting for approval.")
-    if not can_approve_issue(g.user, project):
-        abort(403, "Only this project's manager or the site supervisor currently checked in there can approve this.")
-    try:
-        inv.approve_movement(movement, g.user)
-    except inv._NegativeStock:
-        db.session.rollback()
-        return jsonify(error="Approving this would leave stock negative - check what else has moved since it was requested."), 422
-    db.session.commit()
-    return jsonify(request=_material_request_dict(movement))
-
-
-@bp.post("/api/projects/<int:project_id>/material-requests/<int:movement_id>/reject")
-def reject_material_request(project_id, movement_id):
-    project = _project_or_404(project_id)
-    movement = MaterialMovement.query.filter_by(id=movement_id, project_id=project.id, kind="out").first()
-    if movement is None:
-        abort(404)
-    if movement.status != "pending":
-        abort(409, "This request isn't waiting for approval.")
-    if not can_approve_issue(g.user, project):
-        abort(403, "Only this project's manager or the site supervisor currently checked in there can reject this.")
-    inv.reject_movement(movement, g.user)
-    db.session.commit()
-    return jsonify(request=_material_request_dict(movement))

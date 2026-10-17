@@ -21,6 +21,18 @@
   const addLink = $('.appbar-primary');
   const showAddLink = (visible) => { if (addLink) addLink.hidden = !visible; };
 
+  /* ---------- the Materials / Material requests tab bar ---------- */
+
+  // Two tabs at the top of Inventory, same pill shape as Projects' own section tabs (kohal, 2026-10-17:
+  // "the approval request should go to a new subtab inside inventory called material requests"). `badge`
+  // is the pending-requests count, shown only while there is one.
+  function inventoryTabs(active, badge) {
+    return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Inventory section' },
+      h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'list' ? 'page' : null }, 'Materials'),
+      h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null },
+        'Material requests', badge ? h('span', { class: 'nav-badge' }, String(badge)) : null));
+  }
+
   /* ---------- list: every material, its stock and what it's worth ---------- */
 
   async function showList() {
@@ -40,7 +52,8 @@
         h('span', { class: 'p-tile', 'data-status': m.is_active ? 'running' : 'planned', 'aria-hidden': 'true' }, (m.name[0] || '?').toUpperCase()),
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, m.name, !m.is_active ? h('span', { class: 'chip chip-off' }, 'Archived') : null),
-          h('span', { class: 'row-sub' }, `${m.code} · ${m.stock_qty} ${m.unit || ''}`.trim(), ' in stock')),
+          h('span', { class: 'row-sub' }, `${m.code} · ${m.stock_qty} ${m.unit || ''}`.trim(), ' in stock',
+            m.pending_requested_qty > 0 ? h('span', { class: 'chip chip-today' }, ` Needs ${m.pending_requested_qty} more`) : null)),
         h('span', { class: 'row-value' }, money(m.stock_value, data.currency)),
         h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›')));
     }
@@ -55,8 +68,130 @@
     }
     search.oninput = refresh;
 
-    clear(view).append(h('div', {}, h('div', { class: 'filters' }, search), count, results));
+    clear(view).append(h('div', {}, inventoryTabs('list', data.pending_request_count), h('div', { class: 'filters' }, search), count, results));
     refresh();
+  }
+
+  /* ---------- Material requests: every pending issue, from any project, waiting on Inventory ---------- */
+
+  // A transport-mode picker: the fixed list (TRANSPORT_MODES) plus "Other - specify", same escape-hatch
+  // shape as unitPicker/supplierPicker above. `.value` is the chosen string either way.
+  function transportModePicker(items, value) {
+    const OTHER = '__other_transport__';
+    const list = items.map((m) => ({ value: m, label: m }));
+    const isOther = value && !items.includes(value);
+    const options = [...list, { value: OTHER, label: 'Other - specify' }];
+    const sel = selectField(options, isOther ? OTHER : (value || ''), { title: 'How was it transported', placeholder: 'Choose how' });
+    const typed = h('input', { type: 'text', maxlength: 40, autocomplete: 'off', placeholder: 'Specify', value: isOther ? value : '' });
+    typed.hidden = !isOther;
+    typed.setAttribute('aria-label', 'Transport mode');
+    const wrap = h('div', { class: 'category-picker' }, sel, typed);
+    sel.addEventListener('change', () => {
+      typed.hidden = sel.value !== OTHER;
+      if (!typed.hidden) typed.focus();
+    });
+    Object.defineProperty(wrap, 'value', {
+      get: () => (sel.value === OTHER ? typed.value.trim() : sel.value),
+      configurable: true,
+    });
+    return wrap;
+  }
+
+  // Local-time "now", trimmed to minutes, in the shape <input type=datetime-local> and the server's own
+  // fromisoformat() both read and write - no separate date+time picker needed for this one field.
+  function nowForDatetimeLocal() {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  }
+
+  // The approval form itself - who took the material out, how, and when (kohal, 2026-10-17: "there should
+  // be a form of who took the material from inventory, how did he transport the material and at what day
+  // and time"), plus the quantity actually handed over. Approving less than requested splits the shortfall
+  // into a new pending request, flagged on the material from then on (see Material.pending_requested_qty).
+  function approveRequestSheet(r, data, onDone) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const maxQty = Math.min(Number(r.quantity), Number(r.stock_qty));
+    const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(maxQty) });
+    const givenBy = selectField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { title: 'Given by', placeholder: 'Who took it' });
+    const transportMode = transportModePicker(data.transport_modes, '');
+    const transportedAt = h('input', { type: 'datetime-local', value: nowForDatetimeLocal() });
+
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Approve');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        const res = await api(`/api/inventory/material-requests/${r.id}/approve`, {
+          method: 'POST',
+          body: {
+            quantity: qty.value, given_by_worker_id: givenBy.value ? Number(givenBy.value) : null,
+            transport_mode: transportMode.value, transported_at: transportedAt.value,
+          },
+        });
+        finish();
+        toast(res.remainder ? `Approved ${qty.value} - ${res.remainder.quantity} ${r.unit || ''} still pending` : 'Request approved');
+        onDone();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, `Approve · ${r.material_name}`),
+      h('p', { class: 'hint' }, `${r.quantity} ${r.unit || ''} requested · ${r.stock_qty} ${r.unit || ''} in stock`.trim()),
+      field('quantity', 'Quantity to hand over', qty),
+      field('given_by_worker_id', 'Given by', givenBy),
+      field('transport_mode', 'Transport', transportMode),
+      field('transported_at', 'Date and time', transportedAt),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+    qty.focus();
+  }
+
+  async function rejectRequest(r, onDone) {
+    const ok = await confirm("Reject this request? It never drew down stock, so there's nothing to undo.", { ok: 'Reject', danger: true, title: 'Reject request' });
+    if (!ok) return;
+    try {
+      await api(`/api/inventory/material-requests/${r.id}/reject`, { method: 'POST' });
+      toast('Request rejected');
+      onDone();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  async function showRequests() {
+    showBack(false);
+    showAddLink(false);
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading requests…'));
+    let data;
+    try { data = await api('/api/inventory/material-requests'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    const reload = () => showRequests();
+    const rows = data.requests.map((r) => h('li', { class: 'p-row' },
+      h('span', { class: 'chip chip-today' }, 'Pending'),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
+        h('span', { class: 'row-sub' },
+          [`${r.quantity} ${r.unit || ''} requested`.trim(), `${r.stock_qty} ${r.unit || ''} in stock`.trim(),
+            r.project_title ? `${r.project_code} · ${r.project_title}` : null,
+            r.created_by_name ? `Requested by ${r.created_by_name}` : null, r.note || null]
+            .filter(Boolean).join(' · ')),
+        h('span', { class: 'bill-links' },
+          h('button', { type: 'button', class: 'link-btn', onclick: () => approveRequestSheet(r, data, reload) }, 'Approve'),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => rejectRequest(r, reload) }, 'Reject')))));
+
+    clear(view).append(h('div', {},
+      inventoryTabs('requests', data.requests.length),
+      data.requests.length
+        ? h('ul', { class: 'card-group' }, rows)
+        : h('p', { class: 'empty-state' }, 'No pending requests right now.')));
   }
 
   /* ---------- one material: stock, cost, and its movement history ---------- */
@@ -276,6 +411,9 @@
         h('h2', {}, m.name, !m.is_active ? h('span', { class: 'chip chip-off' }, ' Archived') : null),
         h('a', { class: 'btn small', href: `#m${m.id}/edit` }, 'Edit')),
       h('p', { class: 'hint' }, m.code),
+      m.pending_requested_qty > 0
+        ? h('p', { class: 'form-error' }, `⚠ ${m.pending_requested_qty} ${m.unit || ''} still needed - stock in at least this much to clear what's waiting (see Material requests).`.trim())
+        : null,
       h('div', { class: 'client-stats' },
         h('div', { class: 'stat' },
           h('span', { class: 'stat-label' }, 'Stock on hand'),
@@ -685,6 +823,7 @@
   function route() {
     const hash = window.location.hash;
     if (hash === '#new') return showNew();
+    if (hash === '#requests') return showRequests();
     let m = /^#m(\d+)\/edit$/.exec(hash);
     if (m) return showEdit(Number(m[1]));
     m = /^#m(\d+)\/stock-in$/.exec(hash);
