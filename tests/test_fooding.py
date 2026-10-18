@@ -181,6 +181,25 @@ def test_the_me_hub_renders_the_wages_and_fooding_tiles(app):
     assert 'href="/wages"' in html and 'href="/fooding"' in html
 
 
+def test_admin_and_accountant_get_a_fooding_tile_in_the_services_grid(admin_client, accounts_client, client):
+    """kohal, 2026-10-18: "i wasnt fooding blobk here in missing space" - a tile in the same grid as
+    Leads/Clients/..., not only the list further down the page."""
+    for who in (admin_client, accounts_client):
+        html = who.get("/me").get_data(as_text=True)
+        assert html.count('href="#me-fooding"') == 1 and 'Fooding</span>' in html
+        assert 'id="me-fooding"' in html   # the management block itself, always rendered for these two
+
+    html = client.get("/me").get_data(as_text=True)
+    assert 'href="#me-fooding"' not in html and 'id="me-fooding"' not in html
+
+
+def test_the_fooding_tile_shows_how_many_daily_wage_employees_there_are(admin_client):
+    daily_wage_worker()
+    daily_wage_worker(name="Second One")
+    html = admin_client.get("/me").get_data(as_text=True)
+    assert "2 daily-wage" in html
+
+
 def test_a_paused_daily_wage_worker_sees_paused(app, accounts_client):
     """kohal, 2026-10-18: "if paused by admin or accountant, the daily wages user should see paused in
     fooding tab"."""

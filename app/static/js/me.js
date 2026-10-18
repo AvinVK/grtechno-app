@@ -262,9 +262,10 @@
 
 /* Fooding (kohal, 2026-10-18): every daily-wage employee, what's been allotted to them and what's left -
    for the admin or accountant to top up or pause. Empty for anyone else (see app/fooding.py's
-   can_manage_fooding), same "hidden until there's something to show" shape as the approval sections above,
-   though this one is never really empty for an eligible manager - it lists every daily-wage worker, not
-   just ones waiting on something. */
+   can_manage_fooding). The section itself only renders at all for an eligible manager (see me.html) - this
+   just fills it in, and unlike the approval sections above, stays visible even with nobody to show yet
+   (an empty-state line instead), since the Fooding tile above now links straight here - the admin needs
+   somewhere to land and allot the first one, not a tile that leads to a blank gap. */
 (() => {
   'use strict';
 
@@ -278,11 +279,14 @@
     try {
       data = await api('/api/fooding');
     } catch (err) {
-      section.hidden = true;
+      clear(list).append(h('p', { class: 'hint' }, err.message));
       return;
     }
-    section.hidden = data.workers.length === 0;
     clear(list);
+    if (!data.workers.length) {
+      list.append(h('p', { class: 'hint' }, 'No daily-wage employees yet - mark someone from Employee management first.'));
+      return;
+    }
     data.workers.forEach((w) => list.append(row(w, data.daily_amount, data.currency)));
   }
 

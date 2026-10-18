@@ -8,12 +8,17 @@
 {%- else -%}{{ m.name }}{%- endif -%}
 {%- endmacro %}
 
-{% macro services(nav_modules, summaries={}) -%}
+{# extra_tiles: tiles that aren't real Module rows (Wages/Fooding - see app/me.py's page()) but belong in
+   the same grid as the real ones, not a grid of their own below - each is {href, icon, name, sum}. #}
+{% macro services(nav_modules, summaries={}, extra_tiles=[]) -%}
 <div class="me-tiles">
   {% for m in nav_modules %}
   <a class="me-tile" href="{{ m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m) }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
   {% else %}
-  <p class="sb-empty">No services are turned on yet.</p>
+  {% if not extra_tiles %}<p class="sb-empty">No services are turned on yet.</p>{% endif %}
+  {% endfor %}
+  {% for t in extra_tiles %}
+  <a class="me-tile" href="{{ t.href }}">{{ icon(t.icon) }}<span class="me-tile-name">{{ t.name }}</span>{% if t.sum %}<span class="me-tile-sum">{{ t.sum }}</span>{% endif %}</a>
   {% endfor %}
 </div>
 {%- endmacro %}

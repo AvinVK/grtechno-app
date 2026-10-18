@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% set appbar_variant = 'large' %}
 {% from "_me_links.html" import services, manage with context %}
-{% from "_icons.html" import icon %}
 {% block title %}Me - Leads{% endblock %}
 {% block body_class %}page-plain page-me{% endblock %}
 {% block hub_back %}{% endblock %}
@@ -24,28 +23,25 @@
 <main id="view" class="view me" tabindex="-1">
   <section class="me-section" aria-labelledby="me-services">
     <div class="me-section-head"><h2 id="me-services">Services</h2></div>
-    {{ services(nav_modules, summaries) }}
-    {# Wages/Fooding (kohal, 2026-10-18: "when they login they should see attendance, wages and fooding") -
-       not module tiles (see app/me.py's page()), so they sit here as two extra ones rather than going
-       through the services() macro, which only knows about the real modules table. #}
-    {% if is_daily_wage_worker %}
-    <div class="me-tiles">
-      <a class="me-tile" href="{{ url_for('wages.page') }}">{{ icon('wages') }}<span class="me-tile-name">Wages</span></a>
-      <a class="me-tile" href="{{ url_for('fooding.page') }}">{{ icon('fooding') }}<span class="me-tile-name">Fooding</span></a>
-    </div>
-    {% endif %}
+    {# Wages/Fooding (kohal, 2026-10-18: "when they login they should see attendance, wages and fooding";
+       "i wasnt fooding blobk here in missing space" - the admin's own Fooding used to only be a list
+       further down the page, not a tile here) - not module tiles (see app/me.py's _extra_tiles), so they
+       come in via extra_tiles rather than the modules table services() otherwise reads from. #}
+    {{ services(nav_modules, summaries, extra_tiles) }}
   </section>
 
   {{ manage(can_see_users, can_see_workforce) }}
 
   {# Every daily-wage employee, what's been allotted to them and what's left - for the admin or accountant
-     to top up or pause (kohal, 2026-10-18). Not gated by a module either, same as the tiles above - just
-     hidden here until app/static/js/me.js's own fetch decides there's anything to show (a non-admin/
-     accountant gets an empty list back, same shape as the approval sections above). #}
-  <section class="me-section" id="me-fooding" aria-labelledby="me-fooding-h" hidden>
+     to top up or pause (kohal, 2026-10-18), reached from the Fooding tile above. Always shown once the
+     Fooding tile itself is (not hidden-until-nonempty like the approval sections below) - an admin with no
+     daily-wage employees yet still needs somewhere to go allot the first one. #}
+  {% if can_manage_fooding %}
+  <section class="me-section" id="me-fooding" aria-labelledby="me-fooding-h">
     <div class="me-section-head"><h2 id="me-fooding-h">Fooding</h2></div>
     <div id="me-fooding-list" class="card-group me-rows"></div>
   </section>
+  {% endif %}
 
   {# Material issues/stock-ins waiting on the signed-in person specifically - a project manager, a site
      supervisor currently checked in somewhere, an accountant, an office assistant, or the admin (see

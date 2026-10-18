@@ -1622,6 +1622,7 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 button.fooding-row { border: 0; font: inherit; cursor: pointer; }
 button.fooding-row .fn-stat-value { flex: none; }
 button.fooding-row.is-paused { opacity: 0.7; }
+.card-group > .hint { display: block; padding: 14px 16px; }
 
 /* ---------- Clients & Projects: grouping by area, rows ---------- */
 
