@@ -215,6 +215,14 @@ def can_approve_stock_in(user) -> bool:
     return user.is_admin or user.role_key in ("accounts", "office_assistant")
 
 
+def can_manage_fooding(user) -> bool:
+    """Who may allot a daily-wage worker's food money, or pause/resume their own ₹200/day deduction (kohal,
+    2026-10-18: "the admin or accountant will alot some money... unless admin or accountant pauses that
+    feature") - narrower than can_approve_stock_in's "office incharge" too, since this one was only ever
+    named as the admin or accountant specifically."""
+    return user.is_admin or user.role_key == "accounts"
+
+
 def can_approve_attendance(user, project) -> bool:
     """A check-in/check-out record (kohal, 2026-10-16: "Attendance should be approved by project manager or
     site supervisor who is checked in on tha project"): the admin or Company Director always - the universal

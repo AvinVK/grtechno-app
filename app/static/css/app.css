@@ -1616,6 +1616,13 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .approval-main strong { font: 600 15px/1.3 var(--font-body); }
 .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: none; }
 
+/* Fooding (kohal, 2026-10-18): the whole row opens the allot/pause sheet, unlike the approval rows above
+   which keep their buttons inline - so it needs its own button reset (approval-row's cursor:default and
+   .me-row's own rules don't strip a <button>'s native border) and its balance pinned to the right. */
+button.fooding-row { border: 0; font: inherit; cursor: pointer; }
+button.fooding-row .fn-stat-value { flex: none; }
+button.fooding-row.is-paused { opacity: 0.7; }
+
 /* ---------- Clients & Projects: grouping by area, rows ---------- */
 
 /* State, then district, then area: all three collapse (native <details>/<summary>), plain headings with a

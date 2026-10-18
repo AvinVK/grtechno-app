@@ -12,7 +12,7 @@ from . import categories
 from .auth import can_approve_stock_in, visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
 from .extensions import db
-from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest
+from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest, Worker
 from .modules import has_module, modules_for
 from .timeutil import today_local
 
@@ -53,11 +53,16 @@ def _summaries(keys) -> dict:
 @bp.get("/me")
 def page():
     keys = {m.key for m in modules_for(g.user)}
+    # Wages/Fooding (kohal, 2026-10-18) aren't modules either - who gets those two extra tiles depends on
+    # an HR detail (Worker.employment_type), not a role, so it's checked directly here rather than through
+    # modules_for/has_module like everything else on this page.
+    worker = Worker.query.filter_by(user_code=g.user.code).first()
     return render_template("me.html", summaries=_summaries(keys),
                            # Users & roles / Employee management aren't in_nav (see modules_for), so they
                            # aren't in keys above - checked separately for the Me hub's own Manage section.
                            can_see_users=has_module(g.user, "users"),
-                           can_see_workforce=has_module(g.user, "workforce"))
+                           can_see_workforce=has_module(g.user, "workforce"),
+                           is_daily_wage_worker=bool(worker and worker.employment_type == "daily_wages"))
 
 
 @bp.get("/api/me/material-approvals")

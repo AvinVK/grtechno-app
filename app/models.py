@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from .constants import DEFAULT_SETTINGS
@@ -511,6 +511,61 @@ class ProjectExpense(db.Model):
         }
 
 
+class FoodingAccount(db.Model):
+    """A daily-wage worker's food allowance (kohal, 2026-10-18: "the admin or accountant will alot some
+    money to the daily wages employee. 200 rs per day should be deducted daily for food automatically
+    unless admin or accountant pauses that feature"). One per Worker, created the first time money is
+    allotted to them.
+
+    There is no scheduled job in this app to apply the daily 200 (PythonAnywhere's free plan has no cron -
+    see app/deploy.py's own docstring) - instead, deducted_total/anchor_date are kept current by settle()
+    below, called before every read or change, which simply catches the account up to today. allotted_total
+    only ever grows (a top-up adds to it, kohal's own answer, rather than replacing it); deducted_total
+    never pushes remaining below zero - once the balance is out, no more comes off until a top-up, even if
+    many calendar days pass unseen in between (settle() always re-anchors to "today" it was last called,
+    so those zero-balance days are never retroactively owed once topped up)."""
+
+    __tablename__ = "fooding_accounts"
+
+    DAILY_AMOUNT = Decimal("200")
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    allotted_total = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    deducted_total = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    anchor_date = db.Column(db.Date, nullable=False, default=date.today)   # deducted_total is accurate as of this day
+    is_paused = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    worker = db.relationship("Worker", back_populates="fooding_account")
+
+    def settle(self, today: date = None) -> None:
+        """Bring deducted_total/anchor_date up to date for every day since anchor_date, at DAILY_AMOUNT a
+        day - a no-op while paused, or once remaining is already zero. Always moves anchor_date to today
+        regardless, so a later top-up starts deducting fresh from then, not from whatever day the balance
+        happened to run out."""
+        today = today or date.today()
+        if not self.is_paused and today > self.anchor_date:
+            days = (today - self.anchor_date).days
+            accrue = min(Decimal(days) * self.DAILY_AMOUNT, self.remaining)
+            if accrue > 0:
+                self.deducted_total += accrue
+        self.anchor_date = today
+
+    @property
+    def remaining(self) -> Decimal:
+        return max(Decimal("0.00"), self.allotted_total - self.deducted_total)
+
+    def to_dict(self) -> dict:
+        return {
+            "worker_id": self.worker_id, "worker_name": self.worker.name,
+            "allotted_total": float(self.allotted_total), "deducted_total": float(self.deducted_total),
+            "remaining": float(self.remaining), "is_paused": self.is_paused,
+            "daily_amount": float(self.DAILY_AMOUNT),
+        }
+
+
 class Material(db.Model):
     """One kind of stock the business buys and uses on projects (cement, pipes, valves...), admin only for
     now. Stock on hand and its cost are kept right here, moved only through MaterialMovement entries below -
@@ -907,6 +962,11 @@ class Worker(db.Model):
     # stays on the project's own record, just with worker_id cleared - see ProjectExpense.worker_id).
     commissions = db.relationship(
         "ProjectExpense", back_populates="worker", order_by="ProjectExpense.entry_date.desc()",
+    )
+    # One fooding wallet per daily-wage worker (kohal, 2026-10-18) - see FoodingAccount's own docstring.
+    # Owned by this row (cascades with it), unlike commissions above which just references it.
+    fooding_account = db.relationship(
+        "FoodingAccount", back_populates="worker", uselist=False, cascade="all, delete-orphan",
     )
 
     @property

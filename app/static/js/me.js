@@ -259,3 +259,95 @@
 
   load();
 })();
+
+/* Fooding (kohal, 2026-10-18): every daily-wage employee, what's been allotted to them and what's left -
+   for the admin or accountant to top up or pause. Empty for anyone else (see app/fooding.py's
+   can_manage_fooding), same "hidden until there's something to show" shape as the approval sections above,
+   though this one is never really empty for an eligible manager - it lists every daily-wage worker, not
+   just ones waiting on something. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-fooding');
+  if (!section) return;
+  const list = document.getElementById('me-fooding-list');
+  const { h, clear, api, toast, confirm, money, field, closeOnBack } = window.LD;
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/fooding');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = data.workers.length === 0;
+    clear(list);
+    data.workers.forEach((w) => list.append(row(w, data.daily_amount, data.currency)));
+  }
+
+  function row(w, dailyAmount, cur) {
+    const sub = w.is_paused
+      ? 'Paused'
+      : `${money(w.allotted_total, cur)} allotted · ${money(dailyAmount, cur)}/day`;
+    return h('button', {
+      type: 'button', class: `card me-row approval-row fooding-row${w.is_paused ? ' is-paused' : ''}`,
+      onclick: () => openSheet(w, dailyAmount, cur),
+    },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, w.worker_name),
+        h('span', { class: 'hint' }, sub)),
+      h('span', { class: 'fn-stat-value' }, money(w.remaining, cur)));
+  }
+
+  function openSheet(w, dailyAmount, cur) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', placeholder: 'Amount to add' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Close');
+    const allotBtn = h('button', { class: 'btn primary', type: 'button' }, 'Add');
+    const pauseBtn = h('button', {
+      class: 'btn small', type: 'button',
+    }, w.is_paused ? 'Resume' : 'Pause');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    allotBtn.onclick = async () => {
+      allotBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api(`/api/fooding/${w.worker_id}/allot`, { method: 'POST', body: { amount: amountInput.value } });
+        finish();
+        toast('Added to fooding balance');
+        await load();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        allotBtn.disabled = false;
+      }
+    };
+    pauseBtn.onclick = async () => {
+      pauseBtn.disabled = true;
+      try {
+        await api(`/api/fooding/${w.worker_id}/${w.is_paused ? 'resume' : 'pause'}`, { method: 'POST' });
+        finish();
+        toast(w.is_paused ? 'Fooding resumed' : 'Fooding paused');
+        await load();
+      } catch (err) {
+        toast(err.message, true);
+        pauseBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, w.worker_name),
+      h('p', { class: 'hint' },
+        `${money(w.allotted_total, cur)} allotted so far · ${money(w.remaining, cur)} remaining · ${money(dailyAmount, cur)}/day`,
+        w.is_paused ? ' · Paused' : ''),
+      field('amount', 'Add to balance', amountInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, pauseBtn, cancelBtn, allotBtn)));
+    document.body.append(overlay);
+    amountInput.focus();
+  }
+
+  load();
+})();
