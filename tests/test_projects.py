@@ -771,3 +771,75 @@ def test_commission_workers_lists_only_the_chandrapur_role(app, client, admin_cl
         db.session.commit()
     data = admin_client.get(f"/api/projects/{pid}").get_json()
     assert [w["id"] for w in data["commission_workers"]] == [wid]
+
+
+# ---------- Project manager Chandrapur's own project access (kohal, 2026-10-18) ----------
+#
+# "alocate chadrapur region projects and all other access as project manager to project manager chandrapur
+# role" - region-scoped visibility (every project in the Chandrapur district, same as the plain
+# project_manager role would see none of), plus every other project_manager power (approving attendance,
+# the manager-assignment picker, auto-assigned manager on a project they create).
+
+def chandrapur_pm(app, name="Chetan Chandrapur"):
+    """Same module access as the plain project_manager role (attendance + projects, both write) - a custom
+    role carries none of its own until the admin sets it up directly in the database (see app/roles.py's own
+    docstring), same as kohal did on prod and the emu DB for this one."""
+    if db.session.get(Role, COMMISSION_ROLE_KEY) is None:
+        db.session.add(Role(key=COMMISSION_ROLE_KEY, name="Project manager Chandrapur", sees_all=False))
+        db.session.flush()
+        for module_key in ("attendance", "projects"):
+            db.session.add(RoleModule(role_key=COMMISSION_ROLE_KEY, module_key=module_key, write_access=True))
+        db.session.flush()
+    user = make_user(name, role=COMMISSION_ROLE_KEY)
+    return signed_in(app, user), user
+
+
+def test_chandrapur_pm_sees_only_chandrapur_district_projects(app, client, admin_client):
+    pid_in = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid_in}", json={"site_district": "Chandrapur"})
+    pid_out = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid_out}", json={"site_district": "Nagpur"})
+
+    pm, _ = chandrapur_pm(app)
+    ids = [p["id"] for p in pm.get("/api/projects").get_json()["projects"]]
+    assert pid_in in ids and pid_out not in ids
+    assert pm.get(f"/api/projects/{pid_in}").status_code == 200
+    assert pm.get(f"/api/projects/{pid_out}").status_code == 404
+
+
+def test_chandrapur_pm_also_sees_a_project_they_manage_outside_the_district(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid}", json={"site_district": "Nagpur"})
+    pm, user = chandrapur_pm(app)
+    admin_client.patch(f"/api/projects/{pid}", json={"manager_code": user.code})
+    ids = [p["id"] for p in pm.get("/api/projects").get_json()["projects"]]
+    assert pid in ids
+
+
+def test_chandrapur_pm_can_approve_attendance_like_a_project_manager(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    pm, user = chandrapur_pm(app)
+    from app.auth import can_approve_attendance
+    with app.app_context():
+        project = db.session.get(Project, pid)
+        assert can_approve_attendance(user, project) is True
+
+
+def test_chandrapur_pm_shows_up_in_the_manager_picker(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    pm, user = chandrapur_pm(app)
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert any(m["code"] == user.code for m in data["managers"])
+
+
+def test_chandrapur_pm_can_be_assigned_as_a_projects_manager(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    pm, user = chandrapur_pm(app)
+    res = admin_client.patch(f"/api/projects/{pid}", json={"manager_code": user.code})
+    assert res.status_code == 200 and res.get_json()["project"]["manager_code"] == user.code
+
+
+def test_a_project_chandrapur_pm_creates_is_auto_assigned_to_them(app):
+    pm, user = chandrapur_pm(app)
+    res = pm.post("/api/projects", json={"new_client_name": "Auto Assign Test"})
+    assert res.status_code == 201 and res.get_json()["project"]["manager_code"] == user.code

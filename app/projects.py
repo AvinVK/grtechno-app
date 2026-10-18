@@ -10,7 +10,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
-from .auth import can_approve_issue, visible_clients, visible_projects
+from .auth import PROJECT_MANAGER_ROLE_KEYS, can_approve_issue, visible_clients, visible_projects
 from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES
 from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectExpense, ProjectPayment, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
@@ -252,7 +252,7 @@ def create_project():
         status=f.data.get("status", "running"), estimated_amount=estimated,
         work_order_no=f.data.get("work_order_no", ""), work_order_date=f.data.get("work_order_date"),
         owner_code=g.user.code,
-        manager_code=g.user.code if g.user.role_key == "project_manager" else None,   # a manager who adds it runs it
+        manager_code=g.user.code if g.user.role_key in PROJECT_MANAGER_ROLE_KEYS else None,   # a manager who adds it runs it
     )
     if advance is not None:
         project.payments.append(ProjectPayment(
@@ -327,7 +327,7 @@ def _detail(project):
         },
     }
     if can_assign:
-        managers = User.query.filter_by(role_key="project_manager", is_active=True).order_by(User.name).all()
+        managers = User.query.filter(User.role_key.in_(PROJECT_MANAGER_ROLE_KEYS), User.is_active.is_(True)).order_by(User.name).all()
         body["managers"] = [{"code": u.code, "name": u.name} for u in managers]
     return body
 
@@ -374,7 +374,7 @@ def update_project(project_id):
             if not g.user.sees_all:
                 abort(403, "Only the admin can assign the project manager.")
             manager = db.session.get(User, code) if code else None
-            if code and not (manager and manager.is_active and manager.role_key == "project_manager"):
+            if code and not (manager and manager.is_active and manager.role_key in PROJECT_MANAGER_ROLE_KEYS):
                 errors["manager_code"] = "Choose a project manager from the list"
             else:
                 data["manager_code"] = code

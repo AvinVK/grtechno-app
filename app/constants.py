@@ -12,6 +12,11 @@ PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other"]
 # (app/projects.py's commission entries, app/workers.py's "Commission earned" stat) checks against.
 COMMISSION_ROLE_KEY = "project_manager_chandrapur"
 
+# This role also sees every project in this district specifically (kohal, 2026-10-18: "alocate chandrapur
+# region projects... to project manager chandrapur role"), on top of whatever it manages elsewhere - not
+# every project company-wide the way the plain project_manager role does (see auth.visible_projects).
+CHANDRAPUR_DISTRICT = "Chandrapur"
+
 # Fallbacks for the two single-value rows in the settings table. The dropdown lists live in the
 # services and lead_sources tables and are maintained directly in the database.
 DEFAULT_SETTINGS = {

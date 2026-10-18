@@ -18,6 +18,7 @@ from flask import (
 from sqlalchemy import false as sa_false, or_
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from .constants import CHANDRAPUR_DISTRICT, COMMISSION_ROLE_KEY
 from .extensions import db
 from .models import Attendance, Client, Lead, Project, Role, User, Worker, utcnow
 from .modules import has_module
@@ -176,16 +177,29 @@ def visible_leads():
 # project only once they've actually checked into it (kohal, 2026-10-16), not by ownership/management.
 SITE_SUPERVISOR_ROLE_KEYS = {"supervisor", "alarm_tech_cum_site_supervisor"}
 
+# Project manager Chandrapur (kohal, 2026-10-18: "alocate chandrapur region projects and all other access
+# as project manager to project manager chandrapur role") - counts as a project manager everywhere else
+# (approving attendance, auto-assigned as a project's manager when it creates one, appearing in the
+# manager-assignment picker - see app/projects.py), but its own project *visibility* is scoped to the
+# Chandrapur district specifically rather than every project company-wide (see visible_projects below) -
+# that was the one thing asked for by name, not folded into "sees everything" like the plain role is.
+PROJECT_MANAGER_ROLE_KEYS = {"project_manager", COMMISSION_ROLE_KEY}
+
 
 def visible_projects():
     """Projects this person may see: everything for the admin, for roles marked sees_all (Accounts), and
     for Project manager specifically (kohal, 2026-10-16 - deliberately not sees_all itself, to avoid also
     granting its other powers: everyone's attendance, deleting a record, assigning project managers). Only
-    their assigned state(s) for a sub-admin. A site supervisor only sees a project once they've checked
-    into it via Attendance - not by ownership/management, unlike everyone else's fallback below."""
+    their assigned state(s) for a sub-admin. Project manager Chandrapur sees every project in that district,
+    plus (same as everyone's own fallback below) anything it personally owns or manages elsewhere. A site
+    supervisor only sees a project once they've checked into it via Attendance - not by ownership/
+    management, unlike everyone else's fallback below."""
     query = Project.query
     if g.user.sees_all or g.user.role_key == "project_manager":
         return query
+    if g.user.role_key == COMMISSION_ROLE_KEY:
+        return query.filter(or_(Project.site_district == CHANDRAPUR_DISTRICT,
+                                 Project.owner_code == g.user.code, Project.manager_code == g.user.code))
     if g.user.role_key == "sub_admin":
         states = g.user.state_names
         return query.filter(Project.site_state.in_(states)) if states else query.filter(sa_false())
@@ -233,7 +247,7 @@ def can_approve_attendance(user, project) -> bool:
         return True
     if project is None:
         return False
-    if user.role_key == "project_manager":
+    if user.role_key in PROJECT_MANAGER_ROLE_KEYS:
         return True
     if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
         return Attendance.query.filter_by(user_code=user.code, project_id=project.id, check_out_at=None).first() is not None
