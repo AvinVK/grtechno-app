@@ -53,19 +53,21 @@ def _summaries(keys) -> dict:
 
 def _extra_tiles():
     """Wages/Fooding (kohal, 2026-10-18) aren't modules - who gets which of these tiles, in the same
-    Services grid as the real ones (kohal: "i wasnt fooding blobk here in missing space" - it used to only
-    be a list further down the page, not a tile here), depends on something other than a role:
-    - the admin or accountant (auth.can_manage_fooding) gets a Fooding tile that jumps to their own
-      management block further down this same page (see me.html) - not a page of its own.
-    - a daily-wage worker (Worker.employment_type) gets their own Wages and Fooding tiles, each a real
-      page (see app/wages.py, app/fooding.py)."""
+    Services grid as the real ones (kohal: "i wasnt fooding blobk here in missing space"), depends on
+    something other than a role:
+    - the admin or accountant (auth.can_manage_fooding) gets a Fooding tile - a real page, /fooding (kohal:
+      "dude, fooding should open its own page!" - it used to only jump to a block further down this one).
+    - a daily-wage worker (Worker.employment_type) gets their own Wages and Fooding tiles, also real pages
+      (see app/wages.py, app/fooding.py) - the same /fooding route, which shows whichever view fits who's
+      signed in (see app/fooding.py's page())."""
     from .models import settings_for_client
 
     tiles = []
     if can_manage_fooding(g.user):
         n = Worker.query.filter_by(employment_type="daily_wages").count()
-        tiles.append({"href": "#me-fooding", "icon": "fooding", "name": "Fooding",
+        tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{n} daily-wage" if n else None})
+        return tiles
     worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker and worker.employment_type == "daily_wages":
         account = account_for(worker)
@@ -75,20 +77,17 @@ def _extra_tiles():
         tiles.append({"href": "/wages", "icon": "wages", "name": "Wages", "sum": None})
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{cur}{remaining:.0f} left" if remaining is not None else None})
-    return tiles, bool(worker and worker.employment_type == "daily_wages")
+    return tiles
 
 
 @bp.get("/me")
 def page():
     keys = {m.key for m in modules_for(g.user)}
-    extra_tiles, is_daily_wage_worker = _extra_tiles()
-    return render_template("me.html", summaries=_summaries(keys), extra_tiles=extra_tiles,
+    return render_template("me.html", summaries=_summaries(keys), extra_tiles=_extra_tiles(),
                            # Users & roles / Employee management aren't in_nav (see modules_for), so they
                            # aren't in keys above - checked separately for the Me hub's own Manage section.
                            can_see_users=has_module(g.user, "users"),
-                           can_see_workforce=has_module(g.user, "workforce"),
-                           is_daily_wage_worker=is_daily_wage_worker,
-                           can_manage_fooding=can_manage_fooding(g.user))
+                           can_see_workforce=has_module(g.user, "workforce"))
 
 
 @bp.get("/api/me/material-approvals")

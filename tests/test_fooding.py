@@ -157,19 +157,32 @@ def test_topping_up_after_running_dry_does_not_retroactively_owe_the_zero_days(a
 
 # ---------- the daily-wage worker's own view ----------
 
-def test_fooding_page_and_api_need_a_daily_wage_worker(client, admin_client):
-    assert client.get("/fooding").status_code == 403       # plain user, not daily-wage
+def test_fooding_page_needs_a_daily_wage_worker_or_manage_access(client, admin_client):
+    """kohal, 2026-10-18: "fooding should open its own page!" - /fooding now serves both audiences (same
+    split as /attendance's team_only), so a plain user (neither) still 403s, but the admin now gets the
+    management view instead of 403 (they can_manage_fooding, even with no Worker row of their own)."""
+    assert client.get("/fooding").status_code == 403       # plain user, not daily-wage, can't manage either
     assert client.get("/api/fooding/me").status_code == 403
-    assert admin_client.get("/fooding").status_code == 403  # the admin has no Worker row at all
+    assert admin_client.get("/fooding").status_code == 200  # the management view
 
 
 def test_a_daily_wage_worker_sees_their_own_balance(app, accounts_client):
     who, wid = daily_wage_user(app)
     accounts_client.post(f"/api/fooding/{wid}/allot", json={"amount": "750"})
 
-    assert who.get("/fooding").status_code == 200
+    res = who.get("/fooding")
+    assert res.status_code == 200 and 'data-mode="own"' in res.get_data(as_text=True)
     data = who.get("/api/fooding/me").get_json()["fooding"]
     assert data["allotted_total"] == 750.0 and data["remaining"] == 750.0 and data["is_paused"] is False
+
+
+def test_the_management_page_shows_mode_manage(admin_client, accounts_client):
+    """The same /fooding route the daily-wage worker's own page uses (kohal: "fooding should open its own
+    page!") - app/static/js/fooding.js picks the view from this data-mode attribute, same idea as
+    attendance.html's data-team-only."""
+    for who in (admin_client, accounts_client):
+        html = who.get("/fooding").get_data(as_text=True)
+        assert 'data-mode="manage"' in html
 
 
 def test_the_me_hub_renders_the_wages_and_fooding_tiles(app):
@@ -182,15 +195,14 @@ def test_the_me_hub_renders_the_wages_and_fooding_tiles(app):
 
 
 def test_admin_and_accountant_get_a_fooding_tile_in_the_services_grid(admin_client, accounts_client, client):
-    """kohal, 2026-10-18: "i wasnt fooding blobk here in missing space" - a tile in the same grid as
-    Leads/Clients/..., not only the list further down the page."""
+    """kohal, 2026-10-18: "i wasnt fooding blobk here in missing space" (a tile in the same grid as
+    Leads/Clients/...) and "fooding should open its own page!" (a real page, not an anchor)."""
     for who in (admin_client, accounts_client):
         html = who.get("/me").get_data(as_text=True)
-        assert html.count('href="#me-fooding"') == 1 and 'Fooding</span>' in html
-        assert 'id="me-fooding"' in html   # the management block itself, always rendered for these two
+        assert html.count('href="/fooding"') == 1 and 'Fooding</span>' in html
 
     html = client.get("/me").get_data(as_text=True)
-    assert 'href="#me-fooding"' not in html and 'id="me-fooding"' not in html
+    assert 'href="/fooding"' not in html
 
 
 def test_the_fooding_tile_shows_how_many_daily_wage_employees_there_are(admin_client):

@@ -5,13 +5,12 @@ app/modules.py's check_module, since who may use it isn't a role-level thing (se
 or depends on a personal HR detail (Worker.employment_type == "daily_wages") that cuts across roles, not a
 service every role either has or doesn't.
 
-Two audiences:
-- The admin or accountant allots money and pauses/resumes from a block on the Me hub (see app/me.py and
-  app/static/js/me.js) - not a page of its own, since it's one list to glance at and act on, not something
-  worth its own tab.
-- A daily-wage worker sees their own balance here, at /fooding, reached from a tile on their own Me hub
-  (kohal: "when they login they should see attendance, wages and fooding") - alongside /wages (see
-  app/wages.py), which exists but has nothing populated in it yet.
+Two audiences share one page, /fooding - same shape as /attendance's own team_only split (app/attendance.py):
+- The admin or accountant allots money and pauses/resumes, for every daily-wage worker (kohal, 2026-10-18:
+  "dude, fooding should open its own page!" - this used to only be a block on the Me hub, not a page).
+- A daily-wage worker sees their own balance - allotted, remaining, and the ₹200/day note, or "Paused" -
+  reached from a tile on their own Me hub (kohal: "when they login they should see attendance, wages and
+  fooding") - alongside /wages (see app/wages.py), which exists but has nothing populated in it yet.
 
 See FoodingAccount in app/models.py for how the running balance is kept current without a scheduled job."""
 
@@ -73,14 +72,16 @@ def _empty_dict(worker):
     }
 
 
-# ---------- the daily-wage worker's own page ----------
+# ---------- the page itself, same split as /attendance's team_only ----------
 
 @bp.get("/fooding")
 def page():
+    if can_manage_fooding(g.user):
+        return render_template("fooding.html", page_title="Fooding", mode="manage")
     worker = own_worker()
     if worker is None or worker.employment_type != "daily_wages":
         abort(403, "Fooding is only for daily-wage employees.")
-    return render_template("fooding.html")
+    return render_template("fooding.html", page_title="Fooding", mode="own")
 
 
 @bp.get("/api/fooding/me")
@@ -94,7 +95,7 @@ def my_fooding():
                    currency=settings_for_client()["currency"])
 
 
-# ---------- admin/accountant management (see the Me hub, not a page of its own) ----------
+# ---------- admin/accountant management ----------
 
 @bp.get("/api/fooding")
 def list_fooding():

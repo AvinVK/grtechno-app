@@ -24,24 +24,14 @@
   <section class="me-section" aria-labelledby="me-services">
     <div class="me-section-head"><h2 id="me-services">Services</h2></div>
     {# Wages/Fooding (kohal, 2026-10-18: "when they login they should see attendance, wages and fooding";
-       "i wasnt fooding blobk here in missing space" - the admin's own Fooding used to only be a list
-       further down the page, not a tile here) - not module tiles (see app/me.py's _extra_tiles), so they
-       come in via extra_tiles rather than the modules table services() otherwise reads from. #}
+       "i wasnt fooding blobk here in missing space"; "dude, fooding should open its own page!") - not
+       module tiles (see app/me.py's _extra_tiles), so they come in via extra_tiles rather than the modules
+       table services() otherwise reads from - each is a real page (/wages, /fooding), not an anchor into
+       this one. #}
     {{ services(nav_modules, summaries, extra_tiles) }}
   </section>
 
   {{ manage(can_see_users, can_see_workforce) }}
-
-  {# Every daily-wage employee, what's been allotted to them and what's left - for the admin or accountant
-     to top up or pause (kohal, 2026-10-18), reached from the Fooding tile above. Always shown once the
-     Fooding tile itself is (not hidden-until-nonempty like the approval sections below) - an admin with no
-     daily-wage employees yet still needs somewhere to go allot the first one. #}
-  {% if can_manage_fooding %}
-  <section class="me-section" id="me-fooding" aria-labelledby="me-fooding-h">
-    <div class="me-section-head"><h2 id="me-fooding-h">Fooding</h2></div>
-    <div id="me-fooding-list" class="card-group me-rows"></div>
-  </section>
-  {% endif %}
 
   {# Material issues/stock-ins waiting on the signed-in person specifically - a project manager, a site
      supervisor currently checked in somewhere, an accountant, an office assistant, or the admin (see
