@@ -383,6 +383,10 @@ class Project(db.Model):
         "ProjectPayment", back_populates="project", cascade="all, delete-orphan",
         order_by="ProjectPayment.position, ProjectPayment.id",
     )
+    expenses = db.relationship(
+        "ProjectExpense", back_populates="project", cascade="all, delete-orphan",
+        order_by="ProjectExpense.entry_date.desc(), ProjectExpense.id.desc()",
+    )
 
     @property
     def code(self) -> str:
@@ -462,6 +466,48 @@ class ProjectPayment(db.Model):
             "mode": self.mode,
             "paid_date": self.paid_date.isoformat() if self.paid_date else None,
             "comments": self.comments,
+        }
+
+
+class ProjectExpense(db.Model):
+    """Money paid out of a project to someone connected to it, not to the client - starts with commission
+    (kohal, 2026-10-18: the Project manager Chandrapur role earns a percentage of a project's negotiated
+    amount, entered from the project's own Payment tab). Daily wages and site food are meant to land in
+    this same table as more `kind`s later, not separate ones, so "project expense" stays one place to total
+    from - for now `kind` is always "commission" (see _expense_fields in app/projects.py).
+
+    percent is what was actually typed in; basis_amount and amount are a snapshot of the project's
+    net_amount and the rupee figure computed from it at the moment this was saved (or last edited) - so a
+    later change to the project's own negotiated/final amount never silently moves money already recorded
+    as paid out, the same reasoning as a material issue's rate being snapshotted rather than recalculated
+    after the fact."""
+
+    __tablename__ = "project_expenses"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False, default="commission", server_default="commission")
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True, index=True)
+    percent = db.Column(db.Numeric(5, 2), nullable=False)
+    basis_amount = db.Column(db.Numeric(14, 2), nullable=False)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    entry_date = db.Column(db.Date, nullable=False)
+    note = db.Column(db.Text, nullable=False, default="", server_default="")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    project = db.relationship("Project", back_populates="expenses")
+    worker = db.relationship("Worker", back_populates="commissions")
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "kind": self.kind,
+            "project_id": self.project_id, "project_code": self.project.code, "project_title": self.project.title,
+            "worker_id": self.worker_id, "worker_name": self.worker.name if self.worker else None,
+            "percent": float(self.percent), "basis_amount": float(self.basis_amount), "amount": float(self.amount),
+            "entry_date": self.entry_date.isoformat(), "note": self.note,
+            "created_by_name": self.created_by.name if self.created_by else None,
         }
 
 
@@ -856,12 +902,25 @@ class Worker(db.Model):
         "WorkerPayment", back_populates="worker", cascade="all, delete-orphan",
         order_by="WorkerPayment.position, WorkerPayment.id",
     )
+    # Commission this person has earned, across every project (see ProjectExpense) - not this worker's own
+    # "owned" rows the way payments/attendance are (no cascade on delete: a removed worker's past commission
+    # stays on the project's own record, just with worker_id cleared - see ProjectExpense.worker_id).
+    commissions = db.relationship(
+        "ProjectExpense", back_populates="worker", order_by="ProjectExpense.entry_date.desc()",
+    )
 
     @property
     def paid_amount(self):
         """What's actually been paid - entries with a paid_date, not every entry in the log (a future/
         planned one can sit there unpaid)."""
         return sum((p.amount for p in self.payments if p.paid_date is not None), Decimal(0))
+
+    @property
+    def commission_total(self):
+        """How much commission this person has earned in total, across every project (kohal, 2026-10-18:
+        "a bifurcation of how much total commission has been earned by this person") - shown in Employee
+        management for the Project manager Chandrapur role; see ProjectExpense."""
+        return sum((c.amount for c in self.commissions if c.kind == "commission"), Decimal(0))
 
     def to_dict(self, detail: bool = False) -> dict:
         data = {
@@ -880,6 +939,8 @@ class Worker(db.Model):
                 "pf_number": self.pf_number, "esic_number": self.esic_number, "reference": self.reference,
                 "paid_amount": float(self.paid_amount),
                 "payments": [p.to_dict() for p in self.payments],
+                "commission_total": float(self.commission_total),
+                "commissions": [c.to_dict() for c in self.commissions if c.kind == "commission"],
             })
         return data
 

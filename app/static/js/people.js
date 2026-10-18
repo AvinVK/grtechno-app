@@ -20,6 +20,9 @@
   const mode = view.dataset.mode;
   const canWrite = view.dataset.canWrite === '1';
   const UNASSIGNED = 'unassigned';
+  // Same key as app/constants.py's COMMISSION_ROLE_KEY - who earns commission on a project's negotiated
+  // amount (kohal, 2026-10-18), gating the "Commission earned" stat below.
+  const COMMISSION_ROLE_KEY = 'project_manager_chandrapur';
 
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -179,6 +182,35 @@
     return h('ol', { class: 'fn-grid', 'aria-label': 'Last 2 weeks, oldest first' }, cells);
   }
 
+  // Commission earned, across every project (kohal, 2026-10-18: "a bifurcation of how much total
+  // commission has been earned by this person and once clicking on it it should show which project and
+  // what percentage from that project") - only for the Project manager Chandrapur role; null for anyone
+  // else, same as the rest of popupBody's blocks fold away when there's nothing to show.
+  function commissionStat(p, data) {
+    if (p.role_key !== COMMISSION_ROLE_KEY) return null;
+    const commissions = data.worker.commissions || [];
+    const cur = data.currency;
+    const breakdown = h('ul', { class: 'card-group', hidden: true });
+    clear(breakdown).append(...(commissions.length
+      ? commissions.map((c) => h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, c.project_title ? `${c.project_code} · ${c.project_title}` : 'Unknown project'),
+          h('span', { class: 'row-sub' }, `${c.percent}% of ${money(c.basis_amount, cur)} · ${dayMonth(parseDay(c.entry_date))}`)),
+        h('span', { class: 'row-value' }, money(c.amount, cur))))
+      : [h('li', {}, h('p', { class: 'hint' }, 'No commission recorded yet.'))]));
+    const toggle = h('button', {
+      type: 'button', class: 'fn-commission-toggle', 'aria-expanded': 'false',
+      onclick: () => {
+        const opening = breakdown.hidden;
+        breakdown.hidden = !opening;
+        toggle.setAttribute('aria-expanded', String(opening));
+      },
+    },
+      h('span', { class: 'stat-label' }, 'Commission earned'),
+      h('span', { class: 'fn-stat-value' }, money(data.worker.commission_total, cur)));
+    return h('div', { class: 'fn-section' }, toggle, breakdown);
+  }
+
   function popupBody(p, data) {
     const today = parseDay(data.today);
     const first = dayKey(addDays(today, -(FORTNIGHT - 1)));
@@ -210,6 +242,7 @@
           h('span', { class: 'stat-label' }, 'Came'),
           h('span', { class: 'fn-stat-value' }, counted ? `${came.length}/${counted}` : '—'),
           h('span', { class: 'fn-stat-note' }, counted ? 'days, last 2 weeks' : 'No data for the last 2 weeks'))),
+      commissionStat(p, data),
       h('div', { class: 'fn-section' },
         h('span', { class: 'stat-label' }, 'Last 2 weeks'),
         fortnightGrid(data, byDay),

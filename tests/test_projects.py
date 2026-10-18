@@ -1,7 +1,8 @@
 from datetime import date
 
+from app.constants import COMMISSION_ROLE_KEY
 from app.extensions import db
-from app.models import Attendance, Client, Lead, Project, ProjectPayment, RoleModule, Service, User, utcnow
+from app.models import Attendance, Client, Lead, Project, ProjectPayment, Role, RoleModule, Service, User, Worker, utcnow
 from conftest import make_user, signed_in, win_lead
 
 
@@ -652,3 +653,121 @@ def test_requesting_more_than_stock_from_someone_who_auto_approves_is_rejected(a
     mat_id = stocked_material(admin_client, qty=3)
     res = accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
     assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
+
+
+# ---------- Commission (kohal, 2026-10-18) ----------
+#
+# "the person assigned to [Project manager Chandrapur] gets commission on the negotiated amount of the
+# project... what percentage of commission was given to whom and that should go towards project expense".
+
+def commission_worker(name="Chetan Chandrapur"):
+    """A Worker in the commission role - not seeded by default (see conftest.seed_reference_data), since
+    it's a role kohal added on prod via Users & roles, not one built into this codebase's reference data."""
+    if db.session.get(Role, COMMISSION_ROLE_KEY) is None:
+        db.session.add(Role(key=COMMISSION_ROLE_KEY, name="Project manager Chandrapur", sees_all=False))
+        db.session.flush()
+    worker = Worker(name=name, category="staff", role_key=COMMISSION_ROLE_KEY)
+    db.session.add(worker)
+    db.session.commit()
+    return worker.id
+
+
+def project_with_amount(client, admin_client, amount):
+    """A project with a specific negotiated amount - win_lead's own negotiation round is fixed at
+    1,000,000 (see its docstring), so the amount is set directly here instead, the same way the Payment
+    tab's own "Fill amount" button does it."""
+    pid = make_project(client, admin_client)
+    res = admin_client.patch(f"/api/projects/{pid}", json={"estimated_amount": amount})
+    assert res.status_code == 200, res.get_json()
+    return pid
+
+
+def test_commission_is_computed_from_the_negotiated_amount(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)   # net_amount = 200000 (no discount/final)
+    with app.app_context():
+        wid = commission_worker()
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "percent": "5"})
+    assert res.status_code == 201
+    body = res.get_json()
+    assert len(body["expenses"]) == 1
+    e = body["expenses"][0]
+    assert e["percent"] == 5.0 and e["basis_amount"] == 200000.0 and e["amount"] == 10000.0
+    assert e["kind"] == "commission" and e["worker_name"] == "Chetan Chandrapur"
+    assert body["total_expense"] == 10000.0
+
+
+def test_commission_can_only_go_to_someone_in_the_chandrapur_role(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        other = Worker(name="Wendy Welder", category="manpower", role_key="welder")
+        db.session.add(other)
+        db.session.commit()
+        wid = other.id
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "percent": "5"})
+    assert res.status_code == 422 and "worker_id" in res.get_json()["fields"]
+
+
+def test_commission_percent_must_be_a_sane_percentage(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+    for bad in ("0", "-5", "101", "abc", ""):
+        res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "percent": bad})
+        assert res.status_code == 422 and "percent" in res.get_json()["fields"], bad
+
+
+def test_commission_needs_the_projects_amount_set_first(app, admin_client):
+    res = admin_client.post("/api/projects", json={"new_client_name": "No Amount Yet"})
+    pid = res.get_json()["project"]["id"]
+    with app.app_context():
+        wid = commission_worker()
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "percent": "5"})
+    assert res.status_code == 422 and "percent" in res.get_json()["fields"]
+
+
+def test_commission_amount_is_a_snapshot_not_live(app, client, admin_client):
+    """kohal, 2026-10-18 (answered): "Snapshot at entry time" - a later change to the project's own
+    negotiated amount must not silently move money already recorded as paid out."""
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+    expense_id = admin_client.post(f"/api/projects/{pid}/expenses",
+                                    json={"worker_id": wid, "percent": "5"}).get_json()["expenses"][0]["id"]
+    admin_client.patch(f"/api/projects/{pid}", json={"estimated_amount": 400000})
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    e = next(x for x in data["expenses"] if x["id"] == expense_id)
+    assert e["basis_amount"] == 200000.0 and e["amount"] == 10000.0   # unchanged by the amount edit above
+
+
+def test_editing_a_commission_entry_resnapshots_against_the_current_amount(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+    expense_id = admin_client.post(f"/api/projects/{pid}/expenses",
+                                    json={"worker_id": wid, "percent": "5"}).get_json()["expenses"][0]["id"]
+    admin_client.patch(f"/api/projects/{pid}", json={"estimated_amount": 400000})
+    res = admin_client.patch(f"/api/projects/{pid}/expenses/{expense_id}", json={"worker_id": wid, "percent": "10"})
+    assert res.status_code == 200
+    e = next(x for x in res.get_json()["expenses"] if x["id"] == expense_id)
+    assert e["basis_amount"] == 400000.0 and e["amount"] == 40000.0
+
+
+def test_deleting_a_commission_entry(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+    expense_id = admin_client.post(f"/api/projects/{pid}/expenses",
+                                    json={"worker_id": wid, "percent": "5"}).get_json()["expenses"][0]["id"]
+    res = admin_client.delete(f"/api/projects/{pid}/expenses/{expense_id}")
+    assert res.status_code == 200 and res.get_json()["expenses"] == []
+    assert res.get_json()["total_expense"] == 0
+
+
+def test_commission_workers_lists_only_the_chandrapur_role(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+        db.session.add(Worker(name="Wendy Welder", category="manpower", role_key="welder"))
+        db.session.commit()
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert [w["id"] for w in data["commission_workers"]] == [wid]

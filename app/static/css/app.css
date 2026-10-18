@@ -1552,6 +1552,15 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-section .wk-legend { margin: 10px 0 0; }
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }
+
+/* Commission earned (kohal, 2026-10-18) - a clickable stat, same card look as .fn-stats, that expands into
+   the per-project breakdown right below it. */
+.fn-commission-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--r-card); background: none; text-align: left;
+}
+.fn-commission-toggle .stat-label { margin-bottom: 0; }
+.fn-commission-toggle[aria-expanded="true"] { border-color: var(--line-strong); }
 .fn-actions { display: flex; gap: 8px; }
 .fn-remove { align-self: start; margin-top: 4px; }
 .fn-remove { align-self: start; margin-top: 4px; }

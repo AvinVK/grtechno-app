@@ -38,6 +38,7 @@
     }, label)));
 
   const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
+  const todayIsoLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
   function fmtDate(iso) {
     const [y, m, d] = iso.split('-').map(Number);
@@ -847,6 +848,10 @@
 
     renderStepsList();
 
+    // Full-tab reload after a commission entry changes - simplest way to pick up both the new entry itself
+    // and total_expense together, same idea as Materials' own reload (see loadMaterialRequests above).
+    const reloadCommission = async () => renderPayments(await api(`/api/projects/${P.id}`));
+
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'payments'),
@@ -857,9 +862,110 @@
         h('p', { class: 'hint' }, 'Split the net amount into payments, each tied to its own site milestone.'),
         stepsLabel,
         stepsList,
-        paySummary)));
+        paySummary),
+      commissionSection(data, reloadCommission)));
     recalc();
     window.scrollTo(0, 0);
+  }
+
+  /* ---------- Commission: a cut of the negotiated amount, paid to the Project manager Chandrapur role
+     (kohal, 2026-10-18: "the person assigned to this role gets commission on the negotiated amount of the
+     project... what percentage of commission was given to whom and that should go towards project expense").
+     The first kind of "project expense" - daily wages and site food are meant to join it later (see
+     ProjectExpense's own docstring) - so this section is titled Commission specifically, not Expenses, even
+     though the data model underneath is already general. The rupee amount shown is whatever the server
+     computed and stored at save time (see app/projects.py's add_expense/update_expense) - this UI is
+     read-only about that math. */
+
+  function commissionSection(data, reload) {
+    const P = data.project;
+    const cur = data.currency;
+    const rows = data.expenses || [];
+    const workers = data.commission_workers || [];
+
+    function expenseRow(e) {
+      return h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, e.worker_name || 'Removed person'),
+          h('span', { class: 'row-sub' },
+            [`${e.percent}% of ${money(e.basis_amount, cur)}`, fmtDate(e.entry_date), e.note || null].filter(Boolean).join(' · ')),
+          h('span', { class: 'bill-links' },
+            h('button', { type: 'button', class: 'link-btn', onclick: () => openExpenseSheet(P.id, e, workers, reload) }, 'Edit'),
+            h('button', { type: 'button', class: 'link-btn', onclick: () => deleteExpense(P.id, e.id, reload) }, 'Delete'))),
+        h('span', { class: 'row-value' }, money(e.amount, cur)));
+    }
+
+    return h('section', { class: 'p-section' },
+      h('div', { class: 'p-section-head' },
+        h('h3', {}, 'Commission'),
+        workers.length
+          ? h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload) }, '+ Add commission')
+          : null),
+      !workers.length
+        ? h('p', { class: 'hint' }, 'Nobody is in the Project manager Chandrapur role yet - add them from Users & roles first.')
+        : null,
+      rows.length
+        ? h('ul', { class: 'card-group' }, rows.map(expenseRow))
+        : (workers.length ? h('p', { class: 'hint' }, 'No commission recorded yet.') : null),
+      rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_expense, cur)}`) : null);
+  }
+
+  function openExpenseSheet(projectId, expense, workers, reload) {
+    const isNew = !expense;
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const workerSel = selectField(
+      workers.map((w) => ({ value: w.id, label: w.name })), expense ? expense.worker_id : '',
+      { title: 'Given to', placeholder: 'Pick a person' });
+    const percentInput = h('input', {
+      type: 'number', min: '0.01', max: '100', step: '0.01', inputmode: 'decimal', value: expense ? expense.percent : '',
+    });
+    const dateInput = dateField(expense ? expense.entry_date : todayIsoLocal(), { placeholder: 'Date' });
+    const noteInput = h('input', { type: 'text', maxlength: 2000, autocomplete: 'off', value: expense ? (expense.note || '') : '' });
+
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, isNew ? 'Add' : 'Save');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      const body = {
+        worker_id: workerSel.value ? Number(workerSel.value) : null, percent: percentInput.value,
+        entry_date: dateInput.value, note: noteInput.value,
+      };
+      try {
+        if (isNew) await api(`/api/projects/${projectId}/expenses`, { method: 'POST', body });
+        else await api(`/api/projects/${projectId}/expenses/${expense.id}`, { method: 'PATCH', body });
+        finish();
+        toast(isNew ? 'Commission added' : 'Commission updated');
+        await reload();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, isNew ? 'Add commission' : 'Edit commission'),
+      field('worker_id', 'Given to', workerSel),
+      field('percent', 'Commission %', percentInput),
+      field('entry_date', 'Date', dateInput),
+      field('note', 'Note', noteInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+    percentInput.focus();
+  }
+
+  async function deleteExpense(projectId, expenseId, reload) {
+    const ok = await confirm('Remove this commission entry?', { ok: 'Delete', danger: true, title: 'Delete commission' });
+    if (!ok) return;
+    try {
+      await api(`/api/projects/${projectId}/expenses/${expenseId}`, { method: 'DELETE' });
+      toast('Commission removed');
+      await reload();
+    } catch (err) { toast(err.message, true); }
   }
 
   function renderDetails(data) {

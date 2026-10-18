@@ -3,7 +3,7 @@ A project normally starts from a won lead (create_project_from_lead) and is then
 manager or the admin. Work that is already running can be added directly (create_project)."""
 
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, jsonify, render_template, request
 from sqlalchemy import func
@@ -11,9 +11,9 @@ from werkzeug.exceptions import abort
 
 from . import inventory as inv
 from .auth import can_approve_issue, visible_clients, visible_projects
-from .constants import PAYMENT_MODES
+from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES
 from .extensions import db
-from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectPayment, Service, User, WorkerAttendance, settings_for_client, utcnow
+from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectExpense, ProjectPayment, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local, today_local
@@ -287,10 +287,20 @@ def _material_costs(project):
     return rows, total
 
 
+def _expenses(project):
+    """Money paid out of this project, not to the client - commission for now (kohal, 2026-10-18), with
+    daily wages and food meant to join it later as more ProjectExpense.kind values. One row per entry, same
+    shape as _material_costs above."""
+    rows = [e.to_dict() for e in project.expenses]
+    total = float(sum((e.amount for e in project.expenses), start=Decimal("0")))
+    return rows, total
+
+
 def _detail(project):
     client = project.client
     can_assign = g.user.sees_all
     materials, total_material_cost = _material_costs(project)
+    expenses, total_expense = _expenses(project)
     body = {
         "project": project.to_dict(detail=True),
         "client": {"id": client.id, "name": client.name, "contact_name": client.contact_name, "phone": client.phone},
@@ -300,6 +310,11 @@ def _detail(project):
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,
+        "expenses": expenses,
+        "total_expense": total_expense,
+        # For the commission form's worker picker - only someone in that role earns it (kohal, 2026-10-18).
+        "commission_workers": [{"id": w.id, "name": w.name}
+                                for w in Worker.query.filter_by(role_key=COMMISSION_ROLE_KEY).order_by(Worker.name)],
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
             "started": (project.start_date or to_local(project.created_at).date()).isoformat(),   # local day, not UTC
@@ -538,3 +553,105 @@ def request_material(project_id):
         inv._recompute_material(material)
     db.session.commit()
     return jsonify(request=_material_request_dict(movement)), 201
+
+
+# ---------- commission (kohal, 2026-10-18) ----------
+#
+# "the person assigned to [Project manager Chandrapur] gets commission on the negotiated amount of the
+# project... in payment subtab under project, i need to enter what percentage of commission was given to
+# whom and that should go towards project expense" - the first kind of ProjectExpense; see that model's own
+# docstring for why it's one table rather than a commission-only one.
+
+def _expense_fields(payload):
+    """worker (a Worker in the commission role), percent, entry_date and note from the request - shared by
+    add_expense and update_expense. Returns (worker, percent, data, errors); percent is a Decimal or None."""
+    f = Fields(payload)
+    f.date("entry_date")
+    f.text("note", 2000)
+    errors = f.errors
+
+    worker = None
+    raw_worker = payload.get("worker_id")
+    if str(raw_worker).isdigit():
+        worker = db.session.get(Worker, int(raw_worker))
+    if worker is None or worker.role_key != COMMISSION_ROLE_KEY:
+        errors["worker_id"] = "Pick a project manager (Chandrapur)"
+
+    percent = None
+    raw_percent = payload.get("percent")
+    if raw_percent in (None, ""):
+        errors.setdefault("percent", "Enter the commission percentage")
+    else:
+        try:
+            percent = Decimal(str(raw_percent))
+        except InvalidOperation:
+            errors["percent"] = "Enter a number"
+        else:
+            if not percent.is_finite() or percent <= 0 or percent > 100:
+                errors["percent"] = "Enter a percentage from 0 to 100"
+
+    if not f.data.get("entry_date") and "entry_date" not in f.errors:
+        f.data["entry_date"] = today_local()
+
+    return worker, percent, f.data, errors
+
+
+@bp.post("/api/projects/<int:project_id>/expenses")
+def add_expense(project_id):
+    """Record a cut of this project's negotiated amount paid out as commission. The rupee amount is
+    computed from the project's own net_amount right now and then fixed - see ProjectExpense's own
+    docstring for why editing the project's amount later doesn't move what's already been recorded."""
+    project = _project_or_404(project_id)
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    worker, percent, data, errors = _expense_fields(payload)
+    if project.net_amount is None:
+        errors.setdefault("percent", "Set the project's negotiated amount first, on its Payment tab")
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    basis = project.net_amount
+    expense = ProjectExpense(
+        project=project, kind="commission", worker=worker, percent=percent, basis_amount=basis,
+        amount=(basis * percent / Decimal("100")).quantize(Decimal("0.01")),
+        entry_date=data["entry_date"], note=data.get("note", ""), created_by_code=g.user.code,
+    )
+    db.session.add(expense)
+    db.session.commit()
+    return jsonify(_detail(project)), 201
+
+
+@bp.patch("/api/projects/<int:project_id>/expenses/<int:expense_id>")
+def update_expense(project_id, expense_id):
+    project = _project_or_404(project_id)
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
+    if expense is None:
+        abort(404)
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    worker, percent, data, errors = _expense_fields(payload)
+    if project.net_amount is None:
+        errors.setdefault("percent", "Set the project's negotiated amount first, on its Payment tab")
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    basis = project.net_amount
+    expense.worker = worker
+    expense.percent = percent
+    expense.basis_amount = basis
+    expense.amount = (basis * percent / Decimal("100")).quantize(Decimal("0.01"))
+    expense.entry_date = data["entry_date"]
+    expense.note = data.get("note", "")
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.delete("/api/projects/<int:project_id>/expenses/<int:expense_id>")
+def delete_expense(project_id, expense_id):
+    project = _project_or_404(project_id)
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
+    if expense is None:
+        abort(404)
+    db.session.delete(expense)
+    db.session.commit()
+    return jsonify(_detail(project))

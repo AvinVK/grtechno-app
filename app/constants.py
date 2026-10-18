@@ -7,6 +7,11 @@ CLOSED_STAGES = (WON, LOST)
 # How a payment (the advance, or a project's own payment steps) actually came in.
 PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other"]
 
+# Who earns commission on a project's negotiated amount (kohal, 2026-10-18) - a role the admin already
+# added on prod via Users & roles, same as any custom role; this is just the one key everything else
+# (app/projects.py's commission entries, app/workers.py's "Commission earned" stat) checks against.
+COMMISSION_ROLE_KEY = "project_manager_chandrapur"
+
 # Fallbacks for the two single-value rows in the settings table. The dropdown lists live in the
 # services and lead_sources tables and are maintained directly in the database.
 DEFAULT_SETTINGS = {

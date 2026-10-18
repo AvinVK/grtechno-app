@@ -4,8 +4,9 @@ see test_admin_can_still_pick_a_legacy_staff_category_worker_on_a_lead for why c
 
 from datetime import date, timedelta
 
+from app.constants import COMMISSION_ROLE_KEY
 from app.extensions import db
-from app.models import Attendance, Client, Project, Worker, WorkerAttendance
+from app.models import Attendance, Client, Project, ProjectExpense, Role, Worker, WorkerAttendance
 from conftest import csrf
 
 
@@ -454,3 +455,49 @@ def test_an_approved_self_check_in_also_counts_as_a_present_day(admin_client, an
         db.session.commit()
     rows = by_name(admin_client.get("/api/workforce").get_json()["sales_field"])
     assert rows["Self Checkin Test"]["week"][0]["status"] == "present"
+
+
+# ---------- Commission earned (kohal, 2026-10-18) ----------
+#
+# "in employee management, for this role, there should be a bifurcation of how much total commission has
+# been earned by this person and once clicking on it it should show which project and what percentage from
+# that project" - see app/models.py's Worker.commission_total/commissions and ProjectExpense.
+
+def test_commission_total_and_breakdown_show_on_the_person_detail(app, admin_client):
+    with app.app_context():
+        if db.session.get(Role, COMMISSION_ROLE_KEY) is None:
+            db.session.add(Role(key=COMMISSION_ROLE_KEY, name="Project manager Chandrapur", sees_all=False))
+        worker = Worker(name="Chetan Chandrapur", category="staff", role_key=COMMISSION_ROLE_KEY)
+        db.session.add(worker)
+        c1 = Client(name="Site A")
+        c2 = Client(name="Site B")
+        db.session.add_all([c1, c2])
+        db.session.flush()
+        p1 = Project(client=c1, title="Site A job", estimated_amount=200000)
+        p2 = Project(client=c2, title="Site B job", estimated_amount=500000)
+        db.session.add_all([p1, p2])
+        db.session.flush()
+        db.session.add_all([
+            ProjectExpense(project=p1, worker=worker, kind="commission", percent=5, basis_amount=200000,
+                            amount=10000, entry_date=date.today()),
+            ProjectExpense(project=p2, worker=worker, kind="commission", percent=2, basis_amount=500000,
+                            amount=10000, entry_date=date.today()),
+        ])
+        db.session.commit()
+        wid = worker.id
+
+    data = admin_client.get(f"/api/workforce/{wid}").get_json()
+    w = data["worker"]
+    assert w["commission_total"] == 20000.0
+    by_project = {c["project_title"]: c["percent"] for c in w["commissions"]}
+    assert by_project == {"Site A job": 5.0, "Site B job": 2.0}
+
+
+def test_commission_total_is_zero_for_someone_with_none(app, admin_client):
+    with app.app_context():
+        worker = Worker(name="Nobody Yet", category="staff")
+        db.session.add(worker)
+        db.session.commit()
+        wid = worker.id
+    data = admin_client.get(f"/api/workforce/{wid}").get_json()["worker"]
+    assert data["commission_total"] == 0.0 and data["commissions"] == []
