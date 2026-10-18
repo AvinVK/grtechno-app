@@ -21,11 +21,17 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .auth import can_manage_fooding
 from .extensions import db
-from .models import FoodingAccount, Worker, settings_for_client
+from .models import FoodingAccount, FoodingEntry, Worker, settings_for_client
+from .timeutil import today_local
 from .validation import api_errors
 
 bp = Blueprint("fooding", __name__)
 api_errors(bp)
+
+# How fooding money changed hands (kohal, 2026-10-18: "add mode of payment option as well. shld be cash,
+# online/UPI") - a fixed pair, not the general PAYMENT_MODES list (Cheque/Bank transfer/Other don't apply
+# to handing cash or a UPI transfer to someone in person).
+PAYMENT_MODES = ("Cash", "Online/UPI")
 
 
 def _manage_only():
@@ -92,7 +98,58 @@ def my_fooding():
     account = account_for(worker)
     db.session.commit()
     return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
+                   entries=[e.to_dict() for e in account.entries] if account else [],
+                   payment_modes=list(PAYMENT_MODES),
                    currency=settings_for_client()["currency"])
+
+
+def _amount_and_mode(payload, *, balance_cap=None):
+    """amount (a positive Decimal, optionally capped at balance_cap - "only X remaining") and payment_mode
+    (one of PAYMENT_MODES) from the request - shared by allot and the worker's own expense entry. Returns
+    (amount, payment_mode, errors)."""
+    errors = {}
+    try:
+        amount = Decimal(str(payload.get("amount")))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = None
+    if amount is None or not amount.is_finite() or amount <= 0:
+        errors["amount"] = "Enter an amount greater than 0"
+        amount = None
+    elif balance_cap is not None and amount > balance_cap:
+        errors["amount"] = f"Only {balance_cap} remaining"
+        amount = None
+    elif amount is not None:
+        amount = amount.quantize(Decimal("0.01"))
+    mode = payload.get("payment_mode")
+    if mode not in PAYMENT_MODES:
+        errors["payment_mode"] = "Choose how it was paid"
+    return amount, mode, errors
+
+
+@bp.post("/api/fooding/me/expenses")
+def add_my_expense():
+    """A daily-wage worker spending some of their own fooding balance on something other than the
+    automatic daily food deduction (kohal, 2026-10-18: "the daily wages employee can also use the money for
+    travelling or for any reason... the amount, how was it paid and for what was it used") - capped at
+    what's actually left, same as the admin can't approve a stock issue past what's in stock."""
+    worker = own_worker()
+    if worker is None or worker.employment_type != "daily_wages":
+        abort(403, "Fooding is only for daily-wage employees.")
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    account = account_for(worker, create=True)
+    amount, mode, errors = _amount_and_mode(payload, balance_cap=account.remaining)
+    purpose = str(payload.get("purpose") or "").strip()[:200]
+    if not purpose:
+        errors.setdefault("purpose", "Say what it was for")
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    account.deducted_total += amount
+    db.session.add(FoodingEntry(account=account, kind="expense", amount=amount, payment_mode=mode,
+                                 purpose=purpose, entry_date=today_local(), created_by_code=g.user.code))
+    db.session.commit()
+    return jsonify(fooding=account.to_dict(), entries=[e.to_dict() for e in account.entries]), 201
 
 
 # ---------- admin/accountant management ----------
@@ -104,26 +161,27 @@ def list_fooding():
     accounts = {w.id: account_for(w) for w in workers}
     rows = [accounts[w.id].to_dict() if accounts[w.id] else _empty_dict(w) for w in workers]
     db.session.commit()
-    return jsonify(workers=rows, daily_amount=float(FoodingAccount.DAILY_AMOUNT), currency=settings_for_client()["currency"])
+    return jsonify(workers=rows, daily_amount=float(FoodingAccount.DAILY_AMOUNT),
+                   payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
 
 
 @bp.post("/api/fooding/<int:worker_id>/allot")
 def allot(worker_id):
     """Add to what's already allotted (kohal's own answer, 2026-10-18: a top-up adds to the remaining
-    balance, it doesn't replace it) - creates the account on the very first allotment."""
+    balance, it doesn't replace it) - creates the account on the very first allotment. Records how it was
+    paid (kohal: "add mode of payment option as well") as its own FoodingEntry, not just a total."""
     _manage_only()
     worker = _daily_wage_or_404(worker_id)
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
-    try:
-        amount = Decimal(str(payload.get("amount")))
-    except (InvalidOperation, TypeError, ValueError):
-        amount = None
-    if amount is None or not amount.is_finite() or amount <= 0:
-        return jsonify(error="Check the highlighted fields", fields={"amount": "Enter an amount greater than 0"}), 422
+    amount, mode, errors = _amount_and_mode(payload)
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
     account = account_for(worker, create=True)
-    account.allotted_total += amount.quantize(Decimal("0.01"))
+    account.allotted_total += amount
+    db.session.add(FoodingEntry(account=account, kind="allot", amount=amount, payment_mode=mode,
+                                 entry_date=today_local(), created_by_code=g.user.code))
     db.session.commit()
     return jsonify(fooding=account.to_dict())
 

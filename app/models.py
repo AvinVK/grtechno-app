@@ -539,6 +539,10 @@ class FoodingAccount(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
 
     worker = db.relationship("Worker", back_populates="fooding_account")
+    entries = db.relationship(
+        "FoodingEntry", back_populates="account", cascade="all, delete-orphan",
+        order_by="FoodingEntry.entry_date.desc(), FoodingEntry.id.desc()",
+    )
 
     def settle(self, today: date = None) -> None:
         """Bring deducted_total/anchor_date up to date for every day since anchor_date, at DAILY_AMOUNT a
@@ -563,6 +567,40 @@ class FoodingAccount(db.Model):
             "allotted_total": float(self.allotted_total), "deducted_total": float(self.deducted_total),
             "remaining": float(self.remaining), "is_paused": self.is_paused,
             "daily_amount": float(self.DAILY_AMOUNT),
+        }
+
+
+class FoodingEntry(db.Model):
+    """One human-entered line against a FoodingAccount - money going in (kind="allot", with how it was
+    paid) or going out for something other than the automatic daily food deduction (kind="expense" - kohal,
+    2026-10-18: "the daily wages employee can also use the money for travelling or for any reason...
+    add expense which will open a form... the amount, how was it paid and for what was it used").
+
+    The account's own allotted_total/deducted_total still drive the running balance (an allot entry adds to
+    the former, an expense entry adds to the latter, same as a top-up always did before this table existed)
+    - this is purely the human-readable record of each of those changes: who it was, how it was paid, and
+    (for an expense) what it was for. purpose is blank for an allot entry - there's nothing to explain."""
+
+    __tablename__ = "fooding_entries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("fooding_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                   # allot | expense
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    payment_mode = db.Column(db.String(20), nullable=False)           # Cash | Online/UPI
+    purpose = db.Column(db.String(200), nullable=False, default="", server_default="")
+    entry_date = db.Column(db.Date, nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    account = db.relationship("FoodingAccount", back_populates="entries")
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "kind": self.kind, "amount": float(self.amount), "payment_mode": self.payment_mode,
+            "purpose": self.purpose, "entry_date": self.entry_date.isoformat(),
+            "created_by_name": self.created_by.name if self.created_by else None,
         }
 
 
