@@ -10,7 +10,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from . import categories
 from .auth import can_approve_stock_in, can_manage_fooding, visible_clients, visible_leads, visible_projects
-from .constants import OPEN_STAGES
+from .constants import COMMISSION_ROLE_KEY, OPEN_STAGES
 from .extensions import db
 from .fooding import _fooding_eligible_query as fooding_eligible_workers, account_for
 from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest, Worker
@@ -62,7 +62,10 @@ def _extra_tiles():
       200rs fooding thing") gets their own Fooding tile, a real page (see app/fooding.py).
     - a daily-wage worker specifically (not just anyone fooding_eligible) also gets a Wages tile (see
       app/wages.py) - a salaried person already has their pay on file elsewhere, so there's nothing for
-      that placeholder to show them."""
+      that placeholder to show them.
+    - the Project manager Chandrapur role gets a Commission tile (kohal, 2026-10-18: "this guy has to see
+      his comissions, how does he check that?" - previously only visible to an admin, through Employee
+      management's own popup), a real page (see app/commissions.py)."""
     from .models import settings_for_client
 
     tiles = []
@@ -81,6 +84,10 @@ def _extra_tiles():
         cur = settings_for_client()["currency"]
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{cur}{remaining:.0f} left" if remaining is not None else None})
+    if worker and worker.role_key == COMMISSION_ROLE_KEY:
+        cur = settings_for_client()["currency"]
+        tiles.append({"href": "/commissions", "icon": "commission", "name": "Commission",
+                       "sum": f"{cur}{worker.commission_total:.0f} earned" if worker.commission_total else None})
     return tiles
 
 
