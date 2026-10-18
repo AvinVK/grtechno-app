@@ -14,13 +14,19 @@ Two audiences share one page, /fooding - same shape as /attendance's own team_on
   only (a salaried person already has their own pay on file; it's only the fooding wallet they can opt
   onto, not day-rate tracking).
 
+fooding_eligible is just Worker.fooding_opt_in now (kohal, 2026-10-18: "should be automatically on for
+daily wages and off for others. their might be plans to remove the fooding option completely") - daily
+wages only sets that checkbox's starting point in the Edit form (see people.js), it's no longer baked into
+eligibility here, so removing fooding later is just removing the field, not also untangling it from
+employment_type. See migrations/versions/a3c7e1f9d548_fooding_opt_in_backfill.py for the one-time backfill
+this needed so an already-eligible daily-wage worker didn't silently lose it when this shipped.
+
 See FoodingAccount in app/models.py for how the running balance is kept current without a scheduled job."""
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
-from sqlalchemy import or_
 
 from .auth import can_manage_fooding
 from .extensions import db
@@ -56,9 +62,9 @@ def _fooding_eligible_or_404(worker_id):
 
 
 def _fooding_eligible_query():
-    """Every Worker who belongs on the fooding wallet - automatically for daily wages, or opted in
-    otherwise (Worker.fooding_eligible); a query, not the Python property, since this drives a list."""
-    return Worker.query.filter(or_(Worker.employment_type == "daily_wages", Worker.fooding_opt_in.is_(True)))
+    """Every Worker who belongs on the fooding wallet (Worker.fooding_eligible) - a query, not the Python
+    property, since this drives a list."""
+    return Worker.query.filter(Worker.fooding_opt_in.is_(True))
 
 
 def account_for(worker, *, create=False):

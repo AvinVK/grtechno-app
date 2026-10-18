@@ -362,13 +362,18 @@
     employmentSel.addEventListener('change', updateWageField);
     updateWageField();
 
-    // Fooding (kohal, 2026-10-18: "now there are salaried employees which can be on 200rs fooding thing...
-    // give a check mark in employee details form after salary thing named 'fooding?'") - every daily-wage
-    // employee is already on it automatically (Worker.fooding_eligible, server-side); this is the opt-in
-    // for anyone else, same ₹200/day life once it's on (see /fooding).
+    // Fooding (kohal, 2026-10-18: "this fooding check should be available for all employees. should be
+    // automatically on for daily wages and off for others. their might be plans to remove the fooding
+    // option completely") - one checkbox for everyone, the only thing the server checks (Worker.
+    // fooding_eligible - no more special-casing employment_type, so dropping fooding later only means
+    // removing this field, not untangling it from employment_type too). Picking Daily wages here defaults
+    // it on, picking anything else defaults it off - just the starting point for this edit, not a rule;
+    // it stays an ordinary checkbox either way, and whatever it's set to when Save is pressed is what's
+    // stored. Opening an existing worker's edit still shows whatever was last saved, not this default.
     const foodingInput = h('input', { type: 'checkbox', checked: !!w.fooding_opt_in });
     const foodingSwitch = h('label', { class: 'switch' },
       foodingInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
+    employmentSel.addEventListener('change', () => { foodingInput.checked = employmentSel.value === 'daily_wages'; });
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);

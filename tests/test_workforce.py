@@ -501,3 +501,22 @@ def test_commission_total_is_zero_for_someone_with_none(app, admin_client):
         wid = worker.id
     data = admin_client.get(f"/api/workforce/{wid}").get_json()["worker"]
     assert data["commission_total"] == 0.0 and data["commissions"] == []
+
+
+# ---------- fooding_opt_in (kohal, 2026-10-18) ----------
+#
+# "this fooding check should be available for all employees" - a plain checkbox on every employee's own
+# Employee management record, same PATCH as every other HR detail; see tests/test_fooding.py for what it
+# actually controls (Worker.fooding_eligible).
+
+def test_fooding_opt_in_defaults_off_and_round_trips(app, admin_client):
+    with app.app_context():
+        wid = make("Fooding Checkbox Test")
+    data = admin_client.get(f"/api/workforce/{wid}").get_json()["worker"]
+    assert data["fooding_opt_in"] is False
+
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Fooding Checkbox Test", "fooding_opt_in": True})
+    assert res.status_code == 200 and res.get_json()["worker"]["fooding_opt_in"] is True
+
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Fooding Checkbox Test", "fooding_opt_in": False})
+    assert res.status_code == 200 and res.get_json()["worker"]["fooding_opt_in"] is False

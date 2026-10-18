@@ -9,19 +9,24 @@ from app.models import FoodingAccount, Worker
 from conftest import make_user, signed_in
 
 
-def daily_wage_worker(name="Deepak Daily", wage_amount=None):
-    worker = Worker(name=name, category="manpower", employment_type="daily_wages", wage_amount=wage_amount)
+def daily_wage_worker(name="Deepak Daily", wage_amount=None, fooding_opt_in=True):
+    """fooding_opt_in defaults True here, same as the Edit form now defaults it the moment Daily wages is
+    picked (kohal, 2026-10-18: "should be automatically on for daily wages") - it's just a default, not an
+    automatic rule any more (see Worker.fooding_eligible), so a test for the "not eligible" case overrides it."""
+    worker = Worker(name=name, category="manpower", employment_type="daily_wages", wage_amount=wage_amount,
+                     fooding_opt_in=fooding_opt_in)
     db.session.add(worker)
     db.session.commit()
     return worker.id
 
 
-def daily_wage_user(app, name="Deepak Daily", pin="285193"):
+def daily_wage_user(app, name="Deepak Daily", pin="285193", fooding_opt_in=True):
     """A signed-in User with a matching daily-wage Worker, linked the way sync_worker_for_user would -
     skips the real /set-pin HTTP flow since only the link matters here, not that flow itself (already
     covered in test_workforce.py)."""
     user = make_user(name, pin=pin)
-    worker = Worker(name=name, category="manpower", employment_type="daily_wages", user_code=user.code)
+    worker = Worker(name=name, category="manpower", employment_type="daily_wages", user_code=user.code,
+                     fooding_opt_in=fooding_opt_in)
     db.session.add(worker)
     db.session.commit()
     return signed_in(app, user), worker.id
@@ -301,6 +306,17 @@ def test_a_daily_wage_worker_with_nothing_allotted_yet_sees_zeroes_not_an_error(
     who, wid = daily_wage_user(app)
     data = who.get("/api/fooding/me").get_json()["fooding"]
     assert data["allotted_total"] == 0.0 and data["remaining"] == 0.0 and data["is_paused"] is False
+
+
+def test_a_daily_wage_worker_switched_off_fooding_is_not_eligible(app, admin_client):
+    """kohal, 2026-10-18: "should be automatically on for daily wages and off for others" is a default, not
+    an automatic rule any more - Worker.fooding_eligible is purely the checkbox (fooding_opt_in), so a
+    daily-wage worker it's explicitly off for is not on the wallet at all, same as anyone else."""
+    who, wid = daily_wage_user(app, fooding_opt_in=False)
+    assert who.get("/fooding").status_code == 403
+    assert who.get("/api/fooding/me").status_code == 403
+    ids = [w["worker_id"] for w in admin_client.get("/api/fooding").get_json()["workers"]]
+    assert wid not in ids
 
 
 # ---------- a salaried employee opting onto fooding (kohal, 2026-10-18) ----------

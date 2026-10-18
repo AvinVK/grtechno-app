@@ -981,10 +981,9 @@ class Worker(db.Model):
     joining_date = db.Column(db.Date, nullable=True)
     employment_type = db.Column(db.String(20), nullable=False, default="", server_default="")   # regular | daily_wages
     wage_amount = db.Column(db.Numeric(14, 2), nullable=True)                  # salary (regular) or daily rate (daily_wages)
-    # A salaried (or contractor) employee opted onto the same ₹200/day fooding wallet a daily-wage worker
-    # already gets automatically (kohal, 2026-10-18: "now there are salaried employees which can be on 200rs
-    # fooding thing... a check mark... named 'fooding?'") - see fooding_eligible below, which is what
-    # everywhere else actually checks, not this column directly.
+    # Whether this person is on the ₹200/day fooding wallet - the same checkbox for everyone (kohal,
+    # 2026-10-18), not just daily-wage workers; see fooding_eligible below, which everywhere else actually
+    # checks (it's just this column, but named for what it means rather than how it's stored).
     fooding_opt_in = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     pf_number = db.Column(EncryptedText, nullable=True)
     esic_number = db.Column(EncryptedText, nullable=True)
@@ -1027,11 +1026,15 @@ class Worker(db.Model):
 
     @property
     def fooding_eligible(self) -> bool:
-        """Whether this person belongs on the fooding wallet at all (kohal, 2026-10-18) - every daily-wage
-        worker automatically, or anyone else who's ticked the opt-in checkbox in their own Employee
-        management record. Everywhere that decides who gets a fooding tile/account/page checks this, not
-        employment_type or fooding_opt_in directly."""
-        return self.employment_type == "daily_wages" or self.fooding_opt_in
+        """Whether this person belongs on the fooding wallet - just the opt-in checkbox (kohal, 2026-10-18:
+        "this fooding check should be available for all employees. should be automatically on for daily
+        wages and off for others. their might be plans to remove the fooding option completely") - the
+        checkbox is the one source of truth, not employment_type, precisely so that removing fooding later
+        only means removing this one field, not also untangling it from employment_type. "Automatically on
+        for daily wages" is a default the Edit form sets when that's picked (see people.js), not a rule
+        enforced here - the admin can still switch it off for a specific daily-wage person, or on for
+        anyone else."""
+        return self.fooding_opt_in
 
     def to_dict(self, detail: bool = False) -> dict:
         data = {
