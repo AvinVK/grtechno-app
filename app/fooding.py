@@ -1,16 +1,18 @@
-"""Fooding: a food allowance for daily-wage employees (kohal, 2026-10-18: "the admin or accountant will
-alot some money to the daily wages employee. 200 rs per day should be deducted daily for food
-automatically unless admin or accountant pauses that feature"). Not a module - nothing here is gated by
+"""Fooding: a food (and now any) allowance (kohal, 2026-10-18: "the admin or accountant will alot some
+money to the daily wages employee. 200 rs per day should be deducted daily for food automatically unless
+admin or accountant pauses that feature"; later the same day: "now there are salaried employees which can
+be on 200rs fooding thing... a check mark... named 'fooding?'"). Not a module - nothing here is gated by
 app/modules.py's check_module, since who may use it isn't a role-level thing (see auth.can_manage_fooding)
-or depends on a personal HR detail (Worker.employment_type == "daily_wages") that cuts across roles, not a
-service every role either has or doesn't.
+or depends on a personal HR detail (Worker.fooding_eligible) that cuts across roles, not a service every
+role either has or doesn't.
 
 Two audiences share one page, /fooding - same shape as /attendance's own team_only split (app/attendance.py):
-- The admin or accountant allots money and pauses/resumes, for every daily-wage worker (kohal, 2026-10-18:
+- The admin or accountant allots money and pauses/resumes, for everyone fooding_eligible (kohal, 2026-10-18:
   "dude, fooding should open its own page!" - this used to only be a block on the Me hub, not a page).
-- A daily-wage worker sees their own balance - allotted, remaining, and the ₹200/day note, or "Paused" -
-  reached from a tile on their own Me hub (kohal: "when they login they should see attendance, wages and
-  fooding") - alongside /wages (see app/wages.py), which exists but has nothing populated in it yet.
+- Someone fooding_eligible sees their own balance - allotted, remaining, and the ₹200/day note, or "Paused"
+  - reached from a tile on their own Me hub, alongside /wages (see app/wages.py), which stays daily-wage
+  only (a salaried person already has their own pay on file; it's only the fooding wallet they can opt
+  onto, not day-rate tracking).
 
 See FoodingAccount in app/models.py for how the running balance is kept current without a scheduled job."""
 
@@ -18,6 +20,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
+from sqlalchemy import or_
 
 from .auth import can_manage_fooding
 from .extensions import db
@@ -45,11 +48,17 @@ def own_worker():
     return Worker.query.filter_by(user_code=g.user.code).first()
 
 
-def _daily_wage_or_404(worker_id):
+def _fooding_eligible_or_404(worker_id):
     worker = db.session.get(Worker, worker_id)
-    if worker is None or worker.employment_type != "daily_wages":
+    if worker is None or not worker.fooding_eligible:
         abort(404)
     return worker
+
+
+def _fooding_eligible_query():
+    """Every Worker who belongs on the fooding wallet - automatically for daily wages, or opted in
+    otherwise (Worker.fooding_eligible); a query, not the Python property, since this drives a list."""
+    return Worker.query.filter(or_(Worker.employment_type == "daily_wages", Worker.fooding_opt_in.is_(True)))
 
 
 def account_for(worker, *, create=False):
@@ -85,16 +94,16 @@ def page():
     if can_manage_fooding(g.user):
         return render_template("fooding.html", page_title="Fooding", mode="manage")
     worker = own_worker()
-    if worker is None or worker.employment_type != "daily_wages":
-        abort(403, "Fooding is only for daily-wage employees.")
+    if worker is None or not worker.fooding_eligible:
+        abort(403, "Fooding is only for daily-wage or fooding-eligible employees.")
     return render_template("fooding.html", page_title="Fooding", mode="own")
 
 
 @bp.get("/api/fooding/me")
 def my_fooding():
     worker = own_worker()
-    if worker is None or worker.employment_type != "daily_wages":
-        abort(403, "Fooding is only for daily-wage employees.")
+    if worker is None or not worker.fooding_eligible:
+        abort(403, "Fooding is only for daily-wage or fooding-eligible employees.")
     account = account_for(worker)
     db.session.commit()
     return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
@@ -133,8 +142,8 @@ def add_my_expense():
     travelling or for any reason... the amount, how was it paid and for what was it used") - capped at
     what's actually left, same as the admin can't approve a stock issue past what's in stock."""
     worker = own_worker()
-    if worker is None or worker.employment_type != "daily_wages":
-        abort(403, "Fooding is only for daily-wage employees.")
+    if worker is None or not worker.fooding_eligible:
+        abort(403, "Fooding is only for daily-wage or fooding-eligible employees.")
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
@@ -157,7 +166,7 @@ def add_my_expense():
 @bp.get("/api/fooding")
 def list_fooding():
     _manage_only()
-    workers = Worker.query.filter_by(employment_type="daily_wages").order_by(Worker.name).all()
+    workers = _fooding_eligible_query().order_by(Worker.name).all()
     accounts = {w.id: account_for(w) for w in workers}
     rows = [accounts[w.id].to_dict() if accounts[w.id] else _empty_dict(w) for w in workers]
     db.session.commit()
@@ -171,7 +180,7 @@ def allot(worker_id):
     balance, it doesn't replace it) - creates the account on the very first allotment. Records how it was
     paid (kohal: "add mode of payment option as well") as its own FoodingEntry, not just a total."""
     _manage_only()
-    worker = _daily_wage_or_404(worker_id)
+    worker = _fooding_eligible_or_404(worker_id)
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
@@ -188,7 +197,7 @@ def allot(worker_id):
 
 def _set_paused(worker_id, paused):
     _manage_only()
-    worker = _daily_wage_or_404(worker_id)
+    worker = _fooding_eligible_or_404(worker_id)
     account = account_for(worker, create=True)
     account.is_paused = paused
     db.session.commit()

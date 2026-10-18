@@ -12,7 +12,7 @@ from . import categories
 from .auth import can_approve_stock_in, can_manage_fooding, visible_clients, visible_leads, visible_projects
 from .constants import OPEN_STAGES
 from .extensions import db
-from .fooding import account_for
+from .fooding import _fooding_eligible_query as fooding_eligible_workers, account_for
 from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest, Worker
 from .modules import has_module, modules_for
 from .timeutil import today_local
@@ -57,24 +57,28 @@ def _extra_tiles():
     something other than a role:
     - the admin or accountant (auth.can_manage_fooding) gets a Fooding tile - a real page, /fooding (kohal:
       "dude, fooding should open its own page!" - it used to only jump to a block further down this one).
-    - a daily-wage worker (Worker.employment_type) gets their own Wages and Fooding tiles, also real pages
-      (see app/wages.py, app/fooding.py) - the same /fooding route, which shows whichever view fits who's
-      signed in (see app/fooding.py's page())."""
+    - someone fooding_eligible (Worker.fooding_eligible - every daily-wage worker automatically, or a
+      salaried/contractor one who's opted in, kohal: "now there are salaried employees which can be on
+      200rs fooding thing") gets their own Fooding tile, a real page (see app/fooding.py).
+    - a daily-wage worker specifically (not just anyone fooding_eligible) also gets a Wages tile (see
+      app/wages.py) - a salaried person already has their pay on file elsewhere, so there's nothing for
+      that placeholder to show them."""
     from .models import settings_for_client
 
     tiles = []
     if can_manage_fooding(g.user):
-        n = Worker.query.filter_by(employment_type="daily_wages").count()
+        n = fooding_eligible_workers().count()
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
-                       "sum": f"{n} daily-wage" if n else None})
+                       "sum": f"{n} on fooding" if n else None})
         return tiles
     worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker and worker.employment_type == "daily_wages":
+        tiles.append({"href": "/wages", "icon": "wages", "name": "Wages", "sum": None})
+    if worker and worker.fooding_eligible:
         account = account_for(worker)
         db.session.commit()       # account_for settles it - persist that, same as the API routes do
         remaining = account.remaining if account else None
         cur = settings_for_client()["currency"]
-        tiles.append({"href": "/wages", "icon": "wages", "name": "Wages", "sum": None})
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{cur}{remaining:.0f} left" if remaining is not None else None})
     return tiles

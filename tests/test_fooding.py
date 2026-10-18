@@ -279,11 +279,11 @@ def test_admin_and_accountant_get_a_fooding_tile_in_the_services_grid(admin_clie
     assert 'href="/fooding"' not in html
 
 
-def test_the_fooding_tile_shows_how_many_daily_wage_employees_there_are(admin_client):
+def test_the_fooding_tile_shows_how_many_are_on_it(admin_client):
     daily_wage_worker()
     daily_wage_worker(name="Second One")
     html = admin_client.get("/me").get_data(as_text=True)
-    assert "2 daily-wage" in html
+    assert "2 on fooding" in html
 
 
 def test_a_paused_daily_wage_worker_sees_paused(app, accounts_client):
@@ -301,6 +301,72 @@ def test_a_daily_wage_worker_with_nothing_allotted_yet_sees_zeroes_not_an_error(
     who, wid = daily_wage_user(app)
     data = who.get("/api/fooding/me").get_json()["fooding"]
     assert data["allotted_total"] == 0.0 and data["remaining"] == 0.0 and data["is_paused"] is False
+
+
+# ---------- a salaried employee opting onto fooding (kohal, 2026-10-18) ----------
+#
+# "now there are salaried employees which can be on 200rs fooding thing. for this, give a check mark in
+# employee details form after salary thing named 'fooding?'. ye selected yes, then it should show on
+# fooding tab and shld foloow that same life."
+
+def salaried_user(app, name="Sita Salaried", opt_in=False, pin="285193"):
+    user = make_user(name, pin=pin)
+    worker = Worker(name=name, category="staff", employment_type="regular", user_code=user.code,
+                     fooding_opt_in=opt_in)
+    db.session.add(worker)
+    db.session.commit()
+    return signed_in(app, user), worker.id
+
+
+def test_a_salaried_worker_is_not_fooding_eligible_by_default(app, admin_client):
+    who, wid = salaried_user(app, opt_in=False)
+    assert who.get("/fooding").status_code == 403
+    ids = [w["worker_id"] for w in admin_client.get("/api/fooding").get_json()["workers"]]
+    assert wid not in ids
+
+
+def test_ticking_fooding_opt_in_in_employee_management_makes_them_eligible(app, admin_client, accounts_client):
+    who, wid = salaried_user(app, opt_in=False)
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Sita Salaried", "fooding_opt_in": True})
+    assert res.status_code == 200 and res.get_json()["worker"]["fooding_opt_in"] is True
+
+    assert who.get("/fooding").status_code == 200
+    ids = [w["worker_id"] for w in admin_client.get("/api/fooding").get_json()["workers"]]
+    assert wid in ids
+
+    # same life as a daily-wage worker from here: allot, see it, pause, expense
+    accounts_client.post(f"/api/fooding/{wid}/allot", json={"amount": "900", "payment_mode": "Cash"})
+    data = who.get("/api/fooding/me").get_json()["fooding"]
+    assert data["allotted_total"] == 900.0 and data["remaining"] == 900.0
+
+    accounts_client.post(f"/api/fooding/{wid}/pause")
+    assert who.get("/api/fooding/me").get_json()["fooding"]["is_paused"] is True
+    accounts_client.post(f"/api/fooding/{wid}/resume")
+
+    res = who.post("/api/fooding/me/expenses", json={"amount": "200", "payment_mode": "Online/UPI", "purpose": "Travel"})
+    assert res.status_code == 201 and res.get_json()["fooding"]["remaining"] == 700.0
+
+
+def test_unticking_fooding_opt_in_removes_eligibility_again(app, admin_client):
+    who, wid = salaried_user(app, opt_in=True)
+    assert who.get("/fooding").status_code == 200
+    admin_client.patch(f"/api/workforce/{wid}", json={"name": "Sita Salaried", "fooding_opt_in": False})
+    assert who.get("/fooding").status_code == 403
+
+
+def test_a_salaried_worker_doesnt_get_a_wages_tile_just_from_opting_into_fooding(app):
+    """Wages stays daily-wage only (kohal's framing: it's the fooding wallet, not day-rate tracking, that
+    a salaried person opts into) - they still get the Fooding tile."""
+    who, wid = salaried_user(app, opt_in=True)
+    html = who.get("/me").get_data(as_text=True)
+    assert "Fooding</span>" in html and "Wages</span>" not in html
+
+
+def test_admin_fooding_list_includes_both_daily_wage_and_opted_in_salaried(app, admin_client):
+    _, dw_wid = daily_wage_user(app, name="Deepak Daily2")
+    _, sal_wid = salaried_user(app, name="Sita Salaried2", opt_in=True)
+    ids = [w["worker_id"] for w in admin_client.get("/api/fooding").get_json()["workers"]]
+    assert dw_wid in ids and sal_wid in ids
 
 
 # ---------- Wages (placeholder) ----------

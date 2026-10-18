@@ -340,6 +340,12 @@ def _employee_fields(payload):
                 else:
                     data["wage_amount"] = amount
 
+    # Fooding opt-in (kohal, 2026-10-18: "now there are salaried employees which can be on 200rs fooding
+    # thing... a check mark... named 'fooding?'") - a daily-wage employee is already eligible regardless of
+    # this (see Worker.fooding_eligible); this is purely the switch for anyone else.
+    if "fooding_opt_in" in payload:
+        data["fooding_opt_in"] = bool(payload["fooding_opt_in"])
+
     return data, errors
 
 

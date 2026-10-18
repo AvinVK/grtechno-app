@@ -981,6 +981,11 @@ class Worker(db.Model):
     joining_date = db.Column(db.Date, nullable=True)
     employment_type = db.Column(db.String(20), nullable=False, default="", server_default="")   # regular | daily_wages
     wage_amount = db.Column(db.Numeric(14, 2), nullable=True)                  # salary (regular) or daily rate (daily_wages)
+    # A salaried (or contractor) employee opted onto the same ₹200/day fooding wallet a daily-wage worker
+    # already gets automatically (kohal, 2026-10-18: "now there are salaried employees which can be on 200rs
+    # fooding thing... a check mark... named 'fooding?'") - see fooding_eligible below, which is what
+    # everywhere else actually checks, not this column directly.
+    fooding_opt_in = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     pf_number = db.Column(EncryptedText, nullable=True)
     esic_number = db.Column(EncryptedText, nullable=True)
     reference = db.Column(db.String(200), nullable=False, default="", server_default="")
@@ -1020,6 +1025,14 @@ class Worker(db.Model):
         management for the Project manager Chandrapur role; see ProjectExpense."""
         return sum((c.amount for c in self.commissions if c.kind == "commission"), Decimal(0))
 
+    @property
+    def fooding_eligible(self) -> bool:
+        """Whether this person belongs on the fooding wallet at all (kohal, 2026-10-18) - every daily-wage
+        worker automatically, or anyone else who's ticked the opt-in checkbox in their own Employee
+        management record. Everywhere that decides who gets a fooding tile/account/page checks this, not
+        employment_type or fooding_opt_in directly."""
+        return self.employment_type == "daily_wages" or self.fooding_opt_in
+
     def to_dict(self, detail: bool = False) -> dict:
         data = {
             "id": self.id, "name": self.name, "category": self.category, "source": self.source,
@@ -1034,6 +1047,7 @@ class Worker(db.Model):
                 "joining_date": self.joining_date.isoformat() if self.joining_date else None,
                 "employment_type": self.employment_type,
                 "wage_amount": float(self.wage_amount) if self.wage_amount is not None else None,
+                "fooding_opt_in": self.fooding_opt_in,
                 "pf_number": self.pf_number, "esic_number": self.esic_number, "reference": self.reference,
                 "paid_amount": float(self.paid_amount),
                 "payments": [p.to_dict() for p in self.payments],

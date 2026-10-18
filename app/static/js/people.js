@@ -362,6 +362,14 @@
     employmentSel.addEventListener('change', updateWageField);
     updateWageField();
 
+    // Fooding (kohal, 2026-10-18: "now there are salaried employees which can be on 200rs fooding thing...
+    // give a check mark in employee details form after salary thing named 'fooding?'") - every daily-wage
+    // employee is already on it automatically (Worker.fooding_eligible, server-side); this is the opt-in
+    // for anyone else, same ₹200/day life once it's on (see /fooding).
+    const foodingInput = h('input', { type: 'checkbox', checked: !!w.fooding_opt_in });
+    const foodingSwitch = h('label', { class: 'switch' },
+      foodingInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
+
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);
     const form = h('form', { novalidate: true, class: 'project-form',
@@ -390,8 +398,8 @@
             name: nameInput.value, role_key: roleSel.value || UNASSIGNED, age: ageInput.value,
             qualification: qualificationInput.value, experience: experienceInput.value, skills: skillsInput.value,
             phone: phoneInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
-            wage_amount: wageInput.value === '' ? null : wageInput.value, pf_number: pfInput.value,
-            esic_number: esicInput.value, reference: referenceInput.value,
+            wage_amount: wageInput.value === '' ? null : wageInput.value, fooding_opt_in: foodingInput.checked,
+            pf_number: pfInput.value, esic_number: esicInput.value, reference: referenceInput.value,
           });
           close();
         } catch (err) {
@@ -413,6 +421,7 @@
         field('joining_date', 'Joining date', joiningInput),
         field('employment_type', 'Salary, daily wages, or contractor', employmentSel),
         wageField,
+        h('div', { class: 'toggle-row wide' }, h('span', {}, 'Fooding?'), foodingSwitch),
         field('pf_number', 'PF number', pfInput),
         field('esic_number', 'ESIC number', esicInput),
         field('reference', 'Reference', referenceInput, { wide: true })),
