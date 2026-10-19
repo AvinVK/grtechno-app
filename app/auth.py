@@ -1,7 +1,7 @@
 import hmac
 import re
 import secrets
-from datetime import timedelta
+from datetime import time, timedelta
 
 from flask import (
     Blueprint,
@@ -22,6 +22,7 @@ from .constants import CHANDRAPUR_DISTRICT, COMMISSION_ROLE_KEY
 from .extensions import db
 from .models import Attendance, Client, Lead, Project, Role, User, Worker, utcnow
 from .modules import has_module
+from .timeutil import to_local
 
 bp = Blueprint("auth", __name__)
 
@@ -241,7 +242,48 @@ def can_manage_fooding(user) -> bool:
     return user.is_admin or user.role_key == "accounts"
 
 
-def can_approve_attendance(user, project) -> bool:
+# A daily-wage worker's shift rules (kohal, 2026-10-19: "checkedin after this [7-7.30] then only Admin can
+# approve", "checkout after 7.00 pm", "Multiple check in and check out approved by project manager only") -
+# nobody else's attendance is held to these; a salaried/contractor check-in or office/marketing work follows
+# the normal rule further down no matter what time it happens.
+LATE_CHECKIN_CUTOFF = time(7, 30)
+EARLY_CHECKOUT_CUTOFF = time(19, 0)
+
+
+def _is_daily_wage(user) -> bool:
+    worker = Worker.query.filter_by(user_code=user.code).first()
+    return worker is not None and worker.employment_type == "daily_wages"
+
+
+def attendance_restriction(user, project, check_in_at, *, exclude_id=None):
+    """None, or why this session needs a stricter approver than can_approve_attendance's normal rule - only
+    for a daily-wage worker's own session:
+    - 'late': checked in after 7:30am - only the admin can approve it, not Company Director, a project
+      manager, or a site supervisor either.
+    - 'multi_project': a second (or later) session that day against a different project than an earlier one
+      that same day - the admin, Company Director, or a project manager who can see that project, but not a
+      site supervisor (kohal: "multiple check in and check out approved by project manager only").
+    An early checkout (after EARLY_CHECKOUT_CUTOFF) deliberately isn't one of these - kohal, 2026-10-19,
+    chose to leave that one on the normal approver list rather than narrow it too.
+
+    Recomputed from the row's own data every time (check_in_at, project, and that day's other sessions),
+    never stored, so it can't drift from what actually happened later. exclude_id leaves the row itself out
+    of "that day's other sessions" when re-checking an existing record, which would otherwise always find
+    itself."""
+    if not _is_daily_wage(user):
+        return None
+    if to_local(check_in_at).time() > LATE_CHECKIN_CUTOFF:
+        return "late"
+    same_day = Attendance.query.filter_by(user_code=user.code, work_date=to_local(check_in_at).date())
+    if exclude_id is not None:
+        same_day = same_day.filter(Attendance.id != exclude_id)
+    project_id = project.id if project else None
+    if any(a.project_id != project_id for a in same_day.all()):
+        return "multi_project"
+    return None
+
+
+def can_approve_attendance(user, project, restriction=None) -> bool:
     """A check-in/check-out record (kohal, 2026-10-16: "Attendance should be approved by project manager or
     site supervisor who is checked in on tha project"): the admin or Company Director always - the universal
     fallback, since office/marketing work has no project to approve against, and a site supervisor can't
@@ -249,7 +291,19 @@ def can_approve_attendance(user, project) -> bool:
     can actually see - visible_projects() already narrows this to the Chandrapur district, plus anything
     personally owned/managed, for Project manager Chandrapur specifically; kohal, 2026-10-19: "pm chandrapur
     should only be getting ... attendance approvals only for the projects which he has access to"), or a
-    site supervisor currently checked into that exact project right now."""
+    site supervisor currently checked into that exact project right now.
+
+    `restriction` (see attendance_restriction) narrows that for a daily-wage worker's exception cases: 'late'
+    means only the admin, 'multi_project' means the admin, Company Director, or an actual project manager -
+    never a site supervisor either way. Leave it out (the default) for the normal rule above."""
+    if restriction == "late":
+        return user.is_admin
+    if restriction == "multi_project":
+        if user.is_admin or user.role_key == "company_director":
+            return True
+        if project is None:
+            return False
+        return user.role_key in PROJECT_MANAGER_ROLE_KEYS and visible_projects(user).filter(Project.id == project.id).first() is not None
     if user.is_admin or user.role_key == "company_director":
         return True
     if project is None:

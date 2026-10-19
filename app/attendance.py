@@ -10,10 +10,18 @@ from datetime import date
 from flask import Blueprint, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
-from .auth import can_approve_attendance, visible_attendance
+from .auth import (
+    EARLY_CHECKOUT_CUTOFF,
+    PROJECT_MANAGER_ROLE_KEYS,
+    attendance_restriction,
+    can_approve_attendance,
+    visible_attendance,
+    _is_daily_wage,
+)
 from .extensions import db
-from .models import Attendance, Project, User, utcnow
+from .models import AbsenceRequest, Attendance, Project, User, utcnow
 from .modules import check_module
+from .timeutil import today_local, to_local
 from .validation import Fields, api_errors
 
 bp = Blueprint("attendance", __name__)
@@ -89,6 +97,9 @@ def state():
         history=[a.to_dict() for a in history],
         can_see_team=g.user.sees_all,
         location_required=current_app.config["REQUIRE_ATTENDANCE_LOCATION"],
+        can_mark_absent=_is_daily_wage(g.user),
+        my_absences=[a.to_dict() for a in AbsenceRequest.query.filter_by(user_code=g.user.code)
+                     .order_by(AbsenceRequest.for_date.desc()).limit(10).all()],
     )
 
 
@@ -125,10 +136,12 @@ def check_in():
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
-    approved = can_approve_attendance(g.user, project)
+    check_in_at = utcnow()
+    restriction = attendance_restriction(g.user, project, check_in_at)
+    approved = can_approve_attendance(g.user, project, restriction)
     row = Attendance(
         user_code=g.user.code, work_date=date.today(), project_id=project.id if project else None,
-        check_in_at=utcnow(), check_in_lat=lat, check_in_lng=lng, notes=f.data.get("notes", ""),
+        check_in_at=check_in_at, check_in_lat=lat, check_in_lng=lng, notes=f.data.get("notes", ""),
         work_kind="marketing" if work == "marketing" and project is None else "",
         status="approved" if approved else "pending",
         approved_by_code=g.user.code if approved else None,
@@ -146,6 +159,14 @@ def check_out():
     if row is None:
         return jsonify(error="You are not checked in."), 409
     row.check_out_at = utcnow()
+    # An early checkout, for a daily-wage worker, needs its own sign-off even if the check-in itself was
+    # already approved (kohal, 2026-10-19: "Early checkout approval required of project manager") - back to
+    # pending, same approvers as any other pending record (not narrowed further, unlike a late check-in or a
+    # different-project session - see auth.attendance_restriction).
+    if _is_daily_wage(g.user) and to_local(row.check_out_at).time() < EARLY_CHECKOUT_CUTOFF:
+        row.status = "pending"
+        row.approved_by_code = None
+        row.approved_at = None
     db.session.commit()
     return jsonify(today=row.to_dict())
 
@@ -164,13 +185,24 @@ def delete_record(record_id):
     return "", 204
 
 
+def _restriction_dict(a):
+    """a.to_dict() plus why it needs a stricter approver, if it does (auth.attendance_restriction) - 'late'
+    or 'multi_project', so the approvals list can say so instead of leaving it a mystery."""
+    d = a.to_dict()
+    d["restriction"] = attendance_restriction(a.user, a.project, a.check_in_at, exclude_id=a.id)
+    return d
+
+
 @bp.get("/api/attendance/approvals")
 def approvals():
     """Pending attendance records the signed-in person can act on right now (see auth.can_approve_attendance)
     - a project manager, a site supervisor currently checked in somewhere, the admin, or Company Director.
     Same shape as /api/me/material-approvals, which pulls from here too for the Me hub's own section."""
     pending = Attendance.query.filter_by(status="pending").order_by(Attendance.created_at).all()
-    return jsonify(approvals=[a.to_dict() for a in pending if can_approve_attendance(g.user, a.project)])
+    return jsonify(approvals=[
+        _restriction_dict(a) for a in pending
+        if can_approve_attendance(g.user, a.project, attendance_restriction(a.user, a.project, a.check_in_at, exclude_id=a.id))
+    ])
 
 
 def _approve_or_reject(record_id, status):
@@ -179,7 +211,8 @@ def _approve_or_reject(record_id, status):
         abort(404)
     if row.status != "pending":
         abort(409, "This record isn't waiting for approval.")
-    if not can_approve_attendance(g.user, row.project):
+    restriction = attendance_restriction(row.user, row.project, row.check_in_at, exclude_id=row.id)
+    if not can_approve_attendance(g.user, row.project, restriction):
         abort(403, "Only this project's manager, a site supervisor currently checked in there, the admin or Company Director can act on this.")
     row.status = status
     row.approved_by_code = g.user.code
@@ -217,3 +250,80 @@ def team():
         records=[a.to_dict() for a in rows],
         users=[{"code": u.code, "name": u.name} for u in User.query.filter_by(is_active=True).order_by(User.name)],
     )
+
+
+# ---------- absence notices (kohal, 2026-10-19) ----------
+#
+# "For absent provide option within check in tab ... Absent should be inform 1 day before" - a daily-wage
+# worker saying, ahead of time, that they won't be in on a future day. Never becomes an Attendance row
+# itself (see AbsenceRequest's own docstring) - it's a separate heads-up, waiting for the admin or a project
+# manager (company-wide; there's no project to scope this to, since it's not against any one site) to see
+# and acknowledge.
+
+def _can_see_absences(user) -> bool:
+    return user.is_admin or user.role_key in PROJECT_MANAGER_ROLE_KEYS
+
+
+@bp.get("/api/attendance/absences")
+def list_absences():
+    if not _can_see_absences(g.user):
+        abort(403, "Only the admin or a project manager can see absence notices.")
+    pending = AbsenceRequest.query.filter_by(status="pending").order_by(AbsenceRequest.for_date).all()
+    return jsonify(absences=[a.to_dict() for a in pending])
+
+
+@bp.post("/api/attendance/absences")
+def request_absence():
+    if not _is_daily_wage(g.user):
+        abort(403, "Only a daily-wage worker can mark themselves absent here.")
+    payload = request.get_json(silent=True) if request.is_json else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    f = Fields(payload)
+    f.text("reason", 200)
+    errors = f.errors
+
+    for_date = None
+    try:
+        for_date = date.fromisoformat(str(payload.get("for_date")))
+    except (TypeError, ValueError):
+        errors["for_date"] = "Give a date as YYYY-MM-DD"
+    if for_date is not None and for_date <= today_local():
+        errors["for_date"] = "Let them know at least a day ahead"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+
+    exists = (AbsenceRequest.query.filter_by(user_code=g.user.code, for_date=for_date)
+              .filter(AbsenceRequest.status != "rejected").first())
+    if exists is not None:
+        return jsonify(error="You've already let them know about that day."), 409
+
+    row = AbsenceRequest(user_code=g.user.code, for_date=for_date, reason=f.data.get("reason", ""))
+    db.session.add(row)
+    db.session.commit()
+    return jsonify(absence=row.to_dict()), 201
+
+
+def _decide_absence(record_id, status):
+    if not _can_see_absences(g.user):
+        abort(403, "Only the admin or a project manager can act on this.")
+    row = db.session.get(AbsenceRequest, record_id)
+    if row is None:
+        abort(404)
+    if row.status != "pending":
+        abort(409, "This one has already been dealt with.")
+    row.status = status
+    row.decided_by_code = g.user.code
+    row.decided_at = utcnow()
+    db.session.commit()
+    return jsonify(absence=row.to_dict())
+
+
+@bp.post("/api/attendance/absences/<int:record_id>/approve")
+def approve_absence(record_id):
+    return _decide_absence(record_id, "approved")
+
+
+@bp.post("/api/attendance/absences/<int:record_id>/reject")
+def reject_absence(record_id):
+    return _decide_absence(record_id, "rejected")

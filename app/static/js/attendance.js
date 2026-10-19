@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, dateField, pickList } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField, pickList, field, closeOnBack } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
@@ -193,6 +193,55 @@
     return weeks;
   }
 
+  /* ---------- marking yourself absent ahead of time (kohal, 2026-10-19: "For absent provide option within
+     check in tab ... Absent should be inform 1 day before") - daily-wage workers only (can_mark_absent),
+     same shape as a pending check-in: waits for the admin or a project manager to see it (not tied to any
+     one project - see app/attendance.py's absence routes). ---------- */
+
+  function absenceStatusChip(status) {
+    if (status === 'pending') return h('span', { class: 'chip chip-today' }, 'Pending');
+    if (status === 'rejected') return h('span', { class: 'chip chip-off' }, 'Rejected');
+    return h('span', { class: 'chip chip-active' }, 'Noted');
+  }
+
+  function absenceRow(a) {
+    return h('li', { class: 'att-day' },
+      h('div', { class: 'att-day-top' }, h('span', { class: 'att-day-date' }, shortDate(parseDay(a.for_date))), absenceStatusChip(a.status)),
+      a.reason ? h('span', { class: 'att-day-sub' }, a.reason) : null);
+  }
+
+  function openAbsenceSheet(onDone) {
+    const tomorrowIso = dayKey(addDays(new Date(), 1));
+    const dateInput = dateField(tomorrowIso, { clearable: false });
+    const reasonInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off', placeholder: 'e.g. Family function' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Mark absent');
+    const finish = closeOnBack(() => overlay.remove());
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api('/api/attendance/absences', { method: 'POST', body: { for_date: dateInput.value, reason: reasonInput.value } });
+        finish();
+        toast('Thanks for letting them know');
+        onDone();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, 'Mark yourself absent'),
+      field('for_date', 'Which day', dateInput),
+      field('reason', 'Reason (optional)', reasonInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+  }
+
   /* ---------- today's timeline ---------- */
 
   // The same check the bottom nav's "Won / Lost" item draws.
@@ -238,11 +287,23 @@
     setTeamLink(data.can_see_team);
 
     const cardBox = h('div', {});
+    const absenceBox = h('div', {});
     const historyBox = h('div', {});
     const barBox = h('div', {});
 
     function renderHistory() {
       clear(historyBox).append(...historyWeeks(data.history, data.can_see_team ? reload : null));
+    }
+
+    function renderAbsence() {
+      if (!data.can_mark_absent) { clear(absenceBox); return; }
+      const markBtn = h('button', { class: 'btn small', type: 'button' }, 'Mark myself absent');
+      markBtn.onclick = () => openAbsenceSheet(reload);
+      clear(absenceBox).append(h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' }, h('h3', {}, 'Absence notices'), markBtn),
+        data.my_absences.length
+          ? h('ul', { class: 'att-week-card' }, data.my_absences.map(absenceRow))
+          : h('p', { class: 'hint' }, "Letting them know a day ahead you won't be in - at least a day before.")));
     }
 
     /* Check-in and check-out both change today's row and add (or change) it in the history right below it,
@@ -251,6 +312,7 @@
       try {
         data = await api('/api/attendance/state');
         renderCard();
+        renderAbsence();
         renderHistory();
       } catch (err) {
         toast(err.message, true);
@@ -314,6 +376,7 @@
       if (bar) barBox.append(bar);
     }
     renderCard();
+    renderAbsence();
     renderHistory();
 
     clear(view).append(h('div', {},
@@ -321,6 +384,7 @@
         h('h2', {}, 'Today'),
         h('span', { class: 'att-head-date' }, shortDate(new Date()))),
       cardBox,
+      absenceBox,
       historyBox,
       barBox));
   }

@@ -51,6 +51,14 @@
     <div id="me-attendance-approvals-list" class="card-group me-rows"></div>
   </section>
 
+  {# A daily-wage worker telling the office ahead of time they won't be in (kohal, 2026-10-19: "Absent
+     should be inform 1 day before ... alert should be given to admin and project manager") - the admin or
+     a project manager, same as app/attendance.py's own _can_see_absences. Nothing to do with a project. #}
+  <section class="me-section" id="me-absence-requests" aria-labelledby="me-absence-requests-h" hidden>
+    <div class="me-section-head"><h2 id="me-absence-requests-h">Pending approvals</h2><span class="chip chip-role">Absence</span></div>
+    <div id="me-absence-requests-list" class="card-group me-rows"></div>
+  </section>
+
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}
   {% if current_user.is_admin %}
   <section class="me-section" id="me-approvals" aria-labelledby="me-approvals-h" hidden>

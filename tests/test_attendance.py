@@ -1,7 +1,7 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.extensions import db
-from app.models import Attendance, Client, Project, utcnow
+from app.models import AbsenceRequest, Attendance, Client, Project, Worker, utcnow
 
 from conftest import make_user, signed_in
 
@@ -20,6 +20,16 @@ def make_project(title="Sprinkler install"):
     db.session.add(project)
     db.session.commit()
     return project
+
+
+def daily_wage_user(app, name="Deepak Daily", pin="285193"):
+    """A signed-in User with a matching daily-wage Worker (see auth._is_daily_wage) - only this employment
+    type is held to the shift rules below (kohal, 2026-10-19)."""
+    user = make_user(name, pin=pin)
+    worker = Worker(name=name, category="manpower", employment_type="daily_wages", user_code=user.code)
+    db.session.add(worker)
+    db.session.commit()
+    return signed_in(app, user), user
 
 
 # ---------- everyone can open it ----------
@@ -371,6 +381,220 @@ def test_a_pending_day_is_excluded_from_the_weekly_count(app, client, user):
         db.session.commit()
     html = client.get("/me").get_data(as_text=True)
     assert "1 day this week" in html
+
+
+# ---------- a daily-wage worker's shift rules (kohal, 2026-10-19: "checkedin after this [7-7.30] then only
+# Admin can approve", "checkout after 7.00 pm", "Multiple check in and check out approved by project
+# manager only") - nobody else's attendance is held to these; see auth.attendance_restriction. ----------
+
+def test_a_salaried_workers_late_checkin_is_unaffected(app):
+    """The whole point of scoping this to daily wages (kohal: confirmed "Daily-wage workers only") - a
+    regular/contractor check-in at any hour follows the ordinary rule, same as before this existed."""
+    with app.app_context():
+        pid = make_project().id
+    manager = make_user("Priya Manager", role="project_manager")
+    worker_user = make_user("Office Omkar")
+    worker_client = signed_in(app, worker_user)
+    record_id = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]["id"]
+    with app.app_context():
+        row = db.session.get(Attendance, record_id)
+        row.check_in_at = datetime(2026, 10, 19, 4, 0)       # 4:00 UTC = 9:30am IST - "late" if it mattered
+        db.session.commit()
+    pm_client = signed_in(app, manager)
+    assert pm_client.post(f"/api/attendance/{record_id}/approve").status_code == 200
+
+
+def test_a_late_daily_wage_checkin_can_only_be_approved_by_the_admin(app, admin_client):
+    with app.app_context():
+        pid = make_project().id
+    worker_client, worker_user = daily_wage_user(app)
+    record_id = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]["id"]
+    with app.app_context():
+        row = db.session.get(Attendance, record_id)
+        row.check_in_at = datetime(2026, 10, 19, 3, 0)       # 3:00 UTC = 8:30am IST - after the 7:30 cutoff
+        db.session.commit()
+
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    director = signed_in(app, make_user("Dilip Director", role="company_director"))
+    assert pm_client.post(f"/api/attendance/{record_id}/approve").status_code == 403
+    assert director.post(f"/api/attendance/{record_id}/approve").status_code == 403    # admin-only, not even Company Director
+
+    res = admin_client.post(f"/api/attendance/{record_id}/approve")
+    assert res.status_code == 200 and res.get_json()["record"]["status"] == "approved"
+
+
+def test_an_on_time_daily_wage_checkin_follows_the_normal_rule(app):
+    """7:00-7:30am is on time - the project's own manager can approve it immediately, same as anyone else's
+    on-time check-in against their project."""
+    with app.app_context():
+        pid = make_project().id
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    worker_client, worker_user = daily_wage_user(app)
+    record_id = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]["id"]
+    with app.app_context():
+        row = db.session.get(Attendance, record_id)
+        row.check_in_at = datetime(2026, 10, 19, 1, 45)      # 1:45 UTC = 7:15am IST
+        db.session.commit()
+    assert pm_client.post(f"/api/attendance/{record_id}/approve").status_code == 200
+
+
+def _check_in_at_a_safe_on_time_hour(record_id):
+    """Pins a session's check_in_at to 7:15am IST - on time regardless of whatever the real clock reads
+    when the test happens to run - so only the thing each test actually varies (the checkout time, or a
+    second session's project) decides the outcome."""
+    row = db.session.get(Attendance, record_id)
+    row.check_in_at = datetime(2026, 10, 19, 1, 45)
+    db.session.commit()
+
+
+def test_an_early_checkout_sends_an_already_approved_session_back_to_pending(app, monkeypatch):
+    with app.app_context():
+        pid = make_project().id
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    worker_client, worker_user = daily_wage_user(app)
+    record_id = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]["id"]
+    with app.app_context():
+        _check_in_at_a_safe_on_time_hour(record_id)
+    assert pm_client.post(f"/api/attendance/{record_id}/approve").status_code == 200
+
+    # Stamp the checkout itself at 5:30pm IST (12:00 UTC) - before the 7pm cutoff - instead of relying on
+    # whatever the real clock happens to read when this test runs.
+    monkeypatch.setattr("app.attendance.utcnow", lambda: datetime(2026, 10, 19, 12, 0))
+    out = worker_client.post("/api/attendance/check-out").get_json()["today"]
+    assert out["status"] == "pending" and out["approved_by_name"] is None
+
+    res = pm_client.get("/api/attendance/approvals").get_json()
+    assert any(r["id"] == record_id and r["status"] == "pending" for r in res["approvals"])
+
+
+def test_a_checkout_at_or_after_7pm_does_not_revert_an_approved_session(app, monkeypatch):
+    with app.app_context():
+        pid = make_project().id
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    worker_client, worker_user = daily_wage_user(app)
+    record_id = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]["id"]
+    with app.app_context():
+        _check_in_at_a_safe_on_time_hour(record_id)
+    assert pm_client.post(f"/api/attendance/{record_id}/approve").status_code == 200
+
+    monkeypatch.setattr("app.attendance.utcnow", lambda: datetime(2026, 10, 19, 13, 31))   # 7:01pm IST
+    out = worker_client.post("/api/attendance/check-out").get_json()["today"]
+    assert out["status"] == "approved" and out["approved_by_name"] == "Priya Manager"
+
+
+def test_a_second_session_against_a_different_project_needs_a_project_manager_not_a_site_supervisor(app, monkeypatch):
+    with app.app_context():
+        pid_a = make_project("Site A").id
+        pid_b = make_project("Site B").id
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    supervisor = make_user("Site Sam", role="supervisor")
+    sup_client = signed_in(app, supervisor)
+    worker_client, worker_user = daily_wage_user(app)
+
+    # Both sessions pinned to a safely on-time hour - only which project they're against is what this test
+    # varies; otherwise whichever real hour happens to be on the clock when this test runs could make the
+    # first session "late" instead (admin-only) and break the asserts below for an unrelated reason.
+    monkeypatch.setattr("app.attendance.utcnow", lambda: datetime(2026, 10, 19, 1, 45))    # 7:15am IST
+    first = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid_a}).get_json()["today"]
+    assert pm_client.post(f"/api/attendance/{first['id']}/approve").status_code == 200
+    worker_client.post("/api/attendance/check-out")
+
+    monkeypatch.setattr("app.attendance.utcnow", lambda: datetime(2026, 10, 19, 1, 50))    # 7:20am IST
+    second = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid_b}).get_json()["today"]
+    assert second["status"] == "pending"
+
+    # The site supervisor is currently checked in on project B themselves - normally enough to approve an
+    # on-time session there - but this one is the worker's 2nd+ session against a different project than
+    # their first that day, so it's narrowed to a project manager (or admin) only.
+    sup_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid_b})
+    assert sup_client.post(f"/api/attendance/{second['id']}/approve").status_code == 403
+    assert pm_client.post(f"/api/attendance/{second['id']}/approve").status_code == 200
+
+
+def test_a_second_session_against_the_same_project_follows_the_normal_rule(app, monkeypatch):
+    """Only a *different* project triggers the narrower rule - lunch and back to the same site doesn't."""
+    with app.app_context():
+        pid = make_project().id
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    worker_client, worker_user = daily_wage_user(app)
+
+    monkeypatch.setattr("app.attendance.utcnow", lambda: datetime(2026, 10, 19, 1, 45))    # 7:15am IST
+    first = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]
+    pm_client.post(f"/api/attendance/{first['id']}/approve")
+    worker_client.post("/api/attendance/check-out")
+
+    monkeypatch.setattr("app.attendance.utcnow", lambda: datetime(2026, 10, 19, 1, 50))    # 7:20am IST
+    second = worker_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid}).get_json()["today"]
+    assert second["status"] == "pending"
+    assert pm_client.post(f"/api/attendance/{second['id']}/approve").status_code == 200
+
+
+# ---------- marking yourself absent ahead of time (kohal, 2026-10-19: "For absent provide option within
+# check in tab ... Absent should be inform 1 day before") ----------
+
+def test_a_daily_wage_worker_can_mark_an_absence_for_a_future_day(app):
+    worker_client, worker_user = daily_wage_user(app)
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    res = worker_client.post("/api/attendance/absences", json={"for_date": tomorrow, "reason": "Family function"})
+    assert res.status_code == 201
+    body = res.get_json()["absence"]
+    assert body["status"] == "pending" and body["reason"] == "Family function"
+
+
+def test_absence_must_be_at_least_a_day_ahead(app):
+    worker_client, worker_user = daily_wage_user(app)
+    today = date.today().isoformat()
+    res = worker_client.post("/api/attendance/absences", json={"for_date": today})
+    assert res.status_code == 422 and "for_date" in res.get_json()["fields"]
+
+
+def test_only_a_daily_wage_worker_can_request_an_absence(client):
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    res = client.post("/api/attendance/absences", json={"for_date": tomorrow})
+    assert res.status_code == 403
+
+
+def test_duplicate_pending_absence_for_the_same_day_is_rejected(app):
+    worker_client, worker_user = daily_wage_user(app)
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    worker_client.post("/api/attendance/absences", json={"for_date": tomorrow})
+    res = worker_client.post("/api/attendance/absences", json={"for_date": tomorrow})
+    assert res.status_code == 409
+
+
+def test_admin_and_project_manager_see_and_can_act_on_a_pending_absence(app, admin_client):
+    worker_client, worker_user = daily_wage_user(app)
+    manager = make_user("Priya Manager", role="project_manager")
+    pm_client = signed_in(app, manager)
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    record_id = worker_client.post("/api/attendance/absences", json={"for_date": tomorrow}).get_json()["absence"]["id"]
+
+    assert admin_client.get("/api/attendance/absences").get_json()["absences"][0]["id"] == record_id
+    assert pm_client.get("/api/attendance/absences").get_json()["absences"][0]["id"] == record_id
+
+    res = pm_client.post(f"/api/attendance/absences/{record_id}/approve")
+    assert res.status_code == 200 and res.get_json()["absence"]["status"] == "approved"
+    assert pm_client.post(f"/api/attendance/absences/{record_id}/approve").status_code == 409
+
+
+def test_someone_without_approval_rights_cannot_see_or_act_on_absences(app, client):
+    worker_client, worker_user = daily_wage_user(app)
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    record_id = worker_client.post("/api/attendance/absences", json={"for_date": tomorrow}).get_json()["absence"]["id"]
+    assert client.get("/api/attendance/absences").status_code == 403
+    assert client.post(f"/api/attendance/absences/{record_id}/approve").status_code == 403
+
+
+def test_state_reports_whether_this_person_can_mark_absent(app, client):
+    worker_client, worker_user = daily_wage_user(app)
+    assert client.get("/api/attendance/state").get_json()["can_mark_absent"] is False
+    assert worker_client.get("/api/attendance/state").get_json()["can_mark_absent"] is True
 
 
 def test_attendance_approvals_lists_only_what_this_person_can_act_on(app, client):

@@ -945,6 +945,40 @@ class Attendance(db.Model):
         }
 
 
+class AbsenceRequest(db.Model):
+    """A daily-wage worker telling the office they won't be in on a future day, from the check-in tab
+    itself (kohal, 2026-10-19: "For absent provide option within check in tab ... Absent should be inform 1
+    day before") - a heads-up that waits for the admin or a project manager to see and act on, same shape as
+    a pending Attendance record, but it's never turned into one: there's nothing to check in or out of if
+    they never show up. Not tied to any one project - they're saying they won't be in at all that day, not
+    which site they're skipping."""
+
+    __tablename__ = "absence_requests"
+    __table_args__ = (db.UniqueConstraint("user_code", "for_date", name="uq_absence_requests_user_date"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="CASCADE"), nullable=False, index=True)
+    for_date = db.Column(db.Date, nullable=False, index=True)
+    reason = db.Column(db.String(200), nullable=False, default="", server_default="")
+    # pending | approved | rejected - same vocabulary as Attendance.status.
+    status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    decided_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_code])
+    decided_by = db.relationship("User", foreign_keys=[decided_by_code])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "user_code": self.user_code, "user_name": self.user.name if self.user else None,
+            "for_date": self.for_date.isoformat(), "reason": self.reason, "status": self.status,
+            "created_at": _iso(self.created_at),
+            "decided_by_name": self.decided_by.name if self.decided_by else None,
+            "decided_at": _iso(self.decided_at),
+        }
+
+
 class Worker(db.Model):
     """A field worker or office staff member who does not sign in to the app - tracked instead from the
     WhatsApp group they mark their attendance in. Separate from User: becomes a User only if ever given

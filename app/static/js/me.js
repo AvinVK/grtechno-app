@@ -188,15 +188,84 @@
     }
   }
 
+  // Why this one needs a stricter approver than usual (see auth.attendance_restriction) - only shown when
+  // it applies, since the common case (on time, one session) has nothing special to say.
+  function restrictionNote(r) {
+    if (r.restriction === 'late') return 'Checked in late - admin only';
+    if (r.restriction === 'multi_project') return 'Different project than an earlier session today - project manager only';
+    return null;
+  }
+
   function approvalRow(r) {
     const times = r.check_out_at ? `${fmtTime(r.check_in_at)} – ${fmtTime(r.check_out_at)}` : `${fmtTime(r.check_in_at)} – still checked in`;
+    const note = restrictionNote(r);
     return h('div', { class: 'card me-row approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, r.user_name),
         h('span', { class: 'hint' }, [r.work_label, times].filter(Boolean).join(' · ')),
-        r.notes ? h('span', { class: 'hint' }, r.notes) : null),
+        r.notes ? h('span', { class: 'hint' }, r.notes) : null,
+        note ? h('span', { class: 'hint att-restriction-note' }, note) : null),
       h('div', { class: 'approval-actions' },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')));
+  }
+
+  load();
+})();
+
+/* A daily-wage worker's advance notice that they won't be in on a future day (kohal, 2026-10-19: "Absent
+   should be inform 1 day before ... alert should be given to admin and project manager") - the admin or a
+   project manager, see auth.PROJECT_MANAGER_ROLE_KEYS and app/attendance.py's _can_see_absences. Not tied
+   to a project, so there's no approver narrowing here the way a late check-in or a different-project
+   session has. Hidden when nothing's waiting. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-absence-requests');
+  if (!section) return;
+  const list = document.getElementById('me-absence-requests-list');
+  const { h, clear, api, toast, confirm } = window.LD;
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/attendance/absences');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = data.absences.length === 0;
+    clear(list);
+    data.absences.forEach((r) => list.append(absenceRow(r)));
+  }
+
+  async function act(r, action) {
+    if (action === 'reject') {
+      const sure = await confirm('Reject this absence notice?', { ok: 'Reject', danger: true, title: 'Reject notice' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/attendance/absences/${r.id}/${action}`, { method: 'POST' });
+      toast(action === 'approve' ? 'Noted' : 'Rejected');
+      load();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function absenceRow(r) {
+    return h('div', { class: 'card me-row approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, r.user_name),
+        h('span', { class: 'hint' }, fmtDate(r.for_date)),
+        r.reason ? h('span', { class: 'hint' }, r.reason) : null),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Acknowledge'),
         h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')));
   }
 
