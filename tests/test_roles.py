@@ -35,7 +35,7 @@ def test_admin_can_change_a_users_role(admin_client, user, client):
     assert names(client) == ["Leads", "Attendance"]
     res = admin_client.post(f"/api/users/{user.code}/role", json={"role": "project_manager"})
     assert res.status_code == 200 and res.get_json()["user"]["role"] == "project_manager"
-    assert names(client) == ["Projects", "Attendance"]                                 # menu follows the role at once
+    assert names(client) == ["Projects", "Attendance", "Work plan"]                    # menu follows the role at once
     assert admin_client.post(f"/api/users/{user.code}/role", json={"role": "admin"}).status_code == 422
     assert admin_client.post(f"/api/users/{user.code}/role", json={"role": "ghost"}).status_code == 422
 
@@ -54,7 +54,7 @@ def test_sales_cannot_open_clients_or_projects(client):
 
 
 def test_project_manager_cannot_open_lead_desk(manager_client):
-    assert names(manager_client) == ["Projects", "Attendance"]                         # no clients any more
+    assert names(manager_client) == ["Projects", "Attendance", "Work plan"]            # no clients any more
     assert manager_client.get("/export.csv").status_code == 403
     assert manager_client.get("/api/state").status_code == 403
     assert manager_client.get("/api/projects").status_code == 200
@@ -80,7 +80,7 @@ def test_supervisor_can_open_projects_and_attendance(app):
 
 
 def test_admin_opens_everything(admin_client):
-    assert names(admin_client) == ["Leads", "Clients", "Projects", "Attendance", "Inventory"]
+    assert names(admin_client) == ["Leads", "Clients", "Projects", "Attendance", "Inventory", "Work plan"]
 
 
 def test_roles_are_editable_in_the_database(app):
