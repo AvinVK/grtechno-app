@@ -10,7 +10,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
-from .auth import PROJECT_MANAGER_ROLE_KEYS, can_approve_issue, visible_clients, visible_projects
+from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES
 from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectExpense, ProjectPayment, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
@@ -472,11 +472,12 @@ def delete_project(project_id):
     return "", 204
 
 
-# ---------- material requests (kohal, 2026-10-16, updated 2026-10-17) ----------
+# ---------- material requests (kohal, 2026-10-16, updated 2026-10-17, 2026-10-19) ----------
 #
 # Asking for material against a project lives here, gated by the Projects module like everything else on
 # this page. Approving one doesn't, any more - see app/inventory.py's own Material requests tab
-# (material_requests/approve_material_request there) - anyone with Inventory access can, and recording who
+# (material_requests/approve_material_request there) - anyone with Inventory access can, except whoever
+# asked for it in the first place (kohal, 2026-10-19: "creator user cannot be approval"), and recording who
 # physically took it out, how, and when is an Inventory-side action. This project page just shows what's
 # pending, read-only, and lets anyone who can see the project ask for more.
 
@@ -504,10 +505,11 @@ def material_requests(project_id):
 
 @bp.post("/api/projects/<int:project_id>/material-requests")
 def request_material(project_id):
-    """Ask for material to be issued to this project. Auto-approved on the spot only if the person asking
-    already has Inventory access themselves (same rule as issuing directly from Inventory); otherwise it
-    waits for someone who does - visible right here, and in the material's own history in Inventory, as
-    pending - see app/inventory.py's Material requests tab."""
+    """Ask for material to be issued to this project. Always waits for someone else to approve it from
+    Inventory's own Material requests tab (kohal, 2026-10-19: "it should not be auto approved... creator
+    user cannot be approval") - no self-approval shortcut here any more, not even for whoever already has
+    Inventory access themselves; see app/inventory.py's approve_material_request, which also refuses the
+    requester their own approval if they try it directly."""
     project = _project_or_404(project_id)
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
@@ -526,17 +528,12 @@ def request_material(project_id):
         errors["material_id"] = "Pick a material"
 
     # Asking for more than what's currently in stock is fine - that's the point of a request someone else
-    # has to approve (kohal, 2026-10-17: "say if stock has 5 pipes and request was raised for 7 pipes"), as
-    # long as it's actually going to wait for that approval. One that's approved on the spot still can't
-    # exceed stock, same as issuing directly from Inventory never could.
-    approved = can_approve_issue(g.user)
+    # has to approve (kohal, 2026-10-17: "say if stock has 5 pipes and request was raised for 7 pipes").
     qty = f.data.get("quantity")
     if qty is None:
         errors.setdefault("quantity", "Enter a quantity greater than 0")
     elif qty <= 0:
         errors["quantity"] = "Enter a quantity greater than 0"
-    elif approved and material is not None and qty > material.stock_qty:
-        errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
@@ -545,12 +542,9 @@ def request_material(project_id):
         material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
         project_id=project.id, note=f.data.get("note", ""), entry_date=today_local(),
         created_by_code=g.user.code,
-        **inv._status_fields(approved),
+        **inv._status_fields(False),
     )
     db.session.add(movement)
-    db.session.flush()
-    if movement.status == "approved":
-        inv._recompute_material(material)
     db.session.commit()
     return jsonify(request=_material_request_dict(movement)), 201
 

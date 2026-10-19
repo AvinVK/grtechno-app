@@ -559,13 +559,15 @@ def reject_stock_in(material_id, movement_id):
     return jsonify(material=material.to_dict(), movement=movement.to_dict())
 
 
-# ---------- Material requests (kohal, 2026-10-17) ----------
+# ---------- Material requests (kohal, 2026-10-17, updated 2026-10-19) ----------
 #
 # Every pending issue ('out') request, gathered from every project, in one place - "anyone with Inventory
 # access can approve", so this needs nothing beyond the blueprint's own check_module("inventory") gate
-# above; approving records who physically took the material out of the store, how, and when. Asking for
-# more than what's in stock approves only what's there and splits the rest into a new pending request for
-# the same project, which surfaces here again once there's enough stock.
+# above, except whoever asked for it in the first place (kohal, 2026-10-19: "creator user cannot be
+# approval" - no self-approval, not even for an admin's own request); approving records who physically took
+# the material out of the store, how, and when. Asking for more than what's in stock approves only what's
+# there and splits the rest into a new pending request for the same project, which surfaces here again once
+# there's enough stock.
 
 def _material_request_dict(movement):
     d = movement.to_dict()
@@ -587,12 +589,25 @@ def material_requests():
     )
 
 
+@bp.get("/api/inventory/material-requests/history")
+def material_request_history():
+    """Every request that's been dealt with, newest first - who asked, who approved or rejected it, and
+    when (kohal, 2026-10-19: "we need to show material request history as well along with who approved
+    it"), same section of the Material requests tab as the pending list above."""
+    rows = (MaterialMovement.query.filter(MaterialMovement.kind == "out", MaterialMovement.status != "pending")
+            .order_by(MaterialMovement.approved_at.desc(), MaterialMovement.created_at.desc())
+            .limit(200).all())
+    return jsonify(requests=[_material_request_dict(mv) for mv in rows])
+
+
 @bp.post("/api/inventory/material-requests/<int:movement_id>/approve")
 def approve_material_request(movement_id):
     movement = MaterialMovement.query.filter_by(id=movement_id, kind="out").first()
     if movement is None:
         abort(404)
     _pending_or_409(movement)
+    if movement.created_by_code == g.user.code:
+        abort(403, "Someone else needs to approve this - not whoever asked for it.")
     material = movement.material
     requested = movement.quantity
     payload = _payload()

@@ -699,6 +699,47 @@ def test_cannot_approve_or_reject_a_material_request_twice(app, admin_client, ac
     assert accounts_client.post(f"/api/inventory/material-requests/{movement_id}/reject").status_code == 409
 
 
+def test_the_requester_cannot_approve_their_own_request(app, admin_client):
+    """kohal, 2026-10-19: "creator user cannot be approval" - even someone who'd otherwise qualify to
+    approve anyone else's request (here, an accountant) can't sign off on their own."""
+    material = add_material(admin_client)
+    mat_id = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mat_id}/stock-in", json={"quantity": 20, "rate": 10})
+    pid = add_project(admin_client)
+    requester = signed_in(app, make_user("Anil Accounts", role="accounts"))
+    movement_id = requester.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5}).get_json()["request"]["id"]
+    wid = add_worker(requester)
+
+    res = requester.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                          json={"quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
+    assert res.status_code == 403
+
+    other = signed_in(app, make_user("Other Accounts", role="accounts"))
+    res2 = other.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                       json={"quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
+    assert res2.status_code == 200 and res2.get_json()["movement"]["approved_by_name"] == "Other Accounts"
+
+
+def test_material_request_history_shows_who_approved_or_rejected_it(app, admin_client, accounts_client):
+    mat_id, pid, approved_id = pending_request(admin_client, app, material_name="Cement")
+    wid = add_worker(accounts_client)
+    accounts_client.post(f"/api/inventory/material-requests/{approved_id}/approve",
+                          json={"quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
+    mat_id2, pid2, rejected_id = pending_request(admin_client, app, material_name="Sand")
+    accounts_client.post(f"/api/inventory/material-requests/{rejected_id}/reject")
+
+    history = accounts_client.get("/api/inventory/material-requests/history").get_json()["requests"]
+    assert len(history) == 2
+    by_id = {r["id"]: r for r in history}
+    assert by_id[approved_id]["status"] == "approved" and by_id[approved_id]["approved_by_name"] == "Anil Accounts"
+    assert by_id[approved_id]["created_by_name"] == "Priya Manager"
+    assert by_id[rejected_id]["status"] == "rejected" and by_id[rejected_id]["approved_by_name"] == "Anil Accounts"
+    # Still pending ones don't show up in history, and history doesn't show up in the pending list.
+    mat_id3, pid3, pending_id = pending_request(admin_client, app, material_name="Gravel")
+    assert pending_id not in {r["id"] for r in accounts_client.get("/api/inventory/material-requests/history").get_json()["requests"]}
+    assert approved_id not in {r["id"] for r in accounts_client.get("/api/inventory/material-requests").get_json()["requests"]}
+
+
 def test_a_welder_without_inventory_access_cannot_approve_a_request(app, admin_client):
     mat_id, pid, movement_id = pending_request(admin_client, app)
     welder = signed_in(app, make_user("Wendy Welder", role="welder"))

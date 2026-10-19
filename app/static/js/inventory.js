@@ -165,13 +165,34 @@
     } catch (err) { toast(err.message, true); }
   }
 
+  // A dealt-with request, same line shape as the pending ones below but Approved/Rejected instead of the
+  // actions, and who decided it (kohal, 2026-10-19: "we need to show material request history as well
+  // along with who approved it").
+  function historyRow(r) {
+    return h('li', { class: 'p-row' },
+      h('span', { class: `chip ${r.status === 'approved' ? 'chip-active' : 'chip-off'}` }, r.status === 'approved' ? 'Approved' : 'Rejected'),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
+        h('span', { class: 'row-sub' },
+          [`${r.quantity} ${r.unit || ''}`.trim(),
+            r.project_title ? `${r.project_code} · ${r.project_title}` : null,
+            r.created_by_name ? `Requested by ${r.created_by_name}` : null,
+            r.approved_by_name ? `${r.status === 'approved' ? 'Approved' : 'Rejected'} by ${r.approved_by_name}` : null]
+            .filter(Boolean).join(' · '))));
+  }
+
   async function showRequests() {
     showBack(false);
     showAddLink(false);
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading requests…'));
-    let data;
-    try { data = await api('/api/inventory/material-requests'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    let data, history;
+    try {
+      [data, history] = await Promise.all([
+        api('/api/inventory/material-requests'),
+        api('/api/inventory/material-requests/history'),
+      ]);
+    } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
     const reload = () => showRequests();
     const rows = data.requests.map((r) => h('li', { class: 'p-row' },
@@ -191,7 +212,11 @@
       inventoryTabs('requests', data.requests.length),
       data.requests.length
         ? h('ul', { class: 'card-group' }, rows)
-        : h('p', { class: 'empty-state' }, 'No pending requests right now.')));
+        : h('p', { class: 'empty-state' }, 'No pending requests right now.'),
+      h('div', { class: 'list-head' }, h('h2', {}, 'History')),
+      history.requests.length
+        ? h('ul', { class: 'card-group' }, history.requests.map(historyRow))
+        : h('p', { class: 'empty-state' }, 'Nothing dealt with yet.')));
   }
 
   /* ---------- one material: stock, cost, and its movement history ---------- */

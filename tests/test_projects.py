@@ -607,16 +607,16 @@ def stocked_material(admin_client, qty=20, name="Cement"):
     return res.get_json()["material"]["id"]
 
 
-def test_a_request_from_someone_with_inventory_access_is_approved_immediately(app, client, admin_client, accounts_client):
-    """The requester already has Inventory access (an accountant), so there's nothing left to wait for -
-    same rule as issuing directly from Inventory itself."""
+def test_a_request_from_someone_with_inventory_access_still_waits_too(app, client, admin_client, accounts_client):
+    """kohal, 2026-10-19: "it should not be auto approved... creator user cannot be approval" - no more
+    self-approval shortcut for anyone, not even an accountant who could otherwise approve someone else's."""
     pid = make_project(client, admin_client)
     mat_id = stocked_material(admin_client)
     res = accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
     assert res.status_code == 201
     body = res.get_json()["request"]
-    assert body["status"] == "approved" and body["approved_by_name"] == "Anil Accounts"
-    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 15
+    assert body["status"] == "pending" and body["approved_by_name"] is None
+    assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 20
 
 
 def test_a_request_from_the_projects_own_manager_now_waits_too(app, client, admin_client):
@@ -676,11 +676,13 @@ def test_requesting_more_than_whats_in_stock_is_fine_if_it_waits_for_approval(ap
     assert res.status_code == 201 and res.get_json()["request"]["status"] == "pending"
 
 
-def test_requesting_more_than_stock_from_someone_who_auto_approves_is_rejected(app, client, admin_client, accounts_client):
+def test_requesting_more_than_stock_is_fine_for_anyone_now_it_always_waits(app, client, admin_client, accounts_client):
+    """Same as the plain-sales-field case above - there's no "approved on the spot" path left for a
+    material request to overshoot through, so there's nothing left to cap here either."""
     pid = make_project(client, admin_client)
     mat_id = stocked_material(admin_client, qty=3)
     res = accounts_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5})
-    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
+    assert res.status_code == 201 and res.get_json()["request"]["status"] == "pending"
 
 
 # ---------- Commission (kohal, 2026-10-18) ----------
