@@ -816,13 +816,21 @@ def test_chandrapur_pm_also_sees_a_project_they_manage_outside_the_district(app,
     assert pid in ids
 
 
-def test_chandrapur_pm_can_approve_attendance_like_a_project_manager(app, client, admin_client):
-    pid = make_project(client, admin_client)
+def test_chandrapur_pm_can_approve_attendance_only_on_projects_they_can_see(app, client, admin_client):
+    """Same scoping as visible_projects() itself (kohal, 2026-10-19: "pm chandrapur should only be getting
+    material and attendance approvals only for the projects which he has access to") - not every project,
+    unlike the plain project_manager role."""
+    pid_in = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid_in}", json={"site_district": "Chandrapur"})
+    pid_out = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid_out}", json={"site_district": "Nagpur"})
     pm, user = chandrapur_pm(app)
     from app.auth import can_approve_attendance
     with app.app_context():
-        project = db.session.get(Project, pid)
-        assert can_approve_attendance(user, project) is True
+        in_district = db.session.get(Project, pid_in)
+        out_of_district = db.session.get(Project, pid_out)
+        assert can_approve_attendance(user, in_district) is True
+        assert can_approve_attendance(user, out_of_district) is False
 
 
 def test_chandrapur_pm_shows_up_in_the_manager_picker(app, client, admin_client):

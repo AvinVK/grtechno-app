@@ -186,28 +186,32 @@ SITE_SUPERVISOR_ROLE_KEYS = {"supervisor", "alarm_tech_cum_site_supervisor"}
 PROJECT_MANAGER_ROLE_KEYS = {"project_manager", COMMISSION_ROLE_KEY}
 
 
-def visible_projects():
+def visible_projects(user=None):
     """Projects this person may see: everything for the admin, for roles marked sees_all (Accounts), and
     for Project manager specifically (kohal, 2026-10-16 - deliberately not sees_all itself, to avoid also
     granting its other powers: everyone's attendance, deleting a record, assigning project managers). Only
     their assigned state(s) for a sub-admin. Project manager Chandrapur sees every project in that district,
     plus (same as everyone's own fallback below) anything it personally owns or manages elsewhere. A site
     supervisor only sees a project once they've checked into it via Attendance - not by ownership/
-    management, unlike everyone else's fallback below."""
+    management, unlike everyone else's fallback below.
+
+    Defaults to the signed-in user (every caller in a request); can_approve_attendance passes its own
+    `user` explicitly instead, since it's also called directly in tests with no request/g.user around."""
+    user = user or g.user
     query = Project.query
-    if g.user.sees_all or g.user.role_key == "project_manager":
+    if user.sees_all or user.role_key == "project_manager":
         return query
-    if g.user.role_key == COMMISSION_ROLE_KEY:
+    if user.role_key == COMMISSION_ROLE_KEY:
         return query.filter(or_(Project.site_district == CHANDRAPUR_DISTRICT,
-                                 Project.owner_code == g.user.code, Project.manager_code == g.user.code))
-    if g.user.role_key == "sub_admin":
-        states = g.user.state_names
+                                 Project.owner_code == user.code, Project.manager_code == user.code))
+    if user.role_key == "sub_admin":
+        states = user.state_names
         return query.filter(Project.site_state.in_(states)) if states else query.filter(sa_false())
-    if g.user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
+    if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
         checked_in = (db.session.query(Attendance.project_id)
-                      .filter(Attendance.user_code == g.user.code, Attendance.project_id.isnot(None)))
+                      .filter(Attendance.user_code == user.code, Attendance.project_id.isnot(None)))
         return query.filter(Project.id.in_(checked_in))
-    return query.filter(or_(Project.owner_code == g.user.code, Project.manager_code == g.user.code))
+    return query.filter(or_(Project.owner_code == user.code, Project.manager_code == user.code))
 
 
 # Who may approve a material movement (kohal, 2026-10-16) - see MaterialMovement.status. Checked fresh at
@@ -241,14 +245,17 @@ def can_approve_attendance(user, project) -> bool:
     """A check-in/check-out record (kohal, 2026-10-16: "Attendance should be approved by project manager or
     site supervisor who is checked in on tha project"): the admin or Company Director always - the universal
     fallback, since office/marketing work has no project to approve against, and a site supervisor can't
-    approve their own attendance just by being the one checked in - any project manager, or a site
-    supervisor currently checked into that exact project right now."""
+    approve their own attendance just by being the one checked in - any project manager (on a project they
+    can actually see - visible_projects() already narrows this to the Chandrapur district, plus anything
+    personally owned/managed, for Project manager Chandrapur specifically; kohal, 2026-10-19: "pm chandrapur
+    should only be getting ... attendance approvals only for the projects which he has access to"), or a
+    site supervisor currently checked into that exact project right now."""
     if user.is_admin or user.role_key == "company_director":
         return True
     if project is None:
         return False
     if user.role_key in PROJECT_MANAGER_ROLE_KEYS:
-        return True
+        return visible_projects(user).filter(Project.id == project.id).first() is not None
     if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
         return Attendance.query.filter_by(user_code=user.code, project_id=project.id, check_out_at=None).first() is not None
     return False
