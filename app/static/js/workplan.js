@@ -101,20 +101,24 @@
       }
     }
 
+    // Same shape as a project's own detail-page sections (.project-detail's grid gap is what actually
+    // spaces Field work and Office work apart uniformly - kohal, 2026-10-19: "the box spacing isnt
+    // uniform... follow the uniformity of the app"; .p-section-head + .p-section is the exact pattern
+    // Projects' own Commission section uses for "a heading with a button next to it").
     function render() {
       const fieldRows = state.assignments.filter((a) => a.kind === 'field');
       const officeRows = state.assignments.filter((a) => a.kind === 'office');
       clear(fieldList).append(...(fieldRows.length ? fieldRows.map(row) : [h('li', { class: 'empty-state' }, 'Nothing scheduled yet.')]));
       clear(officeList).append(...(officeRows.length ? officeRows.map(row) : [h('li', { class: 'empty-state' }, 'Nothing scheduled yet.')]));
 
-      clear(view).append(h('div', {},
+      clear(view).append(h('div', { class: 'project-detail' },
         tabs('plan'),
         h('div', { class: 'filters' }, dateInput),
         h('section', { class: 'p-section' },
-          h('div', { class: 'att-week-head' }, h('h3', {}, 'Field work'), addFieldBtn),
+          h('div', { class: 'p-section-head' }, h('h3', {}, 'Field work'), addFieldBtn),
           fieldList),
         h('section', { class: 'p-section' },
-          h('div', { class: 'att-week-head' }, h('h3', {}, 'Office work'), addOfficeBtn),
+          h('div', { class: 'p-section-head' }, h('h3', {}, 'Office work'), addOfficeBtn),
           officeList)));
     }
 
@@ -260,7 +264,7 @@
       sendBtn.disabled = false;
     };
 
-    clear(view).append(h('div', {},
+    clear(view).append(h('div', { class: 'project-detail' },
       tabs('announcements'),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Send an announcement'),
