@@ -144,8 +144,7 @@ def _supply_fields(payload, *, require_quantity):
 def _status_fields(approved):
     """status/approved_by/approved_at for a new movement - a stock-in is approved straight away if the
     person creating it is themselves someone who could approve it (auth.can_approve_stock_in), otherwise
-    left pending for whoever can; an issue straight from Inventory (not a project's request) is always
-    approved on the spot - whoever's creating it already has Inventory access (kohal, 2026-10-16/17)."""
+    left pending for whoever can."""
     return dict(
         status="approved" if approved else "pending",
         approved_by_code=g.user.code if approved else None,
@@ -189,8 +188,9 @@ def _validate_given_by(payload, f, *, required=False):
 
 def _transport_fields(payload, f, *, required):
     """How the material got from the store to the project, and when (kohal, 2026-10-17) - required when
-    approving a request (that's the point of the whole flow), optional on a direct issue from Inventory
-    itself, which can note it but isn't forced to."""
+    approving a request, which is the only way material ever leaves the store now (kohal, 2026-10-19:
+    "even issue to project should have the same process as material request" - the old direct-issue-from-
+    Inventory shortcut, self-approved on the spot, is gone)."""
     mode = str(payload.get("transport_mode") or "").strip()[:40]
     if mode:
         f.data["transport_mode"] = mode
@@ -445,41 +445,6 @@ def delete_bill(material_id, movement_id):
     return jsonify(movement=movement.to_dict())
 
 
-@bp.post("/api/inventory/materials/<int:material_id>/issue")
-def issue(material_id):
-    """Issue straight from Inventory - not a project's request (see app/projects.py's material-requests,
-    and this module's own material_requests/approve_material_request below) - so it's approved on the spot:
-    whoever's doing this already has Inventory access, and is the one handing the material over right now
-    (kohal, 2026-10-17)."""
-    material = _material_or_404(material_id)
-    payload = _payload()
-    f = _movement_fields(payload, needs_project=True)
-    if f.data.get("quantity") is not None and f.data["quantity"] > material.stock_qty:
-        f.errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
-    _validate_given_by(payload, f)
-    _transport_fields(payload, f, required=False)
-    if f.errors:
-        return jsonify(error="Check the highlighted fields", fields=f.errors), 422
-    qty, rate = f.data["quantity"], material.avg_rate
-    movement = MaterialMovement(
-        material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
-        project_id=f.data["project_id"], note=f.data.get("note", ""), entry_date=f.data["entry_date"],
-        created_by_code=g.user.code, given_by_worker_id=f.data.get("given_by_worker_id"),
-        transport_mode=f.data.get("transport_mode", ""), transported_at=f.data.get("transported_at"),
-        **_status_fields(True),
-    )
-    db.session.add(movement)
-    db.session.flush()
-    try:
-        _recompute_material(material)
-    except _NegativeStock as exc:
-        msg = _negative_stock_message(material, exc.movement)
-        db.session.rollback()
-        return jsonify(error=msg), 422
-    db.session.commit()
-    return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
-
-
 @bp.patch("/api/inventory/materials/<int:material_id>/movements/<int:movement_id>")
 def update_movement(material_id, movement_id):
     """Fix a bulk-entry mistake on an already-saved stock-in or issue - quantity and (for a stock-in) cost
@@ -528,8 +493,8 @@ def update_movement(material_id, movement_id):
 
 def approve_movement(movement, approver):
     """Approve a pending movement (see MaterialMovement.status) - the caller has already checked the
-    approver is allowed to (can_approve_stock_in for a stock-in; every route in this module already needs
-    Inventory access for an issue, see auth.can_approve_issue)."""
+    approver is allowed to (can_approve_stock_in for a stock-in; for an issue, anyone with Inventory access
+    except whoever requested it - see approve_material_request)."""
     movement.status = "approved"
     movement.approved_by_code = approver.code
     movement.approved_at = utcnow()

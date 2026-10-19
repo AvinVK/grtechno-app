@@ -451,7 +451,6 @@
           h('span', { class: 'stat-value is-text' }, money(m.stock_value, data.currency)))),
       h('div', { class: 'form-actions' },
         h('a', { class: 'btn primary', href: `#m${m.id}/stock-in` }, '+ Stock in'),
-        h('a', { class: 'btn', href: `#m${m.id}/issue` }, 'Issue to project'),
         h('button', { class: `btn small ${m.is_active ? 'danger' : ''}`, type: 'button', onclick: () => archiveMaterial(m, !m.is_active) }, m.is_active ? 'Archive' : 'Restore')),
       h('section', { class: 'p-section' },
         h('h3', {}, 'History'),
@@ -744,38 +743,36 @@
 
   const PAYMENT_MODES = [{ value: 'cash', label: 'Cash' }, { value: 'credit', label: 'Credit' }];
 
-  function movementForm(material, kind, data) {
-    const isIn = kind === 'in';
+  // kohal, 2026-10-19: "even issue to project should have the same process as material request" - the old
+  // direct-issue-from-Inventory shortcut (self-approved on the spot) is gone; stock only ever leaves via a
+  // project's own request now (see projects.js's openRequestMaterial), so this form is stock-in only.
+  function stockInForm(material, data) {
     const { currency } = data;
     const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: `Quantity (${material.unit || 'units'})` });
-    const rate = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit' }) : null;
-    const supplierSel = isIn ? supplierPicker(data.suppliers.map((s) => ({ value: s.id, label: s.name })), '') : null;
-    const billNo = isIn ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off' }) : null;
-    const paymentMode = isIn ? selectField(PAYMENT_MODES, 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
-    const gstPercent = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' }) : null;
-    const gstAmount = isIn ? h('input', { type: 'text', disabled: true, value: money(0, currency) }) : null;
-    const totalCost = isIn ? h('input', { type: 'text', disabled: true, value: money(0, currency) }) : null;
-    const project = !isIn ? selectField(data.projects.map((p) => ({ value: p.id, label: `${p.code} · ${p.title}` })), '', { title: 'Project', placeholder: 'Choose a project' }) : null;
-    const givenBy = !isIn ? selectField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { title: 'Given by', placeholder: 'Who gave it out' }) : null;
+    const rate = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit' });
+    const supplierSel = supplierPicker(data.suppliers.map((s) => ({ value: s.id, label: s.name })), '');
+    const billNo = h('input', { type: 'text', maxlength: 60, autocomplete: 'off' });
+    const paymentMode = selectField(PAYMENT_MODES, 'cash', { title: 'Credit or cash', placeholder: 'Choose one' });
+    const gstPercent = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' });
+    const gstAmount = h('input', { type: 'text', disabled: true, value: money(0, currency) });
+    const totalCost = h('input', { type: 'text', disabled: true, value: money(0, currency) });
     const date = dateField(todayIso(), { placeholder: 'Date' });
     const note = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
 
-    if (isIn) {
-      const recalc = () => {
-        const q = Number(qty.value) || 0;
-        const r = Number(rate.value) || 0;
-        const g = Number(gstPercent.value) || 0;
-        const amount = q * r;
-        const gst = amount * g / 100;
-        gstAmount.value = money(gst, currency);
-        totalCost.value = money(amount + gst, currency);
-      };
-      [qty, rate, gstPercent].forEach((el) => el.addEventListener('input', recalc));
-      recalc();
-    }
+    const recalc = () => {
+      const q = Number(qty.value) || 0;
+      const r = Number(rate.value) || 0;
+      const g = Number(gstPercent.value) || 0;
+      const amount = q * r;
+      const gst = amount * g / 100;
+      gstAmount.value = money(gst, currency);
+      totalCost.value = money(amount + gst, currency);
+    };
+    [qty, rate, gstPercent].forEach((el) => el.addEventListener('input', recalc));
+    recalc();
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isIn ? 'Add stock' : 'Issue material');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add stock');
 
     const form = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
@@ -783,7 +780,7 @@
         errorBox.hidden = true;
         showFieldErrors(form, {});
         saveBtn.disabled = true;
-        if (isIn && supplierSel.newSupplierName) {
+        if (supplierSel.newSupplierName) {
           try {
             const created = await api('/api/inventory/suppliers', { method: 'POST', body: { name: supplierSel.newSupplierName } });
             data.suppliers.push(created.supplier);
@@ -796,15 +793,14 @@
             return;
           }
         }
-        const body = { quantity: qty.value, entry_date: date.value, note: note.value };
-        if (isIn) Object.assign(body, {
+        const body = {
+          quantity: qty.value, entry_date: date.value, note: note.value,
           rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
           payment_mode: paymentMode.value, gst_percent: gstPercent.value || '0',
-        });
-        else Object.assign(body, { project_id: project.value ? Number(project.value) : null, given_by_worker_id: givenBy.value ? Number(givenBy.value) : null });
+        };
         try {
-          await api(`/api/inventory/materials/${material.id}/${isIn ? 'stock-in' : 'issue'}`, { method: 'POST', body });
-          toast(isIn ? 'Stock added' : 'Material issued');
+          await api(`/api/inventory/materials/${material.id}/stock-in`, { method: 'POST', body });
+          toast('Stock added');
           window.location.hash = `#m${material.id}`;
         } catch (err) {
           errorBox.textContent = err.message;
@@ -816,33 +812,33 @@
       errorBox,
       h('div', { class: 'form-grid' },
         field('quantity', 'Quantity', qty),
-        isIn ? field('rate', 'Purchase cost', rate) : field('project_id', 'Project', project),
-        isIn ? field('supplier_id', 'Supplier name', supplierSel) : field('given_by_worker_id', 'Given by', givenBy),
-        isIn ? field('bill_no', 'Bill no', billNo) : null,
-        isIn ? field('payment_mode', 'Credit or cash', paymentMode) : null,
-        isIn ? field('gst_percent', 'GST %', gstPercent) : null,
-        isIn ? field('gst_amount', 'GST amt', gstAmount) : null,
-        isIn ? field('total_cost', 'Total cost', totalCost) : null,
+        field('rate', 'Purchase cost', rate),
+        field('supplier_id', 'Supplier name', supplierSel),
+        field('bill_no', 'Bill no', billNo),
+        field('payment_mode', 'Credit or cash', paymentMode),
+        field('gst_percent', 'GST %', gstPercent),
+        field('gst_amount', 'GST amt', gstAmount),
+        field('total_cost', 'Total cost', totalCost),
         field('entry_date', 'Date', date),
         field('note', 'Remarks', note, { wide: true })),
       h('div', { class: 'form-actions' }, saveBtn),
-      isIn ? h('p', { class: 'hint' }, "You can attach the bill afterwards, from the material's history, once you have it to hand.") : null);
+      h('p', { class: 'hint' }, "You can attach the bill afterwards, from the material's history, once you have it to hand."));
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' },
-        h('h2', {}, isIn ? `Stock in · ${material.name}` : `Issue · ${material.name}`),
+        h('h2', {}, `Stock in · ${material.name}`),
         h('p', { class: 'hint' }, `${material.code} · Currently ${material.stock_qty} ${material.unit || ''} in stock`.trim())),
       form));
   }
 
-  async function showMovement(id, kind) {
+  async function showStockIn(id) {
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api(`/api/inventory/materials/${id}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     showBack(true);
     showAddLink(true);
     LD.setAppbarBack?.(data.material.name, `#m${id}`);
-    movementForm(data.material, kind, data);
+    stockInForm(data.material, data);
   }
 
   function route() {
@@ -852,9 +848,7 @@
     let m = /^#m(\d+)\/edit$/.exec(hash);
     if (m) return showEdit(Number(m[1]));
     m = /^#m(\d+)\/stock-in$/.exec(hash);
-    if (m) return showMovement(Number(m[1]), 'in');
-    m = /^#m(\d+)\/issue$/.exec(hash);
-    if (m) return showMovement(Number(m[1]), 'out');
+    if (m) return showStockIn(Number(m[1]));
     m = /^#m(\d+)$/.exec(hash);
     if (m) return showDetail(Number(m[1]));
     return showList();

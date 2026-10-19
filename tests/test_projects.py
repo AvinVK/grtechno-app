@@ -544,19 +544,34 @@ def test_only_the_admin_can_delete_a_project(client, admin_client, accounts_clie
 
 # ---------- materials used (the project's own expense leg, from Inventory's issue ledger) ----------
 
-def add_material_and_issue(admin_client, project_id, name="Cement", quantity=10, rate=50):
+def add_material_and_issue(app, admin_client, project_id, name="Cement", quantity=10, rate=50):
+    """An approved issue against this project - a material request now, the only way one can exist (kohal,
+    2026-10-19: "even issue to project should have the same process as material request" - the old direct-
+    issue-from-Inventory shortcut is gone), approved by someone other than the admin who asked for it, since
+    the requester can never approve their own."""
     material = admin_client.post("/api/inventory/materials", json={"name": name, "unit": "bags"}).get_json()["material"]
     admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": quantity * 10, "rate": rate})
-    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue",
-                             json={"quantity": quantity, "project_id": project_id, "note": "Foundation work"})
-    assert res.status_code == 201, res.get_json()
+    req = admin_client.post(f"/api/projects/{project_id}/material-requests",
+                             json={"material_id": material["id"], "quantity": quantity, "note": "Foundation work"})
+    assert req.status_code == 201, req.get_json()
+    movement_id = req.get_json()["request"]["id"]
+    with app.app_context():
+        worker = Worker(name=f"Storekeeper {movement_id}")
+        db.session.add(worker)
+        db.session.commit()
+        worker_id = worker.id
+    approver = signed_in(app, make_user(f"Approver {movement_id}", role="accounts"))
+    res = approver.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": quantity, "given_by_worker_id": worker_id, "transport_mode": "Own vehicle",
+    })
+    assert res.status_code == 200, res.get_json()
     return material
 
 
-def test_project_detail_lists_materials_issued_to_it_and_their_total_cost(admin_client):
+def test_project_detail_lists_materials_issued_to_it_and_their_total_cost(app, admin_client):
     pid = admin_client.post("/api/projects", json={"new_client_name": "Site With Materials"}).get_json()["project"]["id"]
-    add_material_and_issue(admin_client, pid, "Cement", quantity=10, rate=50)
-    add_material_and_issue(admin_client, pid, "TMT Bars", quantity=5, rate=60)
+    add_material_and_issue(app, admin_client, pid, "Cement", quantity=10, rate=50)
+    add_material_and_issue(app, admin_client, pid, "TMT Bars", quantity=5, rate=60)
 
     detail = admin_client.get(f"/api/projects/{pid}").get_json()
     assert detail["total_material_cost"] == 800                          # 10*50 + 5*60
@@ -574,10 +589,10 @@ def test_project_with_no_materials_issued_has_an_empty_list(admin_client):
     assert detail["materials"] == [] and detail["total_material_cost"] == 0
 
 
-def test_materials_issued_to_a_different_project_do_not_show_up(admin_client):
+def test_materials_issued_to_a_different_project_do_not_show_up(app, admin_client):
     pid1 = admin_client.post("/api/projects", json={"new_client_name": "Project One"}).get_json()["project"]["id"]
     pid2 = admin_client.post("/api/projects", json={"new_client_name": "Project Two"}).get_json()["project"]["id"]
-    add_material_and_issue(admin_client, pid1, "Cement", quantity=10, rate=50)
+    add_material_and_issue(app, admin_client, pid1, "Cement", quantity=10, rate=50)
     detail = admin_client.get(f"/api/projects/{pid2}").get_json()
     assert detail["materials"] == []
 
@@ -665,8 +680,8 @@ def test_material_requests_lists_pending_ones_for_the_project(app, client, admin
 def test_requesting_more_than_whats_in_stock_is_fine_if_it_waits_for_approval(app, client, admin_client):
     """kohal, 2026-10-17: "say if stock has 5 pipes and request was raised for 7 pipes" - that's the whole
     point of a request someone else approves (see test_inventory.py's "Material requests" section for the
-    partial-approval/shortfall handling) - only an issue approved on the spot still can't exceed stock,
-    same as a direct issue from Inventory never could (see the next test)."""
+    partial-approval/shortfall handling) - a request always waits now (see the next test), so there's no
+    "approved on the spot" path left to cap this against."""
     pid = make_project(client, admin_client)
     mat_id = stocked_material(admin_client, qty=3)
     manager = make_user("Priya Manager", role="project_manager")

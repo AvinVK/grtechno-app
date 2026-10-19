@@ -36,6 +36,28 @@ def add_worker(admin_client, name="Ramesh Storekeeper"):
         return w.id
 
 
+def approved_issue(app, admin_client, mid, pid, qty, entry_date=None):
+    """An already-approved issue ('out') movement, the only way one can exist now - a material request
+    (kohal, 2026-10-19: "even issue to project should have the same process as material request" - the old
+    direct-issue-from-Inventory shortcut, self-approved on the spot, is gone) approved by someone other than
+    whoever asked for it, since the requester can never approve their own. Returns the approved movement."""
+    body = {"material_id": mid, "quantity": qty}
+    req = admin_client.post(f"/api/projects/{pid}/material-requests", json=body)
+    assert req.status_code == 201, req.get_json()
+    movement_id = req.get_json()["request"]["id"]
+    if entry_date:
+        with admin_client.application.app_context():
+            db.session.get(MaterialMovement, movement_id).entry_date = date.fromisoformat(entry_date)
+            db.session.commit()
+    approver = signed_in(app, make_user(f"Approver {movement_id}", role="accounts"))
+    wid = add_worker(admin_client, f"Storekeeper {movement_id}")
+    res = approver.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": qty, "given_by_worker_id": wid, "transport_mode": "Own vehicle",
+    })
+    assert res.status_code == 200, res.get_json()
+    return res.get_json()["movement"]
+
+
 # ---------- admin only ----------
 
 def test_inventory_is_role_gated(client, manager_client, accounts_client, admin_client):
@@ -147,61 +169,11 @@ def test_stock_in_rejects_a_non_positive_quantity_or_rate(admin_client):
 
 
 # ---------- issuing to a project ----------
-
-def test_issuing_material_reduces_stock_at_the_average_rate_and_records_the_project(admin_client):
-    material = add_material(admin_client)
-    mid = material["id"]
-    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
-    pid = add_project(admin_client)
-
-    res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 30, "project_id": pid, "note": "Foundation work"})
-    assert res.status_code == 201
-    m = res.get_json()["material"]
-    assert m["stock_qty"] == 70 and m["avg_rate"] == 10                       # average rate doesn't move on issue
-    movement = res.get_json()["movement"]
-    assert movement["kind"] == "out" and movement["amount"] == 300 and movement["project_id"] == pid
-
-    history = admin_client.get(f"/api/inventory/materials/{mid}").get_json()["movements"]
-    assert [mv["kind"] for mv in history] == ["out", "in"]                    # newest first
-
-
-def test_issuing_more_than_is_in_stock_is_refused(admin_client):
-    material = add_material(admin_client)
-    mid = material["id"]
-    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
-    pid = add_project(admin_client)
-    res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 11, "project_id": pid})
-    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
-    with admin_client.application.app_context():
-        assert db.session.get(Material, mid).stock_qty == 10                 # stock untouched by the refused issue
-
-
-def test_issuing_backdated_before_stock_came_in_is_refused_not_a_500(admin_client):
-    """A real prod crash (kohal, 2026-10-19, photo of a 500 on /inventory#m22/issue): current stock_qty is
-    a running total, so a new issue dated *before* a later stock-in/issue already on record can pass that
-    check yet still leave stock negative at that earlier point once _recompute_material replays everything
-    in date order - every other caller of _recompute_material already catches _NegativeStock and turns it
-    into a 422 (see update_movement/approve_movement/delete_movement); issue() was the one place that
-    didn't, so this crashed straight to an unhandled 500 instead."""
-    material = add_material(admin_client)
-    mid = material["id"]
-    pid = add_project(admin_client)
-    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5, "entry_date": "2026-10-18"})
-    admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 8, "project_id": pid, "entry_date": "2026-10-19"})
-    with admin_client.application.app_context():
-        assert db.session.get(Material, mid).stock_qty == 2                   # current total looks fine...
-
-    res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={
-        "quantity": 2, "project_id": pid, "entry_date": "2026-10-17",         # ...but this one predates the stock-in
-    })
-    assert res.status_code == 422
-    # Names the actual conflicting entry (kohal, 2026-10-19: "i want to implement a logic to take care of
-    # this" - so the next time this happens, whoever hits it can see what to fix without digging through
-    # the database) - this one's always the entry just submitted, since a fresh issue is what broke it.
-    assert "2026-10-17" in res.get_json()["error"] and "2.00 bags issue" in res.get_json()["error"]
-    with admin_client.application.app_context():
-        assert db.session.get(Material, mid).stock_qty == 2                   # rolled back, not left half-applied
-
+#
+# Issuing material always goes through a project's own request now (kohal, 2026-10-19: "even issue to
+# project should have the same process as material request") - see the "material requests" section further
+# down, and projects.py's own test_projects.py for the request side. The old direct-issue-from-Inventory
+# shortcut this section used to test is gone.
 
 def test_stocking_in_a_material_with_already_inconsistent_history_is_refused_not_a_500(admin_client):
     """Another real prod crash (kohal, 2026-10-19, a 500 on /inventory#m75/stock-in, traceback confirmed
@@ -230,15 +202,6 @@ def test_stocking_in_a_material_with_already_inconsistent_history_is_refused_not
     # Names the pre-existing bad row (2026-10-01, the planted 'out'), not the stock-in that was actually
     # submitted - that's the whole point (see _negative_stock_message).
     assert "2026-10-01" in res.get_json()["error"] and "5.00 bags issue" in res.get_json()["error"]
-
-
-def test_issuing_needs_a_real_project(admin_client):
-    material = add_material(admin_client)
-    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
-    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": 999999})
-    assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
-    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1})
-    assert res.status_code == 422 and "project_id" in res.get_json()["fields"]
 
 
 # ---------- supplier, GST and the bill ----------
@@ -294,26 +257,6 @@ def test_stock_in_rejects_a_gst_percent_over_100_or_an_unknown_supplier(admin_cl
     assert res.status_code == 422 and "gst_percent" in res.get_json()["fields"]
     res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5, "supplier_id": 999999})
     assert res.status_code == 422 and "supplier_id" in res.get_json()["fields"]
-
-
-def test_issuing_never_carries_supplier_or_gst_but_can_carry_given_by(admin_client):
-    material = add_material(admin_client)
-    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
-    pid = add_project(admin_client)
-    wid = add_worker(admin_client)
-    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid, "given_by_worker_id": wid})
-    movement = res.get_json()["movement"]
-    assert movement["supplier_name"] is None and movement["bill_url"] is None
-    assert movement["gst_percent"] == 0 and movement["gst_amount"] == 0
-    assert movement["given_by_worker_id"] == wid and movement["given_by_name"] == "Ramesh Storekeeper"
-
-
-def test_issuing_rejects_an_unknown_given_by_worker(admin_client):
-    material = add_material(admin_client)
-    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
-    pid = add_project(admin_client)
-    res = admin_client.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid, "given_by_worker_id": 999999})
-    assert res.status_code == 422 and "given_by_worker_id" in res.get_json()["fields"]
 
 
 def test_bill_can_be_uploaded_viewed_and_removed(admin_client):
@@ -445,13 +388,12 @@ def test_editing_a_material_updates_frequency_and_used_in(admin_client):
     assert body["frequency"] == "occasional" and body["used_in"] == ["Fire alarm", "Portable devices"]
 
 
-def test_only_a_stock_in_entry_can_have_a_bill(admin_client):
+def test_only_a_stock_in_entry_can_have_a_bill(app, admin_client):
     material = add_material(admin_client)
     mid = material["id"]
     admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
     pid = add_project(admin_client)
-    issued = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 1, "project_id": pid})
-    movement_id = issued.get_json()["movement"]["id"]
+    movement_id = approved_issue(app, admin_client, mid, pid, 1)["id"]
     bill = (io.BytesIO(b"%PDF-1.4 fake bill"), "bill.pdf")
     res = admin_client.post(f"/api/inventory/materials/{mid}/movements/{movement_id}/bill",
                              data={"bill": bill}, content_type="multipart/form-data")
@@ -485,26 +427,25 @@ def test_editing_a_stock_in_recomputes_gst_from_the_new_amount(admin_client):
     assert movement["amount"] == 200 and movement["gst_amount"] == 36 and movement["total_cost"] == 236
 
 
-def test_editing_an_issues_quantity_adjusts_stock_without_touching_rate(admin_client):
+def test_editing_an_issues_quantity_adjusts_stock_without_touching_rate(app, admin_client):
     material = add_material(admin_client)
     mid = material["id"]
     admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
     pid = add_project(admin_client)
-    issued = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 10, "project_id": pid})
-    movement_id = issued.get_json()["movement"]["id"]
+    movement_id = approved_issue(app, admin_client, mid, pid, 10)["id"]
     res = admin_client.patch(f"/api/inventory/materials/{mid}/movements/{movement_id}", json={"quantity": 30, "project_id": pid})
     assert res.status_code == 200, res.get_json()
     m = res.get_json()["material"]
     assert m["stock_qty"] == 70 and m["avg_rate"] == 10
 
 
-def test_editing_a_stock_in_that_would_leave_a_later_issue_short_is_refused(admin_client):
+def test_editing_a_stock_in_that_would_leave_a_later_issue_short_is_refused(app, admin_client):
     material = add_material(admin_client)
     mid = material["id"]
     stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
     movement_id = stocked.get_json()["movement"]["id"]
     pid = add_project(admin_client)
-    admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 80, "project_id": pid})
+    approved_issue(app, admin_client, mid, pid, 80)
     # shrinking the stock-in to 50 would leave the 80-unit issue short
     res = admin_client.patch(f"/api/inventory/materials/{mid}/movements/{movement_id}", json={"quantity": 50, "rate": 10})
     assert res.status_code == 422
@@ -527,26 +468,25 @@ def test_deleting_a_stock_in_entry_removes_it_and_recomputes_stock(admin_client)
     assert len(history) == 1
 
 
-def test_deleting_a_stock_in_that_a_later_issue_depends_on_is_refused(admin_client):
+def test_deleting_a_stock_in_that_a_later_issue_depends_on_is_refused(app, admin_client):
     material = add_material(admin_client)
     mid = material["id"]
     stocked = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
     movement_id = stocked.get_json()["movement"]["id"]
     pid = add_project(admin_client)
-    admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 10, "project_id": pid})
+    approved_issue(app, admin_client, mid, pid, 10)
     res = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{movement_id}")
     assert res.status_code == 422
     with admin_client.application.app_context():
         assert db.session.get(Material, mid).stock_qty == 90
 
 
-def test_deleting_an_issue_restores_the_stock(admin_client):
+def test_deleting_an_issue_restores_the_stock(app, admin_client):
     material = add_material(admin_client)
     mid = material["id"]
     admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 100, "rate": 10})
     pid = add_project(admin_client)
-    issued = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 30, "project_id": pid})
-    movement_id = issued.get_json()["movement"]["id"]
+    movement_id = approved_issue(app, admin_client, mid, pid, 30)["id"]
     res = admin_client.delete(f"/api/inventory/materials/{mid}/movements/{movement_id}")
     assert res.status_code == 200
     assert res.get_json()["material"]["stock_qty"] == 100
@@ -618,18 +558,6 @@ def test_cannot_approve_or_reject_a_movement_twice(app, accounts_client):
     assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve").status_code == 200
     assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/approve").status_code == 409
     assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{movement_id}/reject").status_code == 409
-
-
-def test_a_direct_issue_from_inventory_is_always_approved_straight_away(app, accounts_client):
-    """kohal, 2026-10-17: issuing straight from Inventory (not a project's request - see "Material
-    requests" below) is approved on the spot for anyone who can reach it at all, since Inventory access is
-    now the only thing approving an issue ever requires."""
-    material = add_material(accounts_client)
-    accounts_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
-    pid = add_project(accounts_client)
-    for who in (accounts_client, director_client(app)):
-        issued = who.post(f"/api/inventory/materials/{material['id']}/issue", json={"quantity": 1, "project_id": pid})
-        assert issued.status_code == 201 and issued.get_json()["movement"]["status"] == "approved"
 
 
 # ---------- Material requests tab (kohal, 2026-10-17) ----------
@@ -775,28 +703,32 @@ def test_material_request_history_shows_who_approved_or_rejected_it(app, admin_c
     assert approved_id not in {r["id"] for r in accounts_client.get("/api/inventory/material-requests").get_json()["requests"]}
 
 
-def test_a_direct_issue_never_shows_as_a_material_request_even_though_its_self_approved(admin_client):
-    """kohal, 2026-10-19, a screenshot of History: "requetor and creator are the same still somehow" - not
-    a self-approval bug slipping through (that's refused outright now, see test_the_requester_cannot_
-    approve_their_own_request above). A direct issue from Inventory itself is a *different* thing that
-    happens to share the same row shape - always self-approved by design, since whoever's doing it is
-    already the one handing it over - and was showing up in this tab's history looking exactly like one,
-    right after self-approval had just been turned off for requests specifically. requested=False is what
-    tells them apart now (see MaterialMovement's own docstring)."""
+def test_a_legacy_requested_false_row_still_stays_out_of_the_material_requests_tab(admin_client):
+    """kohal, 2026-10-19: "even issue to project should have the same process as material request" - the
+    direct-issue-from-Inventory shortcut this used to cover is gone outright now, so there's no live way to
+    create a requested=False 'out' row any more. One can still be sitting on file from before that change
+    (or from the migration's own best-effort backfill of old, ambiguous data - see
+    d2f8a4c6e913_material_movements_requested.py) - this confirms it stays correctly out of the Material
+    requests tab (pending or history) either way, same as it always did, even though it's now unreachable
+    through the API."""
     material = add_material(admin_client)
     mid = material["id"]
     admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 20, "rate": 5})
     pid = add_project(admin_client)
-    res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 3, "project_id": pid})
-    assert res.status_code == 201
-    movement = res.get_json()["movement"]
-    assert movement["status"] == "approved" and movement["requested"] is False
+    with admin_client.application.app_context():
+        legacy = MaterialMovement(
+            material_id=mid, kind="out", quantity=Decimal("3"), rate=Decimal("5"), amount=Decimal("15"),
+            project_id=pid, entry_date=date(2026, 10, 1), status="approved", requested=False,
+        )
+        db.session.add(legacy)
+        db.session.commit()
+        legacy_id = legacy.id
 
-    assert movement["id"] not in {r["id"] for r in admin_client.get("/api/inventory/material-requests").get_json()["requests"]}
-    assert movement["id"] not in {r["id"] for r in admin_client.get("/api/inventory/material-requests/history").get_json()["requests"]}
+    assert legacy_id not in {r["id"] for r in admin_client.get("/api/inventory/material-requests").get_json()["requests"]}
+    assert legacy_id not in {r["id"] for r in admin_client.get("/api/inventory/material-requests/history").get_json()["requests"]}
     # Still fully visible on the material's own movement history, same as any other stock-in/issue.
     own_history = admin_client.get(f"/api/inventory/materials/{mid}").get_json()["movements"]
-    assert movement["id"] in {mv["id"] for mv in own_history}
+    assert legacy_id in {mv["id"] for mv in own_history}
 
 
 def test_a_welder_without_inventory_access_cannot_approve_a_request(app, admin_client):
