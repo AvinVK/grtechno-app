@@ -194,7 +194,11 @@ def test_issuing_backdated_before_stock_came_in_is_refused_not_a_500(admin_clien
     res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={
         "quantity": 2, "project_id": pid, "entry_date": "2026-10-17",         # ...but this one predates the stock-in
     })
-    assert res.status_code == 422 and "error" in res.get_json()
+    assert res.status_code == 422
+    # Names the actual conflicting entry (kohal, 2026-10-19: "i want to implement a logic to take care of
+    # this" - so the next time this happens, whoever hits it can see what to fix without digging through
+    # the database) - this one's always the entry just submitted, since a fresh issue is what broke it.
+    assert "2026-10-17" in res.get_json()["error"] and "2.00 bags issue" in res.get_json()["error"]
     with admin_client.application.app_context():
         assert db.session.get(Material, mid).stock_qty == 2                   # rolled back, not left half-applied
 
@@ -222,7 +226,10 @@ def test_stocking_in_a_material_with_already_inconsistent_history_is_refused_not
         db.session.commit()
 
     res = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
-    assert res.status_code == 422 and "error" in res.get_json()
+    assert res.status_code == 422
+    # Names the pre-existing bad row (2026-10-01, the planted 'out'), not the stock-in that was actually
+    # submitted - that's the whole point (see _negative_stock_message).
+    assert "2026-10-01" in res.get_json()["error"] and "5.00 bags issue" in res.get_json()["error"]
 
 
 def test_issuing_needs_a_real_project(admin_client):

@@ -207,9 +207,26 @@ def _transport_fields(payload, f, *, required):
 
 
 class _NegativeStock(Exception):
-    """Raised mid-replay (see _recompute_material) - editing or deleting one entry can make a later issue
-    exceed what's actually left in stock at that point, even if the material's final stock_qty would still
-    come out non-negative overall."""
+    """Raised mid-replay (see _recompute_material) - editing, deleting or backdating one entry can make
+    another issue exceed what's actually left in stock at that point in the chronological order, even if
+    the material's final stock_qty would still come out non-negative overall. Carries the movement that
+    first went negative (kohal, 2026-10-19: "i want to implement a logic to take care of this" - after a
+    real prod case where this had to be tracked down by hand) so the error can say exactly which date and
+    entry to look at, not just "something's wrong somewhere"."""
+
+    def __init__(self, movement):
+        self.movement = movement
+        super().__init__()
+
+
+def _negative_stock_message(material, movement) -> str:
+    """Names the actual entry and date that broke, not just that something did - the whole point of
+    carrying it on the exception (see _NegativeStock's own docstring)."""
+    kind_word = "stock-in" if movement.kind == "in" else "issue"
+    where = f" for {movement.project.title}" if movement.kind == "out" and movement.project else ""
+    unit = f" {material.unit}" if material.unit else ""
+    return (f"Not enough {material.name} in stock on {movement.entry_date.isoformat()} for that "
+            f"{movement.quantity}{unit} {kind_word}{where} - check what's dated around then.")
 
 
 def _recompute_material(material):
@@ -232,7 +249,7 @@ def _recompute_material(material):
             stock_qty = new_qty
         else:
             if mv.quantity > stock_qty:
-                raise _NegativeStock
+                raise _NegativeStock(mv)
             mv.rate = avg_rate
             mv.amount = (mv.quantity * avg_rate).quantize(Decimal("0.01"))
             stock_qty -= mv.quantity
@@ -387,9 +404,10 @@ def stock_in(material_id):
     if movement.status == "approved":
         try:
             _recompute_material(material)
-        except _NegativeStock:
+        except _NegativeStock as exc:
+            msg = _negative_stock_message(material, exc.movement)
             db.session.rollback()
-            return jsonify(error="This material's existing history has an issue somewhere already - an approved issue dated before the stock it drew down arrived. Fix the dates on its past entries first."), 422
+            return jsonify(error=msg), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
@@ -454,9 +472,10 @@ def issue(material_id):
     db.session.flush()
     try:
         _recompute_material(material)
-    except _NegativeStock:
+    except _NegativeStock as exc:
+        msg = _negative_stock_message(material, exc.movement)
         db.session.rollback()
-        return jsonify(error="That leaves stock short on some date between then and now - check the date, or the quantities around it."), 422
+        return jsonify(error=msg), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
@@ -499,9 +518,10 @@ def update_movement(material_id, movement_id):
         movement.given_by_worker_id = f.data.get("given_by_worker_id")
     try:
         _recompute_material(material)
-    except _NegativeStock:
+    except _NegativeStock as exc:
+        msg = _negative_stock_message(material, exc.movement)
         db.session.rollback()
-        return jsonify(error="That leaves an issue later on exceeding what was in stock at the time - check the quantities around it."), 422
+        return jsonify(error=msg), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict())
 
@@ -542,9 +562,10 @@ def approve_stock_in(material_id, movement_id):
         abort(403, "Only an accountant or office assistant can approve a stock-in.")
     try:
         approve_movement(movement, g.user)
-    except _NegativeStock:
+    except _NegativeStock as exc:
+        msg = _negative_stock_message(material, exc.movement)
         db.session.rollback()
-        return jsonify(error="Approving this would leave an issue dated after it exceeding what was in stock at the time."), 422
+        return jsonify(error=msg), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict())
 
@@ -650,9 +671,10 @@ def approve_material_request(movement_id):
         db.session.add(remainder)
     try:
         approve_movement(movement, g.user)
-    except _NegativeStock:
+    except _NegativeStock as exc:
+        msg = _negative_stock_message(material, exc.movement)
         db.session.rollback()
-        return jsonify(error="Approving this would leave stock negative - check what else has moved since it was requested."), 422
+        return jsonify(error=msg), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=_material_request_dict(movement),
                     remainder=_material_request_dict(remainder) if remainder else None)
@@ -678,9 +700,10 @@ def delete_movement(material_id, movement_id):
     db.session.delete(movement)
     try:
         _recompute_material(material)
-    except _NegativeStock:
+    except _NegativeStock as exc:
+        msg = _negative_stock_message(material, exc.movement)
         db.session.rollback()
-        return jsonify(error="Can't delete that - a later issue would exceed what was left in stock without it."), 422
+        return jsonify(error=msg), 422
     db.session.commit()
     if bill_filename:          # only delete the actual file once the row's gone for good, not before
         delete_upload("materials", bill_filename)
