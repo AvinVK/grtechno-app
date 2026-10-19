@@ -33,6 +33,14 @@
 
   {{ manage(can_see_users, can_see_workforce) }}
 
+  {# "Next day work scheduling... alert to each user home screen" (kohal, 2026-10-19) - the signed-in
+     person's own next scheduled piece of work, once approved (see app/me.py's my_work_assignment).
+     Nothing to do with the Work plan module - whoever's assigned usually has no access to it at all. #}
+  <section class="me-section" id="me-work-assignment" aria-labelledby="me-work-assignment-h" hidden>
+    <div class="me-section-head"><h2 id="me-work-assignment-h">Your work</h2></div>
+    <div id="me-work-assignment-card"></div>
+  </section>
+
   {# Material issues/stock-ins waiting on the signed-in person specifically - a project manager, a site
      supervisor currently checked in somewhere, an accountant, an office assistant, or the admin (see
      app/me.py's _material_approvals). Nothing to do with the Inventory or Projects module access - this is
@@ -57,6 +65,13 @@
   <section class="me-section" id="me-absence-requests" aria-labelledby="me-absence-requests-h" hidden>
     <div class="me-section-head"><h2 id="me-absence-requests-h">Pending approvals</h2><span class="chip chip-role">Absence</span></div>
     <div id="me-absence-requests-list" class="card-group me-rows"></div>
+  </section>
+
+  {# Admin only (app/workplan.py's own gate, same as who may act on one): a drafted day's work waiting on
+     the admin specifically to approve (kohal: "This allotment should approved by Admin"). #}
+  <section class="me-section" id="me-workplan-approvals" aria-labelledby="me-workplan-approvals-h" hidden>
+    <div class="me-section-head"><h2 id="me-workplan-approvals-h">Pending approvals</h2><span class="chip chip-role">Work plan</span></div>
+    <div id="me-workplan-approvals-list" class="card-group me-rows"></div>
   </section>
 
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}

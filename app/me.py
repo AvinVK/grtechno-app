@@ -9,11 +9,29 @@ from datetime import timedelta
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from . import categories
-from .auth import can_approve_stock_in, can_manage_fooding, visible_clients, visible_leads, visible_projects
+from .auth import (
+    can_approve_stock_in,
+    can_approve_work_assignment,
+    can_manage_fooding,
+    visible_clients,
+    visible_leads,
+    visible_projects,
+)
 from .constants import COMMISSION_ROLE_KEY, OPEN_STAGES
 from .extensions import db
 from .fooding import _fooding_eligible_query as fooding_eligible_workers, account_for
-from .models import Attendance, Client, Lead, LeadSurvey, MaterialMovement, Project, SiteCategory, SiteCategoryRequest, Worker
+from .models import (
+    Attendance,
+    Client,
+    Lead,
+    LeadSurvey,
+    MaterialMovement,
+    Project,
+    SiteCategory,
+    SiteCategoryRequest,
+    WorkAssignment,
+    Worker,
+)
 from .modules import has_module, modules_for
 from .timeutil import today_local
 
@@ -99,6 +117,21 @@ def page():
                            # aren't in keys above - checked separately for the Me hub's own Manage section.
                            can_see_users=has_module(g.user, "users"),
                            can_see_workforce=has_module(g.user, "workforce"))
+
+
+@bp.get("/api/me/work-assignment")
+def my_work_assignment():
+    """The signed-in worker's own next piece of scheduled work, once approved (kohal, 2026-10-19: "alert to
+    each user home screen") - the soonest upcoming one (today or later), or null once there's nothing left
+    to show. Nothing to do with the workplan module - whoever's assigned usually has no access to it at
+    all, this is just "what's waiting for me" the same way material/attendance approvals are."""
+    worker = Worker.query.filter_by(user_code=g.user.code).first()
+    if worker is None:
+        return jsonify(assignment=None)
+    row = (WorkAssignment.query.filter_by(worker_id=worker.id, status="approved")
+           .filter(WorkAssignment.for_date >= today_local())
+           .order_by(WorkAssignment.for_date).first())
+    return jsonify(assignment=row.to_dict() if row else None)
 
 
 @bp.get("/api/me/material-approvals")

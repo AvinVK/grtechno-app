@@ -979,6 +979,49 @@ class AbsenceRequest(db.Model):
         }
 
 
+class WorkAssignment(db.Model):
+    """Next-day work scheduling (kohal, 2026-10-19): a project manager, the accountant, or the admin
+    allots a worker's work for a given day - against a project ('field'), or a location ('office') for
+    office staff - and it waits for the admin specifically to approve before the assigned worker sees it on
+    their own Me hub (never Company Director or anyone else who stands in for "admin" elsewhere in this
+    app - see auth.can_approve_work_assignment). The admin's own entries are approved immediately, same
+    self-approval shortcut as Attendance's own check-in. Whoever's assigned needs a login (worker_code) to
+    actually see the alert - someone tracked only via the WhatsApp group has nothing to see it on."""
+
+    __tablename__ = "work_assignments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    for_date = db.Column(db.Date, nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                     # field | office
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    location = db.Column(db.String(120), nullable=False, default="", server_default="")
+    task = db.Column(db.String(300), nullable=False, default="", server_default="")
+    # pending | approved | rejected - same vocabulary as Attendance.status.
+    status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+
+    worker = db.relationship("Worker")
+    project = db.relationship("Project")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_code])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "for_date": self.for_date.isoformat(), "kind": self.kind,
+            "worker_id": self.worker_id, "worker_name": self.worker.name if self.worker else None,
+            "project_id": self.project_id, "project_title": self.project.title if self.project else None,
+            "location": self.location, "task": self.task, "status": self.status,
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": _iso(self.created_at),
+            "approved_by_name": self.approved_by.name if self.approved_by else None,
+            "approved_at": _iso(self.approved_at),
+        }
+
+
 class Worker(db.Model):
     """A field worker or office staff member who does not sign in to the app - tracked instead from the
     WhatsApp group they mark their attendance in. Separate from User: becomes a User only if ever given

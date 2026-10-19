@@ -272,6 +272,103 @@
   load();
 })();
 
+/* The signed-in person's own next scheduled piece of work, once approved (kohal, 2026-10-19: "Next day
+   work scheduling... alert to each user home screen") - see app/me.py's my_work_assignment. Hidden once
+   there's nothing upcoming. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-work-assignment');
+  if (!section) return;
+  const card = document.getElementById('me-work-assignment-card');
+  const { h, clear, api } = window.LD;
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const target = new Date(y, m - 1, d);
+    if (+target === +today) return 'Today';
+    if (+target === today.getTime() + 86400000) return 'Tomorrow';
+    return target.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  }
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/me/work-assignment');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    const a = data.assignment;
+    section.hidden = !a;
+    if (!a) return;
+    const where = a.kind === 'field' ? a.project_title : a.location;
+    clear(card).append(h('div', { class: 'card me-row' },
+      h('strong', {}, `${fmtDate(a.for_date)} · ${where || ''}`),
+      h('p', { class: 'hint' }, a.task)));
+  }
+
+  load();
+})();
+
+/* A drafted day's work waiting on the admin specifically to approve (kohal: "This allotment should
+   approved by Admin") - see app/workplan.py. Hidden for anyone but the admin (the fetch itself 403s). */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-workplan-approvals');
+  if (!section) return;
+  const list = document.getElementById('me-workplan-approvals-list');
+  const { h, clear, api, toast, confirm } = window.LD;
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/work-assignments/pending');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = data.assignments.length === 0;
+    clear(list);
+    data.assignments.forEach((r) => list.append(row(r)));
+  }
+
+  async function act(r, action) {
+    if (action === 'reject') {
+      const sure = await confirm('Reject this work assignment?', { ok: 'Reject', danger: true, title: 'Reject assignment' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/work-assignments/${r.id}/${action}`, { method: 'POST' });
+      toast(action === 'approve' ? 'Approved' : 'Rejected');
+      load();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  function row(r) {
+    const where = r.kind === 'field' ? r.project_title : r.location;
+    return h('div', { class: 'card me-row approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, r.worker_name),
+        h('span', { class: 'hint' }, [fmtDate(r.for_date), where].filter(Boolean).join(' · ')),
+        h('span', { class: 'hint' }, r.task)),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')));
+  }
+
+  load();
+})();
+
 /* Admin only: site categories people typed in that aren't on the list yet. Each waits here until the
    admin approves it (it joins the list) or points it at an existing category (every survey and client
    using the typed name moves over). Hidden when nothing is waiting. */

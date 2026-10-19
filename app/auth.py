@@ -245,6 +245,20 @@ def can_manage_fooding(user) -> bool:
     return user.is_admin or user.role_key == "accounts"
 
 
+def can_draft_work_plan(user) -> bool:
+    """Who may draft tomorrow's work assignments (kohal, 2026-10-19: "Next day work scheduling by project
+    manager or by accountant or admin") - a project manager (any of PROJECT_MANAGER_ROLE_KEYS), the
+    accountant, or the admin. check_module("workplan") already gates the page the same way; this is for
+    deciding what to show outside it (the Me hub)."""
+    return user.is_admin or user.role_key in PROJECT_MANAGER_ROLE_KEYS or user.role_key == "accounts"
+
+
+def can_approve_work_assignment(user) -> bool:
+    """Who may approve one (kohal, 2026-10-19: "This allotment should approved by Admin") - the admin,
+    literally, not Company Director or anyone else who stands in for "admin" elsewhere in this app."""
+    return user.is_admin
+
+
 # A daily-wage worker's shift rules (kohal, 2026-10-19: "checkedin after this [7-7.30] then only Admin can
 # approve", "checkout after 7.00 pm", "Multiple check in and check out approved by project manager only") -
 # nobody else's attendance is held to these; a salaried/contractor check-in or office/marketing work follows

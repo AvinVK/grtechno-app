@@ -35,9 +35,9 @@ ROLES = [
 ROLE_MODULES = {
     "sales_field": ["leads", "attendance"],
     "sales_office": ["leads", "attendance"],
-    "project_manager": ["projects", "attendance"],
+    "project_manager": ["projects", "attendance", "workplan"],
     "supervisor": ["projects", "attendance"],
-    "accounts": ["clients", "projects", "inventory", "users", "workforce", "attendance"],
+    "accounts": ["clients", "projects", "inventory", "users", "workforce", "attendance", "workplan"],
     "sub_admin": ["clients", "projects", "attendance"],
     "welder": ["attendance"],
     "fitter": ["attendance"],
@@ -64,6 +64,7 @@ NEW_MODULES = [
     ("projects", "Projects", "projects", "/projects", 3),
     ("attendance", "Attendance", "attendance", "/attendance", 4),
     ("inventory", "Inventory", "material", "/inventory", 5),
+    ("workplan", "Work plan", "schedule", "/workplan", 6),
     # Not a tile - see Module.in_nav. A permission gate for the Me hub's own "Manage" section instead
     # (_me_links.html), same pages the admin could already always open.
     ("users", "Users & roles", "user", "/users", 90),
