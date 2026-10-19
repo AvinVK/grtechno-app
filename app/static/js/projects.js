@@ -1159,6 +1159,13 @@
     const wrap = h('div', { class: 'name-suggest' }, input, list);
 
     const close = () => { list.hidden = true; clear(list); };
+    // Picking a row sets input.value by hand (not a real keystroke, so the browser won't fire its own
+    // 'input' event for it) and then dispatches one itself, so anything else watching the field - the
+    // surrounding form's own error-clearing, say - notices the change. That synthetic event reaches this
+    // field's *own* listener too, though, which would otherwise stomp the selection it was just given back
+    // to '' a tick later - this flag tells that one "already handled, don't reset" (kohal, 2026-10-19:
+    // picked a suggestion, field still said "Pick a material").
+    let justPicked = false;
     const showMatches = () => {
       const q = input.value.trim().toLowerCase();
       const matches = (q
@@ -1174,12 +1181,17 @@
           selectedId = String(m.id);
           input.value = labelFor(m);
           close();
+          justPicked = true;
           input.dispatchEvent(new Event('input', { bubbles: true }));
         },
       }, labelFor(m))));
       list.hidden = false;
     };
-    input.addEventListener('input', () => { selectedId = ''; showMatches(); });
+    input.addEventListener('input', () => {
+      if (justPicked) { justPicked = false; return; }
+      selectedId = '';
+      showMatches();
+    });
     input.addEventListener('focus', showMatches);
     input.addEventListener('blur', () => { setTimeout(close, 120); });
 
