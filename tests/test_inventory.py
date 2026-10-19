@@ -174,6 +174,29 @@ def test_issuing_more_than_is_in_stock_is_refused(admin_client):
         assert db.session.get(Material, mid).stock_qty == 10                 # stock untouched by the refused issue
 
 
+def test_issuing_backdated_before_stock_came_in_is_refused_not_a_500(admin_client):
+    """A real prod crash (kohal, 2026-10-19, photo of a 500 on /inventory#m22/issue): current stock_qty is
+    a running total, so a new issue dated *before* a later stock-in/issue already on record can pass that
+    check yet still leave stock negative at that earlier point once _recompute_material replays everything
+    in date order - every other caller of _recompute_material already catches _NegativeStock and turns it
+    into a 422 (see update_movement/approve_movement/delete_movement); issue() was the one place that
+    didn't, so this crashed straight to an unhandled 500 instead."""
+    material = add_material(admin_client)
+    mid = material["id"]
+    pid = add_project(admin_client)
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5, "entry_date": "2026-10-18"})
+    admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 8, "project_id": pid, "entry_date": "2026-10-19"})
+    with admin_client.application.app_context():
+        assert db.session.get(Material, mid).stock_qty == 2                   # current total looks fine...
+
+    res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={
+        "quantity": 2, "project_id": pid, "entry_date": "2026-10-17",         # ...but this one predates the stock-in
+    })
+    assert res.status_code == 422 and "error" in res.get_json()
+    with admin_client.application.app_context():
+        assert db.session.get(Material, mid).stock_qty == 2                   # rolled back, not left half-applied
+
+
 def test_issuing_needs_a_real_project(admin_client):
     material = add_material(admin_client)
     admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})

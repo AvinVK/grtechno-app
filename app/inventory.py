@@ -448,7 +448,11 @@ def issue(material_id):
     )
     db.session.add(movement)
     db.session.flush()
-    _recompute_material(material)
+    try:
+        _recompute_material(material)
+    except _NegativeStock:
+        db.session.rollback()
+        return jsonify(error="That leaves stock short on some date between then and now - check the date, or the quantities around it."), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
