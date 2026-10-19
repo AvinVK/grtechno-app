@@ -1141,10 +1141,57 @@
         : h('p', { class: 'hint' }, 'No pending requests.'));
   }
 
+  // Search-as-you-type over the material list, same "did you mean" dropdown-under-the-field shape as
+  // Inventory's own material-name autopredict (kohal, 2026-10-19: "a search material feature and auto
+  // suggesstion the way we implemented for other search... if we search for 'wel', it should show all the
+  // material having 'wel'") - matches anywhere in the name or code, not just the start, and resolves to
+  // the material's id (`.value`), not free text, since unlike that one this has to be a real material.
+  function materialSearchField(materials, value) {
+    const byId = new Map(materials.map((m) => [String(m.id), m]));
+    const labelFor = (m) => `${m.code} · ${m.name} (${m.stock_qty} ${m.unit || ''} in stock)`.trim();
+    let selectedId = value != null ? String(value) : '';
+    const input = h('input', {
+      type: 'text', autocomplete: 'off', placeholder: 'Search materials…',
+      value: byId.has(selectedId) ? labelFor(byId.get(selectedId)) : '',
+    });
+    const list = h('ul', { class: 'name-suggest-list', role: 'listbox' });
+    list.hidden = true;
+    const wrap = h('div', { class: 'name-suggest' }, input, list);
+
+    const close = () => { list.hidden = true; clear(list); };
+    const showMatches = () => {
+      const q = input.value.trim().toLowerCase();
+      const matches = (q
+        ? materials.filter((m) => m.name.toLowerCase().includes(q) || m.code.toLowerCase().includes(q))
+        : materials
+      ).slice(0, 8);
+      clear(list);
+      if (!matches.length) { list.hidden = true; return; }
+      matches.forEach((m) => list.append(h('li', {
+        class: 'name-suggest-row', role: 'option', tabindex: '-1',
+        onmousedown: (e) => e.preventDefault(),      // keep focus on the field, so the click lands before blur closes the list
+        onclick: () => {
+          selectedId = String(m.id);
+          input.value = labelFor(m);
+          close();
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        },
+      }, labelFor(m))));
+      list.hidden = false;
+    };
+    input.addEventListener('input', () => { selectedId = ''; showMatches(); });
+    input.addEventListener('focus', showMatches);
+    input.addEventListener('blur', () => { setTimeout(close, 120); });
+
+    Object.defineProperty(wrap, 'value', { get: () => selectedId, configurable: true });
+    wrap.focus = () => input.focus();
+    return wrap;
+  }
+
   // A small form to ask for material - whoever can already approve it (the project's manager, or a site
   // supervisor currently checked in there) has it go through immediately; anyone else's goes in as pending.
   function openRequestMaterial(projectId, materials, reload) {
-    const materialSel = selectField(materials.map((m) => ({ value: m.id, label: `${m.code} · ${m.name} (${m.stock_qty} ${m.unit || ''} in stock)` })), '', { title: 'Material', placeholder: 'Choose a material' });
+    const materialSel = materialSearchField(materials, '');
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' });
     const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
