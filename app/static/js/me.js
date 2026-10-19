@@ -304,9 +304,11 @@
     section.hidden = !a;
     if (!a) return;
     const where = a.kind === 'field' ? a.project_title : a.location;
-    clear(card).append(h('div', { class: 'card me-row' },
-      h('strong', {}, `${fmtDate(a.for_date)} · ${where || ''}`),
-      h('p', { class: 'hint' }, a.task)));
+    clear(card).append(h('div', { class: 'card approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, `${fmtDate(a.for_date)} · ${where || ''}`),
+        h('span', { class: 'hint' }, a.task),
+        a.created_by_name ? h('span', { class: 'hint' }, `Assigned by ${a.created_by_name}`) : null)));
   }
 
   load();
