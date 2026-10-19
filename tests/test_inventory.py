@@ -1,9 +1,11 @@
 """Inventory: materials, their stock/cost, and the stock-in / issue ledger that moves them."""
 
 import io
+from datetime import date
+from decimal import Decimal
 
 from app.extensions import db
-from app.models import Material, Worker
+from app.models import Material, MaterialMovement, Worker
 
 from conftest import make_user, signed_in
 
@@ -195,6 +197,32 @@ def test_issuing_backdated_before_stock_came_in_is_refused_not_a_500(admin_clien
     assert res.status_code == 422 and "error" in res.get_json()
     with admin_client.application.app_context():
         assert db.session.get(Material, mid).stock_qty == 2                   # rolled back, not left half-applied
+
+
+def test_stocking_in_a_material_with_already_inconsistent_history_is_refused_not_a_500(admin_client):
+    """Another real prod crash (kohal, 2026-10-19, a 500 on /inventory#m75/stock-in, traceback confirmed
+    from the error log): stock_in() had the same gap as issue() above - every other caller of
+    _recompute_material catches _NegativeStock, this one didn't. Here it's reachable even though a stock-in
+    itself can never make stock negative (it only ever adds), because the material's *existing* approved
+    history was already inconsistent before this new entry - some past approved issue, backdated or
+    otherwise, already exceeds what the replay says was in stock at that point. _recompute_material replays
+    from scratch on every write, so it hits that same pre-existing break regardless of what triggered it;
+    this reproduces that directly (bypassing the API, which wouldn't let the inconsistency happen for a
+    *new* issue - see the backdated test above) by inserting an already-broken approved row straight into
+    the database, the way old/imported data could."""
+    material = add_material(admin_client)
+    mid = material["id"]
+    pid = add_project(admin_client)
+    with admin_client.application.app_context():
+        bad = MaterialMovement(
+            material_id=mid, kind="out", quantity=Decimal("5"), rate=Decimal("0"), amount=Decimal("0"),
+            project_id=pid, entry_date=date(2026, 10, 1), status="approved",
+        )
+        db.session.add(bad)
+        db.session.commit()
+
+    res = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 5})
+    assert res.status_code == 422 and "error" in res.get_json()
 
 
 def test_issuing_needs_a_real_project(admin_client):

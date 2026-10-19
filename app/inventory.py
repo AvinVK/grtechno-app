@@ -385,7 +385,11 @@ def stock_in(material_id):
     movement = _apply_stock_in(material, f.data)
     db.session.flush()
     if movement.status == "approved":
-        _recompute_material(material)
+        try:
+            _recompute_material(material)
+        except _NegativeStock:
+            db.session.rollback()
+            return jsonify(error="This material's existing history has an issue somewhere already - an approved issue dated before the stock it drew down arrived. Fix the dates on its past entries first."), 422
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=movement.to_dict()), 201
 
