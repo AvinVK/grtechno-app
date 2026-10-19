@@ -41,7 +41,7 @@ def _workplan_module():
 
 @bp.get("/workplan")
 def page():
-    return render_template("workplan.html", page_title="Work plan and announcements")
+    return render_template("workplan.html")
 
 
 def _project_or_404(project_id):

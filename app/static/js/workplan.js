@@ -109,7 +109,7 @@
 
       clear(view).append(h('div', {},
         tabs('plan'),
-        h('div', { class: 'list-head' }, h('h2', {}, 'Work plan'), dateInput),
+        h('div', { class: 'filters' }, dateInput),
         h('section', { class: 'p-section' },
           h('div', { class: 'att-week-head' }, h('h3', {}, 'Field work'), addFieldBtn),
           fieldList),
