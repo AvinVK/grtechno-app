@@ -111,9 +111,12 @@
       clear(fieldList).append(...(fieldRows.length ? fieldRows.map(row) : [h('li', { class: 'empty-state' }, 'Nothing scheduled yet.')]));
       clear(officeList).append(...(officeRows.length ? officeRows.map(row) : [h('li', { class: 'empty-state' }, 'Nothing scheduled yet.')]));
 
+      // dateInput goes straight into the grid (not wrapped in .filters) - .filters' own `margin: 0 auto`
+      // centering, meant for sitting directly in normal block flow (see attendance.js), fights .project-
+      // detail's grid-stretch and collapses it to content width instead of filling the row.
       clear(view).append(h('div', { class: 'project-detail' },
         tabs('plan'),
-        h('div', { class: 'filters' }, dateInput),
+        dateInput,
         h('section', { class: 'p-section' },
           h('div', { class: 'p-section-head' }, h('h3', {}, 'Field work'), addFieldBtn),
           fieldList),
