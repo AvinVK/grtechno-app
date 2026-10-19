@@ -697,14 +697,23 @@ class MaterialMovement(db.Model):
     or where they went.
 
     Some movements need sign-off before they count: a stock-in ('in') from someone who isn't themselves an
-    accountant/office assistant needs approval from one (kohal, 2026-10-16). An issue ('out') always starts
-    as a request now (kohal, 2026-10-17) - approved from Inventory's own Material requests tab by anyone
-    with Inventory access, who records there who physically took it out, how it was transported and when
-    (given_by_worker_id/transport_mode/transported_at) - a direct issue from Inventory itself (not a
-    project's request) still goes straight to 'approved', since whoever's doing it is already the one
-    handing it over. Approving less than what was asked for (not enough in stock) splits the request: this
-    row becomes the approved amount, and a new 'pending' row for the shortfall takes its place, surfacing
-    again once there's enough stock - see inventory.py's approve_issue_request.
+    accountant/office assistant needs approval from one (kohal, 2026-10-16). An issue ('out') is one of two
+    different things that happen to share this same row shape (kohal, 2026-10-19 - the two were getting
+    conflated in Inventory's own Material requests tab, which showed every 'out' row and made a self-issued
+    direct one look exactly like a self-approved request, right after self-approval had just been turned off
+    for requests specifically):
+      - a project's own request (`requested=True`) - always starts 'pending', and the requester can never be
+        the one to approve it, no matter what access they otherwise have (kohal, 2026-10-19: "creator user
+        cannot be approval"). Approved from Inventory's own Material requests tab by anyone *else* with
+        Inventory access, who records there who physically took it out, how it was transported and when
+        (given_by_worker_id/transport_mode/transported_at). Approving less than what was asked for (not
+        enough in stock) splits it: this row becomes the approved amount, and a new 'pending' row for the
+        shortfall takes its place, surfacing again once there's enough stock - see inventory.py's
+        approve_material_request.
+      - a direct issue from Inventory itself (`requested=False`) - not a request at all, so it goes straight
+        to 'approved', self-approved by whoever's doing it, since they're already the one physically handing
+        it over right now. Only ever shown in the material's own movement history, never in the Material
+        requests tab (pending or past) - that tab is for requests specifically.
 
     A movement stays `status='pending'` - excluded from _recompute_material's replay, so it has no effect on
     stock_qty/avg_rate at all - until approved. Rejected the same way, permanently. Every movement from
@@ -744,6 +753,9 @@ class MaterialMovement(db.Model):
     status = db.Column(db.String(10), nullable=False, default="approved", server_default="approved")
     approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
+    # Issue ('out') only - a project's own request, vs a direct issue from Inventory itself (see the class
+    # docstring). Meaningless for a stock-in ('in'), always False there.
+    requested = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
 
     material = db.relationship("Material", back_populates="movements")
     project = db.relationship("Project")
@@ -769,6 +781,7 @@ class MaterialMovement(db.Model):
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),
             "status": self.status,
+            "requested": self.requested,
             "approved_by_name": self.approved_by.name if self.approved_by else None,
             "approved_at": _iso(self.approved_at),
         }

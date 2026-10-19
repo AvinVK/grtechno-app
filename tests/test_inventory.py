@@ -775,6 +775,30 @@ def test_material_request_history_shows_who_approved_or_rejected_it(app, admin_c
     assert approved_id not in {r["id"] for r in accounts_client.get("/api/inventory/material-requests").get_json()["requests"]}
 
 
+def test_a_direct_issue_never_shows_as_a_material_request_even_though_its_self_approved(admin_client):
+    """kohal, 2026-10-19, a screenshot of History: "requetor and creator are the same still somehow" - not
+    a self-approval bug slipping through (that's refused outright now, see test_the_requester_cannot_
+    approve_their_own_request above). A direct issue from Inventory itself is a *different* thing that
+    happens to share the same row shape - always self-approved by design, since whoever's doing it is
+    already the one handing it over - and was showing up in this tab's history looking exactly like one,
+    right after self-approval had just been turned off for requests specifically. requested=False is what
+    tells them apart now (see MaterialMovement's own docstring)."""
+    material = add_material(admin_client)
+    mid = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 20, "rate": 5})
+    pid = add_project(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{mid}/issue", json={"quantity": 3, "project_id": pid})
+    assert res.status_code == 201
+    movement = res.get_json()["movement"]
+    assert movement["status"] == "approved" and movement["requested"] is False
+
+    assert movement["id"] not in {r["id"] for r in admin_client.get("/api/inventory/material-requests").get_json()["requests"]}
+    assert movement["id"] not in {r["id"] for r in admin_client.get("/api/inventory/material-requests/history").get_json()["requests"]}
+    # Still fully visible on the material's own movement history, same as any other stock-in/issue.
+    own_history = admin_client.get(f"/api/inventory/materials/{mid}").get_json()["movements"]
+    assert movement["id"] in {mv["id"] for mv in own_history}
+
+
 def test_a_welder_without_inventory_access_cannot_approve_a_request(app, admin_client):
     mat_id, pid, movement_id = pending_request(admin_client, app)
     welder = signed_in(app, make_user("Wendy Welder", role="welder"))

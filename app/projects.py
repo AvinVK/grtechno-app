@@ -541,7 +541,7 @@ def request_material(project_id):
     movement = MaterialMovement(
         material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
         project_id=project.id, note=f.data.get("note", ""), entry_date=today_local(),
-        created_by_code=g.user.code,
+        created_by_code=g.user.code, requested=True,
         **inv._status_fields(False),
     )
     db.session.add(movement)

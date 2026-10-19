@@ -605,7 +605,10 @@ def _material_request_dict(movement):
 
 @bp.get("/api/inventory/material-requests")
 def material_requests():
-    pending = (MaterialMovement.query.filter_by(kind="out", status="pending")
+    # requested=True only (kohal, 2026-10-19) - a direct issue from Inventory itself is never pending
+    # anyway (see MaterialMovement's own docstring), so this filter changes nothing here in practice; it's
+    # here for the same reason material_request_history below actually needs it.
+    pending = (MaterialMovement.query.filter_by(kind="out", status="pending", requested=True)
                .order_by(MaterialMovement.created_at).all())
     return jsonify(
         requests=[_material_request_dict(mv) for mv in pending],
@@ -618,8 +621,14 @@ def material_requests():
 def material_request_history():
     """Every request that's been dealt with, newest first - who asked, who approved or rejected it, and
     when (kohal, 2026-10-19: "we need to show material request history as well along with who approved
-    it"), same section of the Material requests tab as the pending list above."""
-    rows = (MaterialMovement.query.filter(MaterialMovement.kind == "out", MaterialMovement.status != "pending")
+    it"), same section of the Material requests tab as the pending list above. requested=True only (kohal,
+    2026-10-19: "requetor and creator are the same still somehow") - a direct issue from Inventory itself is
+    always self-approved by design (see MaterialMovement's own docstring), which looked exactly like a
+    self-approved *request* once both showed up in the same list, right after self-approval had just been
+    turned off for requests specifically. A direct issue still shows - in the material's own movement
+    history - just not here, since it was never a request in the first place."""
+    rows = (MaterialMovement.query
+            .filter(MaterialMovement.kind == "out", MaterialMovement.status != "pending", MaterialMovement.requested.is_(True))
             .order_by(MaterialMovement.approved_at.desc(), MaterialMovement.created_at.desc())
             .limit(200).all())
     return jsonify(requests=[_material_request_dict(mv) for mv in rows])
@@ -666,7 +675,7 @@ def approve_material_request(movement_id):
         remainder = MaterialMovement(
             material=material, kind="out", quantity=shortfall, rate=movement.rate, amount=shortfall * movement.rate,
             project_id=movement.project_id, note=movement.note, entry_date=movement.entry_date,
-            created_by_code=movement.created_by_code, status="pending",
+            created_by_code=movement.created_by_code, status="pending", requested=True,
         )
         db.session.add(remainder)
     try:
