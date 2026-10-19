@@ -259,6 +259,12 @@ def can_approve_work_assignment(user) -> bool:
     return user.is_admin
 
 
+def can_send_announcement(user) -> bool:
+    """Who may send one (kohal, 2026-10-19: admin only, no approval step - unlike a work assignment, an
+    announcement is purely informational)."""
+    return user.is_admin
+
+
 # A daily-wage worker's shift rules (kohal, 2026-10-19: "checkedin after this [7-7.30] then only Admin can
 # approve", "checkout after 7.00 pm", "Multiple check in and check out approved by project manager only") -
 # nobody else's attendance is held to these; a salaried/contractor check-in or office/marketing work follows

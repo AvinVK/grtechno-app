@@ -1,11 +1,15 @@
-/* Work plan (kohal, 2026-10-19): a project manager, the accountant, or the admin drafts a day's work -
-   against a project for a field worker, or a location for office staff - and only the admin can approve
-   it. One page, one audience (whoever drafts or approves) - the assigned worker's own alert, once
-   approved, shows on their Me hub instead (app/me.py), not here. */
+/* Work plan and announcements (kohal, 2026-10-19): two subtabs, same shape as Inventory's own Materials/
+   Material requests split -
+   - Work plan: a project manager, the accountant, or the admin drafts a day's work - against a project for
+     a field worker, or a location for office staff - and only the admin can approve it.
+   - Announcements: the admin sends a message to a chosen set of employees, no approval needed.
+   One page, one audience (whoever drafts/sends or approves) - the assigned/addressed person's own side (the
+   Work plan alert on their Me hub, the announcement popup on every page) lives in app/me.py and common.js
+   instead, not here. */
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, confirm, dateField, selectField, field, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, confirm, dateField, searchField, field, closeOnBack } = window.LD;
   const view = $('#view');
 
   const KIND_LABEL = { field: 'Field work', office: 'Office work' };
@@ -18,13 +22,26 @@
     return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
   }
 
+  function fmtDateTime(iso) {
+    return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  }
+
   function statusChip(status) {
     if (status === 'pending') return h('span', { class: 'chip chip-today' }, 'Pending');
     if (status === 'rejected') return h('span', { class: 'chip chip-off' }, 'Rejected');
     return h('span', { class: 'chip chip-active' }, 'Approved');
   }
 
-  async function main() {
+  // Two tabs at the top, same pill shape as Inventory's own section tabs.
+  function tabs(active) {
+    return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Work plan section' },
+      h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'plan' ? 'page' : null }, 'Work plan'),
+      h('a', { class: 'filter-chip', href: '#announcements', 'aria-current': active === 'announcements' ? 'page' : null }, 'Announcements'));
+  }
+
+  /* ---------- Work plan ---------- */
+
+  async function showWorkPlan() {
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     const dateInput = dateField(tomorrowIso(), { clearable: false });
     dateInput.setAttribute('aria-label', 'Date');
@@ -47,7 +64,9 @@
     function row(a) {
       const where = a.kind === 'field' ? a.project_title : a.location;
       const canAct = state.can_approve && a.status === 'pending';
-      const canDelete = a.status === 'pending';
+      // The admin can always fix one; anyone else only while it's still pending - the server has the same
+      // rule (kohal, 2026-10-19: "give option to update work plan") and is the real enforcement either way.
+      const canChange = state.can_approve || a.status === 'pending';
       return h('li', { class: 'p-row' },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, a.worker_name),
@@ -56,7 +75,8 @@
           statusChip(a.status),
           canAct ? h('button', { class: 'btn small primary', type: 'button', onclick: () => act(a, 'approve') }, 'Approve') : null,
           canAct ? h('button', { class: 'btn small', type: 'button', onclick: () => act(a, 'reject') }, 'Reject') : null,
-          canDelete ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); removeOne(a); } }, 'Delete') : null));
+          canChange ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); openSheet(a.kind, a); } }, 'Edit') : null,
+          canChange ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); removeOne(a); } }, 'Delete') : null));
     }
 
     async function act(a, action) {
@@ -88,6 +108,7 @@
       clear(officeList).append(...(officeRows.length ? officeRows.map(row) : [h('li', { class: 'empty-state' }, 'Nothing scheduled yet.')]));
 
       clear(view).append(h('div', {},
+        tabs('plan'),
         h('div', { class: 'list-head' }, h('h2', {}, 'Work plan'), dateInput),
         h('section', { class: 'p-section' },
           h('div', { class: 'att-week-head' }, h('h3', {}, 'Field work'), addFieldBtn),
@@ -105,18 +126,20 @@
       return state.projects.map((p) => ({ value: String(p.id), label: `${p.client_name} – ${p.title}` }));
     }
 
-    function openSheet(kind) {
-      const workerSel = selectField(workerOptions(), '', { title: 'Who is this for', placeholder: 'Choose an employee' });
+    // `existing`, when given, edits that assignment instead of adding a new one (kohal, 2026-10-19: "give
+    // option to update work plan") - same sheet, pre-filled, PATCHing instead of POSTing.
+    function openSheet(kind, existing) {
+      const workerSel = searchField(workerOptions(), existing ? String(existing.worker_id) : '', { placeholder: 'Choose an employee' });
       const projectSel = kind === 'field'
-        ? selectField(projectOptions(), '', { title: 'Which project', placeholder: 'Choose a project' })
+        ? searchField(projectOptions(), existing ? String(existing.project_id) : '', { placeholder: 'Choose a project' })
         : null;
       const locationInput = kind === 'office'
-        ? h('input', { type: 'text', maxlength: 120, autocomplete: 'off', placeholder: 'e.g. Head office' })
+        ? h('input', { type: 'text', maxlength: 120, autocomplete: 'off', placeholder: 'e.g. Head office', value: existing ? existing.location : '' })
         : null;
-      const taskInput = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'What they should do' });
+      const taskInput = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'What they should do', value: existing ? existing.task : '' });
       const errEl = h('p', { class: 'err', role: 'alert' });
       const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
-      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Add');
+      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, existing ? 'Save' : 'Add');
       const finish = closeOnBack(() => overlay.remove());
       const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
       cancelBtn.onclick = () => finish();
@@ -124,17 +147,16 @@
         saveBtn.disabled = true;
         errEl.textContent = '';
         try {
-          await api('/api/work-assignments', {
-            method: 'POST',
-            body: {
-              for_date: dateInput.value, kind, worker_id: workerSel.value,
-              project_id: projectSel ? projectSel.value : null,
-              location: locationInput ? locationInput.value : null,
-              task: taskInput.value,
-            },
-          });
+          const body = {
+            for_date: dateInput.value, kind, worker_id: workerSel.value,
+            project_id: projectSel ? projectSel.value : null,
+            location: locationInput ? locationInput.value : null,
+            task: taskInput.value,
+          };
+          if (existing) await api(`/api/work-assignments/${existing.id}`, { method: 'PATCH', body });
+          else await api('/api/work-assignments', { method: 'POST', body });
           finish();
-          toast('Added');
+          toast(existing ? 'Saved' : 'Added');
           refresh();
         } catch (err) {
           errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
@@ -142,7 +164,7 @@
         }
       };
       overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
-        h('h2', {}, `Add ${KIND_LABEL[kind].toLowerCase()}`),
+        h('h2', {}, `${existing ? 'Edit' : 'Add'} ${KIND_LABEL[kind].toLowerCase()}`),
         field('worker_id', 'Employee', workerSel),
         kind === 'field' ? field('project_id', 'Project', projectSel) : field('location', 'Work location', locationInput),
         field('task', 'Work assigned', taskInput),
@@ -157,5 +179,105 @@
     await refresh();
   }
 
-  main();
+  /* ---------- Announcements ---------- */
+
+  // Search-and-pick more than one employee, same search field everything else uses, with each pick turning
+  // into a removable chip below it (kohal, 2026-10-19: "choose the employees (give same search facility as
+  // mentioned above)"). `.value` is the list of chosen worker ids.
+  function multiWorkerPicker(workers) {
+    const byId = new Map(workers.map((w) => [w.id, w]));
+    const chosen = new Map();
+    const chipsBox = h('div', { class: 'chip-row' });
+    const search = searchField(
+      workers.map((w) => ({ value: w.id, label: w.has_login ? w.name : `${w.name} (no login - won't see it)` })),
+      '', { placeholder: 'Search employees…' },
+    );
+    function renderChips() {
+      clear(chipsBox).append(...[...chosen.keys()].map((id) => {
+        const w = byId.get(id);
+        const removeBtn = h('button', { type: 'button', 'aria-label': `Remove ${w.name}` }, '×');
+        removeBtn.onclick = () => { chosen.delete(id); renderChips(); };
+        return h('span', { class: 'chip chip-removable' }, w.name, removeBtn);
+      }));
+    }
+    search.addEventListener('change', () => {
+      const id = Number(search.value);
+      if (id && byId.has(id) && !chosen.has(id)) {
+        chosen.set(id, true);
+        renderChips();
+      }
+      search.value = '';   // clears the field so the same box can pick the next person too
+    });
+    const wrap = h('div', {}, search, chipsBox);
+    Object.defineProperty(wrap, 'value', { get: () => [...chosen.keys()], configurable: true });
+    return wrap;
+  }
+
+  async function showAnnouncements() {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try {
+      data = await api('/api/announcements');
+    } catch (err) {
+      clear(view).append(h('p', { class: 'empty-state' }, err.message));
+      return;
+    }
+
+    const pickerBox = h('div', {});
+    const messageInput = h('textarea', { maxlength: 500, rows: 3, placeholder: 'What do you want to tell them?' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const sendBtn = h('button', { class: 'btn primary', type: 'button' }, 'Send');
+    let picker = multiWorkerPicker(data.workers);
+    clear(pickerBox).append(picker);
+
+    const historyList = h('ul', { class: 'card-group' });
+    function renderHistory() {
+      clear(historyList).append(...(data.announcements.length ? data.announcements.map((a) => h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, a.message),
+          h('span', { class: 'row-sub' },
+            `${fmtDateTime(a.created_at)} · sent to ${a.recipient_count} · seen by ${a.dismissed_count}`)))) :
+        [h('li', { class: 'empty-state' }, 'Nothing sent yet.')]));
+    }
+    renderHistory();
+
+    sendBtn.onclick = async () => {
+      sendBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        const res = await api('/api/announcements', {
+          method: 'POST', body: { message: messageInput.value, worker_ids: picker.value },
+        });
+        toast('Sent');
+        data.announcements.unshift(res.announcement);
+        renderHistory();
+        messageInput.value = '';
+        picker = multiWorkerPicker(data.workers);
+        clear(pickerBox).append(picker);
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+      }
+      sendBtn.disabled = false;
+    };
+
+    clear(view).append(h('div', {},
+      tabs('announcements'),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Send an announcement'),
+        field('worker_ids', 'Employees', pickerBox),
+        field('message', 'Message', messageInput, { wide: true }),
+        errEl,
+        h('div', { class: 'form-actions' }, sendBtn)),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'History'),
+        historyList)));
+  }
+
+  function route() {
+    if (window.location.hash === '#announcements') return showAnnouncements();
+    return showWorkPlan();
+  }
+
+  window.addEventListener('hashchange', route);
+  route();
 })();

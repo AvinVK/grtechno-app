@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, selectField, dateField, confirm, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, selectField, searchField, dateField, confirm, closeOnBack } = window.LD;
 
   const STATUS = {
     planned: ['Planned', 'planned'],
@@ -134,9 +134,9 @@
     // A label with the red asterisk the lead form puts on mandatory fields.
     const req = (text) => [text, h('span', { class: 'req-mark', 'aria-hidden': 'true' }, ' *')];
 
-    const clientSel = selectField(
+    const clientSel = searchField(
       [{ value: '', label: 'A new client\u2026' }, ...data.clients.map((c) => ({ value: c.id, label: c.name }))],
-      presetClientId ? String(presetClientId) : '', { title: 'Client', placeholder: 'A new client\u2026' });
+      presetClientId ? String(presetClientId) : '', { placeholder: 'A new client\u2026' });
     // Opened from a client's own page: that client is already the one, so there's nothing to pick.
     if (presetClientId) clientSel.disabled = true;
     const newName = h('input', { type: 'text', maxlength: 160, autocomplete: 'off', placeholder: 'Client name' });
@@ -1141,63 +1141,13 @@
         : h('p', { class: 'hint' }, 'No pending requests.'));
   }
 
-  // Search-as-you-type over the material list, same "did you mean" dropdown-under-the-field shape as
-  // Inventory's own material-name autopredict (kohal, 2026-10-19: "a search material feature and auto
-  // suggesstion the way we implemented for other search... if we search for 'wel', it should show all the
-  // material having 'wel'") - matches anywhere in the name or code, not just the start, and resolves to
-  // the material's id (`.value`), not free text, since unlike that one this has to be a real material.
+  // Search-as-you-type over the material list, same shared field every other long picker in the app uses
+  // now (LD.searchField, kohal, 2026-10-19: "add the search feature, like in request material, everywhere"
+  // - this was the one it got generalized from) - matches anywhere in the label (name, code, or stock all
+  // show in it), not just the start.
   function materialSearchField(materials, value) {
-    const byId = new Map(materials.map((m) => [String(m.id), m]));
-    const labelFor = (m) => `${m.code} · ${m.name} (${m.stock_qty} ${m.unit || ''} in stock)`.trim();
-    let selectedId = value != null ? String(value) : '';
-    const input = h('input', {
-      type: 'text', autocomplete: 'off', placeholder: 'Search materials…',
-      value: byId.has(selectedId) ? labelFor(byId.get(selectedId)) : '',
-    });
-    const list = h('ul', { class: 'name-suggest-list', role: 'listbox' });
-    list.hidden = true;
-    const wrap = h('div', { class: 'name-suggest' }, input, list);
-
-    const close = () => { list.hidden = true; clear(list); };
-    // Picking a row sets input.value by hand (not a real keystroke, so the browser won't fire its own
-    // 'input' event for it) and then dispatches one itself, so anything else watching the field - the
-    // surrounding form's own error-clearing, say - notices the change. That synthetic event reaches this
-    // field's *own* listener too, though, which would otherwise stomp the selection it was just given back
-    // to '' a tick later - this flag tells that one "already handled, don't reset" (kohal, 2026-10-19:
-    // picked a suggestion, field still said "Pick a material").
-    let justPicked = false;
-    const showMatches = () => {
-      const q = input.value.trim().toLowerCase();
-      const matches = (q
-        ? materials.filter((m) => m.name.toLowerCase().includes(q) || m.code.toLowerCase().includes(q))
-        : materials
-      ).slice(0, 8);
-      clear(list);
-      if (!matches.length) { list.hidden = true; return; }
-      matches.forEach((m) => list.append(h('li', {
-        class: 'name-suggest-row', role: 'option', tabindex: '-1',
-        onmousedown: (e) => e.preventDefault(),      // keep focus on the field, so the click lands before blur closes the list
-        onclick: () => {
-          selectedId = String(m.id);
-          input.value = labelFor(m);
-          close();
-          justPicked = true;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-        },
-      }, labelFor(m))));
-      list.hidden = false;
-    };
-    input.addEventListener('input', () => {
-      if (justPicked) { justPicked = false; return; }
-      selectedId = '';
-      showMatches();
-    });
-    input.addEventListener('focus', showMatches);
-    input.addEventListener('blur', () => { setTimeout(close, 120); });
-
-    Object.defineProperty(wrap, 'value', { get: () => selectedId, configurable: true });
-    wrap.focus = () => input.focus();
-    return wrap;
+    const items = materials.map((m) => ({ value: m.id, label: `${m.code} · ${m.name} (${m.stock_qty} ${m.unit || ''} in stock)`.trim() }));
+    return searchField(items, value, { placeholder: 'Search materials…' });
   }
 
   // A small form to ask for material - whoever can already approve it (the project's manager, or a site

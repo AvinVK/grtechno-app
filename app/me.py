@@ -21,6 +21,8 @@ from .constants import COMMISSION_ROLE_KEY, OPEN_STAGES
 from .extensions import db
 from .fooding import _fooding_eligible_query as fooding_eligible_workers, account_for
 from .models import (
+    Announcement,
+    AnnouncementRecipient,
     Attendance,
     Client,
     Lead,
@@ -31,6 +33,7 @@ from .models import (
     SiteCategoryRequest,
     WorkAssignment,
     Worker,
+    utcnow,
 )
 from .modules import has_module, modules_for
 from .timeutil import today_local
@@ -132,6 +135,30 @@ def my_work_assignment():
            .filter(WorkAssignment.for_date >= today_local())
            .order_by(WorkAssignment.for_date).first())
     return jsonify(assignment=row.to_dict() if row else None)
+
+
+@bp.get("/api/me/announcements")
+def my_announcements():
+    """Undismissed announcements waiting for the signed-in person (kohal, 2026-10-19: "the selected users
+    should get a pop up as soon as they open the app") - oldest first, so if more than one is waiting they
+    see them in the order they were sent. Nothing to do with the workplan module, same reasoning as
+    my_work_assignment above - checked on every page (see base.html), not just here."""
+    rows = (AnnouncementRecipient.query.join(Announcement)
+            .filter(AnnouncementRecipient.user_code == g.user.code, AnnouncementRecipient.dismissed_at.is_(None))
+            .order_by(Announcement.created_at).all())
+    return jsonify(announcements=[{**r.announcement.to_dict(), "recipient_id": r.id} for r in rows])
+
+
+@bp.post("/api/me/announcements/<int:recipient_id>/dismiss")
+def dismiss_announcement(recipient_id):
+    """The "cut" button on the popup (kohal, 2026-10-19: "a cut option to remove the popup") - only the
+    person it was actually sent to can dismiss their own copy."""
+    row = db.session.get(AnnouncementRecipient, recipient_id)
+    if row is None or row.user_code != g.user.code:
+        return jsonify(error="Not found"), 404
+    row.dismissed_at = utcnow()
+    db.session.commit()
+    return "", 204
 
 
 @bp.get("/api/me/material-approvals")

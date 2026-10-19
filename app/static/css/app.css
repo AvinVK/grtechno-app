@@ -299,6 +299,13 @@ a.stat:hover, button.stat:hover { border-color: var(--line-strong); cursor: poin
 .chip-today { background: var(--amber-tint); color: var(--amber); }
 .chip-soon { background: var(--soon-tint); color: var(--soon); }
 
+/* A picked-from-search item, with its own small remove button - for choosing more than one of something
+   out of a search field (Announcements' employee picker, kohal, 2026-10-19). */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip-removable { display: inline-flex; align-items: center; gap: 4px; background: var(--paper); color: var(--ink); border: 1px solid var(--line-strong); padding: 4px 4px 4px 10px; }
+.chip-removable button { border: 0; background: none; color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 4px; cursor: pointer; }
+.chip-removable button:hover { color: var(--ink); }
+
 /* ---------- All leads ---------- */
 
 .filters {
@@ -1220,6 +1227,10 @@ a.p-client-name { color: var(--accent-dark); }
 .confirm-card p { margin: 0 0 18px; color: var(--muted); overflow-wrap: anywhere; }
 .confirm-actions { display: flex; gap: 10px; }
 .confirm-actions .btn { flex: 1; min-height: var(--tap); padding: 8px 10px; line-height: 1.2; white-space: normal; text-align: center; }
+
+.announcement-card { position: relative; padding-top: 44px; }
+.announcement-close { position: absolute; top: 8px; right: 8px; }
+.announcement-card p { color: var(--ink); margin-bottom: 0; }
 
 .profile-card { text-align: left; }
 .profile-row { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: inherit; }

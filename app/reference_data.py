@@ -64,7 +64,7 @@ NEW_MODULES = [
     ("projects", "Projects", "projects", "/projects", 3),
     ("attendance", "Attendance", "attendance", "/attendance", 4),
     ("inventory", "Inventory", "material", "/inventory", 5),
-    ("workplan", "Work plan", "schedule", "/workplan", 6),
+    ("workplan", "Work plan and announcements", "schedule", "/workplan", 6),
     # Not a tile - see Module.in_nav. A permission gate for the Me hub's own "Manage" section instead
     # (_me_links.html), same pages the admin could already always open.
     ("users", "Users & roles", "user", "/users", 90),

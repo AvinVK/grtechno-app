@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, confirm, plural, money, field, showFieldErrors, selectField, dateField, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, confirm, plural, money, field, showFieldErrors, selectField, searchField, dateField, closeOnBack } = window.LD;
 
   const view = $('#view');
   const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -113,7 +113,7 @@
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const maxQty = Math.min(Number(r.quantity), Number(r.stock_qty));
     const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(maxQty) });
-    const givenBy = selectField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { title: 'Given by', placeholder: 'Who took it' });
+    const givenBy = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Who took it' });
     const transportMode = transportModePicker(data.transport_modes, '');
     const transportedAt = h('input', { type: 'datetime-local', value: nowForDatetimeLocal() });
 
@@ -295,8 +295,8 @@
     if (!isIn && mv.project_id && !projectOptions.some((o) => o.value === mv.project_id)) {
       projectOptions.push({ value: mv.project_id, label: mv.project_title ? `${mv.project_code} · ${mv.project_title}` : 'Previously picked' });
     }
-    const project = !isIn ? selectField(projectOptions, mv.project_id ?? '', { title: 'Project', placeholder: 'Choose a project' }) : null;
-    const givenBy = !isIn ? selectField(data.workers.map((w) => ({ value: w.id, label: w.name })), mv.given_by_worker_id ?? '', { title: 'Given by', placeholder: 'Who gave it out' }) : null;
+    const project = !isIn ? searchField(projectOptions, mv.project_id ?? '', { placeholder: 'Choose a project' }) : null;
+    const givenBy = !isIn ? searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), mv.given_by_worker_id ?? '', { placeholder: 'Who gave it out' }) : null;
     const date = dateField(mv.entry_date, { placeholder: 'Date' });
     const note = h('input', { type: 'text', maxlength: 200, autocomplete: 'off', value: mv.note || '' });
 

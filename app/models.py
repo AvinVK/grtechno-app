@@ -1032,6 +1032,54 @@ class WorkAssignment(db.Model):
         }
 
 
+class Announcement(db.Model):
+    """A message from the admin to a chosen set of employees (kohal, 2026-10-19: "rename work plan to work
+    plan and announcements... choose the employees... and a message to send them. the selected users should
+    get a pop up as soon as they open the app and a cut option to remove the popup") - sent immediately on
+    creation, no approval step (unlike a WorkAssignment, this is purely informational, nothing to sign off
+    on). Who actually got it, and who's dismissed it, lives on AnnouncementRecipient - one row per chosen
+    employee, not just a list on this row, so "seen it" can be tracked per person."""
+
+    __tablename__ = "announcements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    message = db.Column(db.String(500), nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+    recipients = db.relationship(
+        "AnnouncementRecipient", back_populates="announcement", cascade="all, delete-orphan",
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "message": self.message,
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": _iso(self.created_at),
+            "recipient_count": len(self.recipients),
+            "dismissed_count": sum(1 for r in self.recipients if r.dismissed_at is not None),
+        }
+
+
+class AnnouncementRecipient(db.Model):
+    """One chosen employee's own copy of an Announcement - only ever created for a Worker with a login
+    (user_code), since there's no app for someone tracked only via WhatsApp to open and see this in. Stays
+    on record once dismissed (dismissed_at set), rather than being deleted, so "how many have seen it" means
+    something on the announcement's own history."""
+
+    __tablename__ = "announcement_recipients"
+    __table_args__ = (db.UniqueConstraint("announcement_id", "user_code", name="uq_announcement_recipients_user"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    announcement_id = db.Column(db.Integer, db.ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="CASCADE"), nullable=False, index=True)
+    dismissed_at = db.Column(db.DateTime, nullable=True)
+
+    announcement = db.relationship("Announcement", back_populates="recipients")
+    user = db.relationship("User")
+
+
 class Worker(db.Model):
     """A field worker or office staff member who does not sign in to the app - tracked instead from the
     WhatsApp group they mark their attendance in. Separate from User: becomes a User only if ever given

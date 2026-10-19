@@ -173,6 +173,80 @@ def test_once_approved_only_the_admin_can_delete_it(app, manager_client, admin_c
     assert admin_client.delete(f"/api/work-assignments/{record_id}").status_code == 204
 
 
+# ---------- editing an existing one ----------
+
+def test_the_drafter_can_edit_their_own_pending_one_not_someone_elses(app, manager_client, accounts_client):
+    with app.app_context():
+        pid = make_project().id
+        wid = make_worker().id
+    record_id = manager_client.post("/api/work-assignments", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "x",
+    }).get_json()["assignment"]["id"]
+
+    refused = accounts_client.patch(f"/api/work-assignments/{record_id}", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "someone else's edit",
+    })
+    assert refused.status_code == 403
+
+    res = manager_client.patch(f"/api/work-assignments/{record_id}", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "fixed the typo",
+    })
+    assert res.status_code == 200
+    body = res.get_json()["assignment"]
+    assert body["task"] == "fixed the typo" and body["status"] == "pending"   # still waits on the same approval
+
+
+def test_once_approved_only_the_admin_can_edit_it_without_resetting_approval(app, manager_client, admin_client):
+    with app.app_context():
+        pid = make_project().id
+        wid = make_worker().id
+    record_id = manager_client.post("/api/work-assignments", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "x",
+    }).get_json()["assignment"]["id"]
+    admin_client.post(f"/api/work-assignments/{record_id}/approve")
+
+    refused = manager_client.patch(f"/api/work-assignments/{record_id}", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "nope",
+    })
+    assert refused.status_code == 403
+
+    res = admin_client.patch(f"/api/work-assignments/{record_id}", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "corrected by admin",
+    })
+    assert res.status_code == 200
+    body = res.get_json()["assignment"]
+    assert body["task"] == "corrected by admin" and body["status"] == "approved"   # stays approved, no re-approval needed
+
+
+def test_editing_can_switch_it_from_field_to_office_work(app, manager_client):
+    with app.app_context():
+        pid = make_project().id
+        wid = make_worker().id
+    record_id = manager_client.post("/api/work-assignments", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "x",
+    }).get_json()["assignment"]["id"]
+
+    res = manager_client.patch(f"/api/work-assignments/{record_id}", json={
+        "for_date": TOMORROW, "kind": "office", "worker_id": wid, "location": "Head office", "task": "paperwork",
+    })
+    assert res.status_code == 200
+    body = res.get_json()["assignment"]
+    assert body["kind"] == "office" and body["location"] == "Head office" and body["project_id"] is None
+
+
+def test_editing_validates_the_same_as_creating(app, manager_client):
+    with app.app_context():
+        pid = make_project().id
+        wid = make_worker().id
+    record_id = manager_client.post("/api/work-assignments", json={
+        "for_date": TOMORROW, "kind": "field", "worker_id": wid, "project_id": pid, "task": "x",
+    }).get_json()["assignment"]["id"]
+    res = manager_client.patch(f"/api/work-assignments/{record_id}", json={
+        "for_date": YESTERDAY, "kind": "field", "worker_id": wid, "project_id": pid, "task": "x",
+    })
+    assert res.status_code == 422 and "for_date" in res.get_json()["fields"]
+
+
 # ---------- the alert on the assignee's own Me hub ----------
 
 def test_the_assigned_worker_sees_it_on_their_me_hub_once_approved(app, manager_client, admin_client):

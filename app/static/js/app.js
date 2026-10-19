@@ -26,7 +26,7 @@
   // way it always has for anything that sets it directly.
   const filters = { leads: { q: '', view: 'open', stage: '', area: '', service: '', source: '', from: '', to: '' } };
 
-  const { $, h, clear, api, toast, plural, selectField, dateField } = window.LD;
+  const { $, h, clear, api, toast, plural, selectField, searchField, dateField } = window.LD;
 
   async function load() {
     S = await api('/api/state');
@@ -553,9 +553,9 @@
     if (L.enquired_by_id && !enquiryOptions.some((o) => o.value === L.enquired_by_id)) {
       enquiryOptions.push({ value: L.enquired_by_id, label: L.enquired_by_name || 'Previously picked' });
     }
-    const enquiredBySel = selectField(
+    const enquiredBySel = searchField(
       [{ value: '', label: 'Not set' }, ...enquiryOptions],
-      L.enquired_by_id ?? '', { title: 'Enquired by', placeholder: 'Not set' });
+      L.enquired_by_id ?? '', { placeholder: 'Not set' });
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');
@@ -625,9 +625,9 @@
       const sv = lead.survey || {};
       const defaultSurveyor = sv.surveyor_id ?? lead.enquired_by_id;
       const surveyDateInput = dateField(sv.survey_date || '');
-      const surveyorSel = selectField(
+      const surveyorSel = searchField(
         [{ value: '', label: 'Not set' }, ...S.staff.map((w) => ({ value: w.id, label: w.name }))],
-        defaultSurveyor ?? '', { title: 'Surveyed by', placeholder: 'Not set' });
+        defaultSurveyor ?? '', { placeholder: 'Not set' });
       const repName = h('input', { type: 'text', value: sv.rep_name || '', maxlength: 120 });
       const repRole = h('input', { type: 'text', value: sv.rep_role || '', maxlength: 60, placeholder: 'Manager, guard, ...' });
       const repPhone = h('input', { type: 'tel', value: sv.rep_phone || '', maxlength: 40 });

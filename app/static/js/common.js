@@ -269,6 +269,72 @@ window.LD = (() => {
     return btn;
   }
 
+  /* Same job as selectField (pick one of `items`, `.value` is the chosen one), but search-as-you-type
+     instead of a full-screen tap-to-pick list - for a long, open-ended list (every worker, every project,
+     every supplier...) where scrolling to find one is slower than just typing a few letters (kohal,
+     2026-10-19: "add the search feature, like in request material, everywhere" - this generalizes what was
+     first built one-off as materialSearchField in projects.js). Same item shape as selectField
+     ([{value,label}] or plain strings), same opts.placeholder - a drop-in swap at any selectField(...) call
+     site backed by a long list. Matches anywhere in the label, case-insensitive, capped at 8; an empty
+     query shows the first 8 items instead of nothing, so tapping in still offers something before typing. */
+  function searchField(items, value, opts = {}) {
+    const list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
+    let current = value != null ? String(value) : '';
+    const found = () => list.find((i) => String(i.value) === current);
+    const input = h('input', { type: 'text', autocomplete: 'off', placeholder: opts.placeholder || 'Search…' });
+    input.value = found() ? found().label : '';
+    const dropdown = h('ul', { class: 'name-suggest-list', role: 'listbox' });
+    dropdown.hidden = true;
+    const wrap = h('div', { class: 'name-suggest' }, input, dropdown);
+
+    const closeList = () => { dropdown.hidden = true; clear(dropdown); };
+    // Picking a row sets input.value by hand (not a real keystroke, so no native 'input' event fires for
+    // it) and then dispatches one itself, so anything watching the field - the surrounding form's own
+    // error-clearing, say - notices the change. That synthetic event reaches this field's *own* listener
+    // too, though, which would otherwise stomp the pick right back to '' a tick later - this flag tells
+    // that one "already handled, don't reset".
+    let justPicked = false;
+    const showMatches = () => {
+      const q = input.value.trim().toLowerCase();
+      const matches = (q ? list.filter((i) => i.label.toLowerCase().includes(q)) : list).slice(0, 8);
+      clear(dropdown);
+      if (!matches.length) { dropdown.hidden = true; return; }
+      matches.forEach((i) => dropdown.append(h('li', {
+        class: 'name-suggest-row', role: 'option', tabindex: '-1',
+        onmousedown: (e) => e.preventDefault(),      // keep focus on the field, so the click lands before blur closes the list
+        onclick: () => {
+          current = String(i.value);
+          input.value = i.label;
+          closeList();
+          justPicked = true;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        },
+      }, i.label)));
+      dropdown.hidden = false;
+    };
+    input.addEventListener('input', () => {
+      if (justPicked) { justPicked = false; return; }
+      current = '';
+      showMatches();
+    });
+    input.addEventListener('focus', showMatches);
+    input.addEventListener('blur', () => { setTimeout(closeList, 120); });
+
+    Object.defineProperty(wrap, 'value', {
+      get: () => current,
+      set: (v) => { current = v != null ? String(v) : ''; const f = found(); input.value = f ? f.label : ''; },
+      configurable: true,
+    });
+    Object.defineProperty(wrap, 'disabled', {
+      get: () => input.disabled,
+      set: (v) => { input.disabled = v; },
+      configurable: true,
+    });
+    wrap.focus = () => input.focus();
+    return wrap;
+  }
+
   /* An in-app month calendar, instead of the phone's own native date popup. Resolves the chosen date as an
      ISO string ('' for "cleared"), or undefined if closed without choosing. */
   function pickDate(currentIso, opts = {}) {
@@ -422,7 +488,7 @@ window.LD = (() => {
 
   return {
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
-    pickList, selectField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
+    pickList, selectField, searchField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
   };
 })();
 
@@ -441,6 +507,44 @@ window.LD = (() => {
   new IntersectionObserver(([entry]) => {
     bar.classList.toggle('is-collapsed', !entry.isIntersecting);
   }, { rootMargin: '-48px 0px 0px 0px' }).observe(sentinel);
+})();
+
+/* Announcements: a message from the admin, waiting on every page until dismissed (kohal, 2026-10-19: "the
+   selected users should get a pop up as soon as they open the app and a cut option to remove the popup") -
+   checked once per load here, not on any one page's own script, since common.js already runs on every
+   signed-in page (see base.html). More than one waiting shows one at a time, oldest first. */
+(() => {
+  'use strict';
+  const { h, api } = window.LD;
+  const CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+  function showNext(queue) {
+    if (!queue.length) return;
+    const a = queue.shift();
+    const closeBtn = h('button', { type: 'button', class: 'icon-btn announcement-close', 'aria-label': 'Dismiss' });
+    closeBtn.innerHTML = CLOSE_SVG;
+    const card = h('div', {
+      class: 'confirm-card announcement-card', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'announce-title',
+    },
+      closeBtn,
+      h('h2', { id: 'announce-title' }, a.created_by_name ? `From ${a.created_by_name}` : 'Announcement'),
+      h('p', {}, a.message));
+    const overlay = h('div', { class: 'confirm-overlay' }, card);
+    document.body.append(overlay);
+
+    closeBtn.onclick = async () => {
+      overlay.remove();
+      try { await api(`/api/me/announcements/${a.recipient_id}/dismiss`, { method: 'POST' }); } catch (err) { /* already gone either way - nothing to show the person for this */ }
+      showNext(queue);
+    };
+  }
+
+  (async () => {
+    try {
+      const data = await api('/api/me/announcements');
+      if (data.announcements && data.announcements.length) showNext(data.announcements);
+    } catch (err) { /* nothing waiting, or not actually signed in on this load - quietly skip either way */ }
+  })();
 })();
 
 /* Pushed screens' "‹" appbar back link (the label is spoken, not shown - see app.css), for a page whose
