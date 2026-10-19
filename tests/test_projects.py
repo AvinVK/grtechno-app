@@ -163,6 +163,34 @@ def test_site_supervisor_only_sees_projects_theyve_checked_into(app, client, adm
     assert sup_client.get(f"/api/projects/{other}").status_code == 404
 
 
+def contractor_fapa_user(app, name="Chandan Contractor"):
+    """Contractor FAPA (kohal, 2026-10-19: "he needs to be given site supervisor access") - same module
+    access as Site supervisor (projects + attendance, both write), set up directly in the database the same
+    way kohal did on prod for this custom role (see app/roles.py's own docstring)."""
+    if db.session.get(Role, "contractor_fapa") is None:
+        db.session.add(Role(key="contractor_fapa", name="Contractor FAPA", sees_all=False))
+        db.session.flush()
+        for module_key in ("projects", "attendance"):
+            db.session.add(RoleModule(role_key="contractor_fapa", module_key=module_key, write_access=True))
+        db.session.flush()
+    user = make_user(name, role="contractor_fapa")
+    return signed_in(app, user), user
+
+
+def test_contractor_fapa_only_sees_projects_theyve_checked_into(app, client, admin_client):
+    """Same rule as Site supervisor itself (see SITE_SUPERVISOR_ROLE_KEYS) - a project only once they've
+    actually checked Attendance into it, not by ownership/management."""
+    visited = make_project(client, admin_client, company="Site They Visited")
+    other = make_project(client, admin_client, company="Site They Never Went To")
+    contractor_client, contractor = contractor_fapa_user(app)
+    db.session.add(Attendance(user_code=contractor.code, work_date=date.today(),
+                               project_id=visited, check_in_at=utcnow()))
+    db.session.commit()
+    assert [p["id"] for p in contractor_client.get("/api/projects").get_json()["projects"]] == [visited]
+    assert contractor_client.get(f"/api/projects/{visited}").status_code == 200
+    assert contractor_client.get(f"/api/projects/{other}").status_code == 404
+
+
 def test_manager_code_must_be_a_project_manager(client, admin_client, user):
     pid = make_project(client, admin_client)
     res = admin_client.patch(f"/api/projects/{pid}", json={"manager_code": user.code})     # a sales user

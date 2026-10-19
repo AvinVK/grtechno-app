@@ -328,6 +328,33 @@ def test_a_site_supervisors_own_check_in_still_waits_for_approval(app):
     assert today["status"] == "pending"
 
 
+def contractor_fapa_user(app, name="Chandan Contractor"):
+    """Contractor FAPA (kohal, 2026-10-19: "he needs to be given site supervisor access") - a custom role
+    with the same module access as Site supervisor, set up directly in the database same as on prod."""
+    from app.models import Role, RoleModule
+    if db.session.get(Role, "contractor_fapa") is None:
+        db.session.add(Role(key="contractor_fapa", name="Contractor FAPA", sees_all=False))
+        db.session.flush()
+        for module_key in ("projects", "attendance"):
+            db.session.add(RoleModule(role_key="contractor_fapa", module_key=module_key, write_access=True))
+        db.session.flush()
+    user = make_user(name, role="contractor_fapa")
+    return signed_in(app, user), user
+
+
+def test_contractor_fapa_approves_attendance_like_a_site_supervisor(app, client):
+    """Full parity with Site supervisor, not just module access - SITE_SUPERVISOR_ROLE_KEYS is what actually
+    grants the "currently checked in there" approval power (see auth.can_approve_attendance)."""
+    with app.app_context():
+        pid = make_project().id
+    contractor_client, contractor = contractor_fapa_user(app)
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    assert contractor_client.post(f"/api/attendance/{record_id}/approve").status_code == 403   # not checked in there yet
+
+    contractor_client.post("/api/attendance/check-in", json={**LOC, "project_id": pid})
+    assert contractor_client.post(f"/api/attendance/{record_id}/approve").status_code == 200
+
+
 def test_approving_an_attendance_record(app, client):
     with app.app_context():
         pid = make_project().id

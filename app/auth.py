@@ -176,7 +176,10 @@ def visible_leads():
 #  Site supervisor and Alarm Tech cum site supervisor were set up as the same access from the start
 # (kohal's access matrix, 2026-10-14: "Site supervisor = same as Alarm Tech cum site sup") - both get a
 # project only once they've actually checked into it (kohal, 2026-10-16), not by ownership/management.
-SITE_SUPERVISOR_ROLE_KEYS = {"supervisor", "alarm_tech_cum_site_supervisor"}
+# Contractor FAPA (kohal, 2026-10-19: "he needs to be given site supervisor access") joins them the same
+# way Project manager Chandrapur joined PROJECT_MANAGER_ROLE_KEYS below - a custom role, module access set
+# up directly in the database (see app/roles.py), this set is what actually gives it the role's powers.
+SITE_SUPERVISOR_ROLE_KEYS = {"supervisor", "alarm_tech_cum_site_supervisor", "contractor_fapa"}
 
 # Project manager Chandrapur (kohal, 2026-10-18: "alocate chandrapur region projects and all other access
 # as project manager to project manager chandrapur role") - counts as a project manager everywhere else
