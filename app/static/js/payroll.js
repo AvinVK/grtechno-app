@@ -22,6 +22,25 @@
   const shortDate = (d) => `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
   const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
 
+  // Recent pay periods for the "which period was this for" picker below, newest first - same 1-15/16-end
+  // split as app/payroll.py's own _current_month_slots, going back `count` periods from whichever one
+  // today is in.
+  function recentPeriods(count = 6) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = new Date();
+    let y = today.getFullYear();
+    let m = today.getMonth() + 1;   // 1-12
+    let half = today.getDate() <= 15 ? 1 : 2;
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      const lastDay = new Date(y, m, 0).getDate();
+      const [d1, d2] = half === 1 ? [1, 15] : [16, lastDay];
+      out.push({ value: `${y}-${pad(m)}-${pad(d1)}`, label: `${d1}–${d2} ${MONTHS[m - 1]} ${y}` });
+      if (half === 1) { half = 2; m -= 1; if (m === 0) { m = 12; y -= 1; } } else { half = 1; }
+    }
+    return out;
+  }
+
   function tabs(active) {
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Payroll section' },
       h('a', { class: 'filter-chip', href: '#overview', 'aria-current': active === 'overview' ? 'page' : null }, 'Overview'),
@@ -46,13 +65,18 @@
       oninput: (e) => { state.q = e.target.value; render(); },
     });
 
+    // A daily-wage/contractor employee gets two rows, one per this month's own pay-period slot (kohal,
+    // 2026-10-20: "Daily wages should have two slots in month 1 to 15 And 16 to 30 or 31") - the slot shows
+    // right in the title since the name alone no longer tells the rows apart; a salaried employee still
+    // gets one flat monthly row, title unchanged.
     function employeeRow(e) {
+      const title = e.period_label ? `${e.name} · ${e.period_label}` : e.name;
       const basis = e.employment_type === 'regular'
         ? `${plural(e.months || 0, 'month', 'months')} since they started`
         : `${plural(e.days || 0, 'day', 'days')} paid, Sundays included`;
       return h('li', { class: 'p-row' },
         h('span', { class: 'p-main' },
-          h('span', { class: 'row-title' }, e.name),
+          h('span', { class: 'row-title' }, title),
           h('span', { class: 'row-sub' },
             `${EMPLOYMENT_LABEL[e.employment_type]} · ${money(e.wage_amount, cur)} · ${basis} · Earned ${money(e.earned, cur)} · Paid ${money(e.paid, cur)}`)),
         h('span', { class: 'row-value' }, money(e.outstanding, cur)));
@@ -61,7 +85,7 @@
     function render() {
       const q = state.q.trim().toLowerCase();
       const people = rows.filter((e) => !q || e.name.toLowerCase().includes(q));
-      count.textContent = plural(people.length, 'person', 'people');
+      count.textContent = plural(new Set(people.map((e) => e.id)).size, 'person', 'people');
       clear(listBox).append(people.length
         ? h('ul', { class: 'card-group' }, people.map(employeeRow))
         : h('p', { class: 'empty-state' }, rows.length ? 'Nobody matches this search.' : 'No employee has a wage set yet - add one from Employee management.'));
@@ -84,6 +108,15 @@
     return `${n}${suffix} payment`;
   };
 
+  // The same "1-15 Oct 2026" label recentPeriods renders, from a period_start ISO date alone - so a
+  // payment tagged with one shows it in the payments list, not just in the picker that set it.
+  function periodLabelFor(iso) {
+    const d = parseDay(iso);
+    const d1 = d.getDate();
+    const d2 = d1 === 1 ? 15 : new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return `${d1}–${d2} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  }
+
   function paymentsSection(worker, id, currency, modes, onChange) {
     let steps = (worker.payments || []).map((p) => ({ ...p }));
     const stepsLabel = h('p', { class: 'steps-label' });
@@ -95,6 +128,7 @@
         label: (s.label || '').trim() || paymentLabelFor(i),
         amount: s.amount === '' || s.amount == null ? 0 : s.amount,
         mode: s.mode || '', paid_date: s.paid_date || null, comments: (s.comments || '').trim(),
+        period_start: s.period_start || null,
       }));
     }
 
@@ -116,7 +150,8 @@
           ? h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓')
           : h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(i + 1));
         const title = (s.label || '').trim() || paymentLabelFor(i);
-        const subParts = isPaid ? [`Paid ${shortDate(parseDay(s.paid_date))}`, s.mode || null].filter(Boolean) : ['Not paid yet'];
+        const periodLabel = s.period_start ? periodLabelFor(s.period_start) : null;
+        const subParts = (isPaid ? [`Paid ${shortDate(parseDay(s.paid_date))}`, s.mode || null] : ['Not paid yet']).concat(periodLabel ? [periodLabel] : []).filter(Boolean);
         let sub = subParts.join(' · ');
         if (s.comments) sub += ' · note';
         const rowProps = canWrite ? { onclick: () => openStepSheet(i) } : {};
@@ -138,7 +173,10 @@
 
     function openStepSheet(index) {
       const isNew = index === steps.length;
-      const current = isNew ? { label: '', amount: '', mode: '', paid_date: null, comments: '' } : steps[index];
+      const periodChoices = recentPeriods();
+      const current = isNew
+        ? { label: '', amount: '', mode: '', paid_date: null, comments: '', period_start: worker.employment_type === 'regular' ? '' : periodChoices[0].value }
+        : steps[index];
       const trigger = document.activeElement;
       const overlay = h('div', { class: 'overlay' });
       const scroll = h('div', { class: 'drawer-scroll' });
@@ -164,6 +202,15 @@
           onclick: () => { amountInput.value = worker.wage_amount; amountInput.dispatchEvent(new Event('input', { bubbles: true })); },
         }, `Wage/salary amount · ${money(worker.wage_amount, currency)}`));
       }
+
+      // Which pay period this covers - only meaningful for a daily-wage/contractor employee (kohal,
+      // 2026-10-20: "Daily wages should have two slots in month... And regular employees monthly salary"),
+      // so a salaried employee's sheet skips it entirely; this is the only thing that lets Overview's
+      // per-slot "paid" figure mean anything (app/payroll.py matches a payment back to its slot by this).
+      const periodSel = worker.employment_type === 'regular' ? null : selectField(
+        [{ value: '', label: 'No specific period' }, ...periodChoices], current.period_start || '',
+        { title: 'Pay period', placeholder: 'Pay period' });
+      const periodField = periodSel ? field('period_start', 'Pay period', periodSel) : null;
 
       const modeSel = selectField(
         [{ value: '', label: 'Mode of payment' }, ...modes.map((m) => ({ value: m, label: m }))],
@@ -205,6 +252,7 @@
         const draft = {
           label: labelInput.value, amount: amountInput.value, mode: modeSel.value,
           paid_date: paidDateInput.value || null, comments: noteTextarea.value,
+          period_start: periodSel ? (periodSel.value || null) : null,
         };
         const next = steps.slice();
         if (isNew) next.push(draft); else next[index] = draft;
@@ -242,7 +290,7 @@
 
       const total = isNew ? steps.length + 1 : steps.length;
       const title = (current.label || '').trim() || paymentLabelFor(index);
-      scroll.append(
+      scroll.append(...[
         errorBox,
         field('label', 'Label', labelInput),
         h('div', { class: 'field' },
@@ -250,9 +298,11 @@
           h('div', { class: 'amount-input-wrap' }, h('span', { class: 'amount-prefix', 'aria-hidden': 'true' }, currency), amountInput),
           chips,
           h('p', { class: 'err', id: 'err-amount', role: 'alert' })),
+        periodField,
         h('div', { class: 'toggle-row' }, h('span', {}, 'Payment made'), paidToggle),
         modeField, dateFieldEl,
-        noteToggleBtn, noteField);
+        noteToggleBtn, noteField,
+      ].filter(Boolean));
       foot.append(saveBtn);
 
       const drawer = h('div', { class: 'drawer' },

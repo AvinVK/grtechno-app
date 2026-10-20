@@ -364,6 +364,22 @@ def test_payments_must_have_a_label_and_a_valid_amount(admin_client, app):
     assert res.status_code == 422 and "payments" in res.get_json()["fields"]
 
 
+def test_a_payments_period_start_must_be_the_1st_or_the_16th(admin_client, app):
+    """A pay period always starts on one of those two days (app/payroll.py) - anything else can't be
+    matched back to a real slot (kohal, 2026-10-20: "Daily wages should have two slots in month")."""
+    with app.app_context():
+        wid = make("Period Test")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={
+        "payments": [{"label": "X", "amount": 100, "period_start": "2026-10-10"}]})
+    assert res.status_code == 422 and "payments" in res.get_json()["fields"]
+
+    for ok_day in ("2026-10-01", "2026-10-16"):
+        res = admin_client.patch(f"/api/workforce/{wid}", json={
+            "payments": [{"label": "X", "amount": 100, "period_start": ok_day}]})
+        assert res.status_code == 200, res.get_json()
+        assert res.get_json()["worker"]["payments"][0]["period_start"] == ok_day
+
+
 def test_editing_payments_replaces_the_whole_log(admin_client, app):
     with app.app_context():
         wid = make("Replace Log")

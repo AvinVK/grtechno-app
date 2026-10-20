@@ -367,9 +367,14 @@ def _payments(raw, errors):
         f.text("label", 120, required=True, label="a name for each payment entry")
         f.date("due_date")
         f.date("paid_date")
+        f.date("period_start")
         f.text("comments", 2000)
         if isinstance(item, dict) and item.get("mode") not in (None, "", *PAYMENT_MODES):
             f.errors["mode"] = "Choose one of the payment modes"
+        # A pay period always starts on the 1st or the 16th (see app/payroll.py) - anything else can't be
+        # matched back to a real slot, so it's rejected rather than silently kept as an orphan date.
+        if f.data.get("period_start") is not None and f.data["period_start"].day not in (1, 16):
+            f.errors["period_start"] = "Pick a pay period, not just any date"
         problems = dict(f.errors)
         amount = parse_money(item.get("amount", 0) if isinstance(item, dict) else 0, problems, "amount")
         if problems:
@@ -379,6 +384,7 @@ def _payments(raw, errors):
             "label": f.data["label"], "amount": amount, "due_date": f.data.get("due_date"),
             "mode": (item.get("mode") or "") if isinstance(item, dict) else "",
             "paid_date": f.data.get("paid_date"), "comments": f.data.get("comments", ""),
+            "period_start": f.data.get("period_start"),
         })
     return rows
 
@@ -402,7 +408,7 @@ def edit_worker(worker_id):
     if payments is not None:
         worker.payments = [
             WorkerPayment(label=p["label"], amount=p["amount"], due_date=p["due_date"], mode=p["mode"],
-                          paid_date=p["paid_date"], comments=p["comments"], position=i)
+                          paid_date=p["paid_date"], comments=p["comments"], period_start=p["period_start"], position=i)
             for i, p in enumerate(payments, start=1)
         ]
     db.session.commit()

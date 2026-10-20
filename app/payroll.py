@@ -3,16 +3,26 @@ employee with already entered daily wages or salary mentioned. then baased on th
 wages will be calculated as running sum"): two subtabs, same shape as Work plan/Announcements -
 
   - Overview: every employee with a wage set, and what they've earned so far - computed, never typed in,
-    see _payroll_rows below for exactly how.
+    see _payroll_rows below for exactly how. Daily-wage and contractor employees are split into this
+    month's two pay-period slots, 1st-15th and 16th-end (kohal, 2026-10-20: "Daily wages should have two
+    slots in month 1 to 15 And 16 to 30 or 31 And regular employees monthly salary") - a salaried employee
+    stays one flat monthly row, unsplit. Only the current month's two slots are ever shown, never a running
+    history of past ones: a payment's own period tag (WorkerPayment.period_start, added alongside this) is
+    brand new, so an older payment that predates it has no period on it at all - showing every past slot as
+    "outstanding" the moment this ships would make every one of those look unpaid, when really they just
+    were never tagged. Scoping to the current month only sidesteps that entirely.
   - Wages & payments: the add/edit/delete payment log itself, moved here from the Attendance sheet's own
     person page (kohal: "remove the paymant thing inside the attendance and move it here") - the data and
     its API are unchanged (still a Worker's own `payments`, still saved through app/workers.py's PATCH
-    /api/workforce/<id>), only the page it's reached from.
+    /api/workforce/<id>), only the page it's reached from. Each entry can now also carry which pay period
+    it was for (see app/workers.py's own _payments), so Overview's per-slot "paid" figure means something.
 
 Gated by the "workforce" module (app/modules.py), same as Employee management - a look-only role
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
 
+import calendar
 from datetime import date, timedelta
+from decimal import Decimal
 
 from flask import Blueprint, g, jsonify, render_template
 
@@ -28,6 +38,8 @@ api_errors(bp)
 # on daily wages. the users which have daily wages selected in the form should be considered on daily
 # wages") - only "regular" (salary) gets the flat monthly treatment below.
 DAY_RATE_TYPES = ("daily_wages", "contractor")
+
+MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 @bp.before_request
@@ -61,42 +73,70 @@ def _sundays_not_present(start: date, end: date, present: set) -> int:
     return count
 
 
+def _current_month_slots(today: date):
+    """This month's own two pay-period slots, in order: (start, end, label) each."""
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    bounds = [(1, 15), (16, last_day)]
+    return [
+        (date(today.year, today.month, d1), date(today.year, today.month, d2),
+         f"{d1}–{d2} {MONTH_ABBR[today.month]} {today.year}")
+        for d1, d2 in bounds
+    ]
+
+
+def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
+    """One daily-wage/contractor employee's figures for a single pay-period slot - 0 across the board if
+    they hadn't started yet, or there's no attendance data reaching this far."""
+    wage = float(w.wage_amount)
+    days = 0
+    effective_start = max(slot_start, w.first_seen) if w.first_seen else None
+    effective_end = min(slot_end, data_until_end) if data_until_end else None
+    if effective_start and effective_end and effective_end >= effective_start:
+        present = {a.work_date for a in WorkerAttendance.query.filter_by(worker_id=w.id, status="present")
+                   .filter(WorkerAttendance.work_date >= effective_start, WorkerAttendance.work_date <= effective_end)}
+        if w.user_code:
+            present |= {a.work_date for a in Attendance.query.filter_by(user_code=w.user_code, status="approved")
+                        .filter(Attendance.work_date >= effective_start, Attendance.work_date <= effective_end)}
+        days = len(present) + _sundays_not_present(effective_start, effective_end, present)
+    earned = round(wage * days, 2)
+    paid = float(sum((p.amount for p in w.payments if p.period_start == slot_start and p.paid_date is not None),
+                      start=Decimal("0")))
+    return {
+        "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
+        "months": None, "days": days,
+        "period_start": slot_start.isoformat(), "period_end": slot_end.isoformat(), "period_label": label,
+        "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2),
+    }
+
+
 def _payroll_rows() -> list:
-    """One row per employee with a wage set - nobody with no wage_amount shows here, there's nothing to
-    compute from. 'earned' is always computed fresh from attendance (or elapsed months, for salary), never
-    stored - same philosophy as a project's own Materials used or Daily wages (app/projects.py)."""
+    """One row per employee with a wage set (two, for a daily-wage/contractor one - see this module's own
+    docstring) - nobody with no wage_amount shows here, there's nothing to compute from. 'earned' is always
+    computed fresh from attendance (or elapsed months, for salary), never stored - same philosophy as a
+    project's own Materials used or Daily wages (app/projects.py)."""
     _, data_until = _period()
     today = date.today()
-    end = min(today, data_until) if data_until else None
+    data_until_end = min(today, data_until) if data_until else None
+    slots = _current_month_slots(today)
 
     rows = []
     workers = (Worker.query
                .filter(Worker.employment_type.in_(EMPLOYMENT_TYPES), Worker.wage_amount.isnot(None))
                .order_by(Worker.name).all())
     for w in workers:
-        wage = float(w.wage_amount)
-        months = days = None
         if w.employment_type == "regular":
-            if w.first_seen:
-                months = max(0, _months_elapsed(w.first_seen, today))
-            earned = wage * (months or 0)
+            wage = float(w.wage_amount)
+            months = max(0, _months_elapsed(w.first_seen, today)) if w.first_seen else 0
+            earned = round(wage * months, 2)
+            paid = float(w.paid_amount)
+            rows.append({
+                "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
+                "months": months, "days": None, "period_start": None, "period_end": None, "period_label": None,
+                "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2),
+            })
         else:
-            if w.first_seen and end and end >= w.first_seen:
-                present = {a.work_date for a in WorkerAttendance.query.filter_by(worker_id=w.id, status="present")
-                           .filter(WorkerAttendance.work_date <= end)}
-                if w.user_code:
-                    present |= {a.work_date for a in Attendance.query.filter_by(user_code=w.user_code, status="approved")
-                                .filter(Attendance.work_date <= end)}
-                present_days = sum(1 for d in present if d >= w.first_seen)
-                days = present_days + _sundays_not_present(w.first_seen, end, present)
-            earned = wage * (days or 0)
-        earned = round(earned, 2)
-        paid = float(w.paid_amount)
-        rows.append({
-            "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
-            "months": months, "days": days, "earned": earned, "paid": paid,
-            "outstanding": round(earned - paid, 2),
-        })
+            for slot_start, slot_end, label in slots:
+                rows.append(_day_rate_slot_row(w, slot_start, slot_end, label, data_until_end))
     return rows
 
 

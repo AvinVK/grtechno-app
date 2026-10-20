@@ -1269,6 +1269,12 @@ class WorkerPayment(db.Model):
     mode = db.Column(db.String(40), nullable=False, default="", server_default="")
     paid_date = db.Column(db.Date, nullable=True)
     comments = db.Column(db.Text, nullable=False, default="", server_default="")
+    # Which half-month pay period (1st-15th or 16th-end) this covers, as that period's own first day - null
+    # for a payment not tied to one (a salaried employee's, whose earnings aren't split this way, or an
+    # older entry from before this existed). kohal, 2026-10-20: "Daily wages should have two slots in
+    # month 1 to 15 And 16 to 30 or 31" - see app/payroll.py's own docstring for the full picture; this is
+    # what lets Payroll's Overview match a payment to the slot it was actually for.
+    period_start = db.Column(db.Date, nullable=True)
 
     worker = db.relationship("Worker", back_populates="payments")
 
@@ -1279,4 +1285,5 @@ class WorkerPayment(db.Model):
             "mode": self.mode,
             "paid_date": self.paid_date.isoformat() if self.paid_date else None,
             "comments": self.comments,
+            "period_start": self.period_start.isoformat() if self.period_start else None,
         }
