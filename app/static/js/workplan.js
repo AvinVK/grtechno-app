@@ -190,7 +190,11 @@
 
   // Search-and-pick more than one employee, same search field everything else uses, with each pick turning
   // into a removable chip below it (kohal, 2026-10-19: "choose the employees (give same search facility as
-  // mentioned above)"). `.value` is the list of chosen worker ids.
+  // mentioned above)"), plus a "Select all" tick box (kohal, 2026-10-20: "need multiselect employee option
+  // and also select all tick box") - ticked, every employee becomes a chip (still individually removable
+  // afterward, same as any other pick); the box itself reflects whether everyone shown is currently chosen,
+  // so removing even one chip unticks it again rather than silently lying about the state. `.value` is the
+  // list of chosen worker ids.
   function multiWorkerPicker(workers) {
     const byId = new Map(workers.map((w) => [w.id, w]));
     const chosen = new Map();
@@ -199,7 +203,14 @@
       workers.map((w) => ({ value: w.id, label: w.has_login ? w.name : `${w.name} (no login - won't see it)` })),
       '', { placeholder: 'Search employees…' },
     );
+    const selectAllInput = h('input', { type: 'checkbox' });
+    selectAllInput.addEventListener('change', () => {
+      if (selectAllInput.checked) workers.forEach((w) => chosen.set(w.id, true));
+      else chosen.clear();
+      renderChips();
+    });
     function renderChips() {
+      selectAllInput.checked = workers.length > 0 && chosen.size === workers.length;
       clear(chipsBox).append(...[...chosen.keys()].map((id) => {
         const w = byId.get(id);
         const removeBtn = h('button', { type: 'button', 'aria-label': `Remove ${w.name}` }, '×');
@@ -215,7 +226,9 @@
       }
       search.value = '';   // clears the field so the same box can pick the next person too
     });
-    const wrap = h('div', {}, search, chipsBox);
+    const wrap = h('div', {},
+      h('label', { class: 'toggle-row' }, h('span', {}, 'Select all'), selectAllInput),
+      search, chipsBox);
     Object.defineProperty(wrap, 'value', { get: () => [...chosen.keys()], configurable: true });
     return wrap;
   }

@@ -584,8 +584,11 @@ input, select, textarea {
 
 textarea { min-height: 0; padding: 10px 12px; resize: vertical; }
 
-/* Tick boxes, radios and file pickers keep their own small size - not the text fields' tap height. */
-input[type="checkbox"], input[type="radio"], input[type="file"] { min-height: 0; padding: 0; }
+/* Tick boxes, radios and file pickers keep their own small size - not the text fields' tap height or
+   full width (a bare checkbox outside .switch, which bypasses this via position:absolute, was otherwise
+   stretching to fill its flex row and squeezing its own label text - kohal, 2026-10-20, Announcements'
+   new "Select all" tick box). */
+input[type="checkbox"], input[type="radio"], input[type="file"] { width: auto; min-height: 0; padding: 0; }
 
 input[aria-invalid="true"],
 select[aria-invalid="true"],
