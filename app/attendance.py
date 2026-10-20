@@ -145,7 +145,10 @@ def check_in():
     restriction = attendance_restriction(g.user, project, check_in_at)
     approved = can_approve_attendance(g.user, project, restriction)
     row = Attendance(
-        user_code=g.user.code, work_date=date.today(), project_id=project.id if project else None,
+        # The local calendar day *of this check-in*, not whatever day it happens to be when the request is
+        # handled - same derivation attendance_restriction's own "same day" check uses (auth.py), so the two
+        # never disagree about which day a session belongs to.
+        user_code=g.user.code, work_date=to_local(check_in_at).date(), project_id=project.id if project else None,
         check_in_at=check_in_at, check_in_lat=lat, check_in_lng=lng, notes=f.data.get("notes", ""),
         work_kind="marketing" if work == "marketing" and project is None else "",
         status="approved" if approved else "pending",
