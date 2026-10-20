@@ -265,26 +265,31 @@ def create_project():
 
 
 def _material_costs(project):
-    """What's been issued to this project (Inventory's own stock-out ledger - see app/inventory.py), for
-    the Materials tab: one row per approved issue, at whatever rate the stock actually cost at the time,
-    same figure Inventory itself shows. Not gated on the Inventory module - this is the project's own
-    expense, not a stock-management action. A still-pending or rejected request never drew down stock (see
-    MaterialMovement.status), so it isn't a real cost yet and stays off this list - see
-    pending_material_requests for those."""
+    """What's been issued to this project, net of anything sent back (Inventory's own stock ledger - see
+    app/inventory.py), for the Materials tab: one row per approved issue or return, at whatever rate the
+    stock actually cost at the time, same figures Inventory itself shows. A return's own amount comes back
+    negative, so the total nets out on its own (kohal, 2026-10-20: "some of them are not used in the
+    project, so there should be a return to inventory request as well" - the project's own cost should
+    drop back down once material it never used is sent back). Not gated on the Inventory module - this is
+    the project's own expense, not a stock-management action. A still-pending or rejected request never
+    moved stock either way (see MaterialMovement.status), so it isn't a real cost yet and stays off this
+    list - see material_requests for those."""
     movements = (
-        MaterialMovement.query.filter_by(project_id=project.id, kind="out", status="approved")
+        MaterialMovement.query.filter_by(project_id=project.id, status="approved")
+        .filter(MaterialMovement.kind.in_(("out", "in")))
         .order_by(MaterialMovement.entry_date.desc(), MaterialMovement.id.desc())
         .all()
     )
     rows = [{
         "id": mv.id, "material_id": mv.material_id, "material_name": mv.material.name,
-        "material_code": mv.material.code, "unit": mv.material.unit,
-        "quantity": float(mv.quantity), "rate": float(mv.rate), "amount": float(mv.amount),
+        "material_code": mv.material.code, "unit": mv.material.unit, "kind": mv.kind,
+        "quantity": float(mv.quantity), "rate": float(mv.rate),
+        "amount": float(mv.amount) if mv.kind == "out" else -float(mv.amount),
         "entry_date": mv.entry_date.isoformat(), "note": mv.note,
         "given_by_name": mv.given_by.name if mv.given_by else None,
     } for mv in movements]
-    total = float(sum((mv.amount for mv in movements), start=Decimal("0")))
-    return rows, total
+    total = sum((Decimal(str(r["amount"])) for r in rows), start=Decimal("0"))
+    return rows, float(total)
 
 
 def _expenses(project):
@@ -504,14 +509,17 @@ def delete_project(project_id):
     return "", 204
 
 
-# ---------- material requests (kohal, 2026-10-16, updated 2026-10-17, 2026-10-19) ----------
+# ---------- material requests (kohal, 2026-10-16, updated 2026-10-17, 2026-10-19, 2026-10-20) ----------
 #
-# Asking for material against a project lives here, gated by the Projects module like everything else on
-# this page. Approving one doesn't, any more - see app/inventory.py's own Material requests tab
-# (material_requests/approve_material_request there) - anyone with Inventory access can, except whoever
-# asked for it in the first place (kohal, 2026-10-19: "creator user cannot be approval"), and recording who
-# physically took it out, how, and when is an Inventory-side action. This project page just shows what's
-# pending, read-only, and lets anyone who can see the project ask for more.
+# Asking for material against a project - or asking for some of it back (kohal, 2026-10-20: "whatever
+# material is requested by the site supervisor, some of them are not used in the project, so there should
+# be a return to inventory request as well but the quantity and material source will be whatever is present
+# in the project") - lives here, gated by the Projects module like everything else on this page. Approving
+# either doesn't, any more - see app/inventory.py's own Material requests tab (material_requests/
+# approve_material_request there) - anyone with Inventory access can, except whoever asked for it in the
+# first place (kohal, 2026-10-19: "creator user cannot be approval"), and recording who physically handled
+# it, how, and when is an Inventory-side action either way. This project page just shows what's pending,
+# read-only, and lets anyone who can see the project ask for more or send some back.
 
 def _material_request_dict(movement):
     d = movement.to_dict()
@@ -521,32 +529,65 @@ def _material_request_dict(movement):
     return d
 
 
+def _net_issued(project_id, material_id):
+    """How much of this material is still out at this project right now - approved issues minus whatever's
+    already been approved back, both scoped to this project+material. Caps a return request so it can never
+    ask for more than the project could possibly still be holding."""
+    out_qty = (db.session.query(func.coalesce(func.sum(MaterialMovement.quantity), 0))
+               .filter_by(project_id=project_id, material_id=material_id, kind="out", status="approved").scalar())
+    in_qty = (db.session.query(func.coalesce(func.sum(MaterialMovement.quantity), 0))
+              .filter_by(project_id=project_id, material_id=material_id, kind="in", status="approved").scalar())
+    return Decimal(out_qty) - Decimal(in_qty)
+
+
 @bp.get("/api/projects/<int:project_id>/material-requests")
 def material_requests(project_id):
-    """Pending (not yet approved or rejected) issue requests for this project, plus the active material
-    list to request from."""
+    """Pending (not yet approved or rejected) issue and return requests for this project, the active
+    material list to request from, and - for the return form specifically - only materials this project
+    actually still has some of (kohal: "the quantity and material source will be whatever is present in
+    the project"), each with how much of it could still be sent back."""
     project = _project_or_404(project_id)
-    pending = (MaterialMovement.query.filter_by(project_id=project.id, kind="out", status="pending")
+    pending = (MaterialMovement.query.filter_by(project_id=project.id, status="pending")
+               .filter(MaterialMovement.kind.in_(("out", "in")))
                .order_by(MaterialMovement.created_at).all())
+    issued_material_ids = {
+        mv.material_id for mv in
+        MaterialMovement.query.filter_by(project_id=project.id, kind="out", status="approved")
+    }
+    returnable = []
+    for material_id in issued_material_ids:
+        cap = _net_issued(project.id, material_id)
+        if cap <= 0:
+            continue
+        material = db.session.get(Material, material_id)
+        if material is None:
+            continue
+        returnable.append({"id": material.id, "code": material.code, "name": material.name,
+                            "unit": material.unit, "returnable_qty": float(cap)})
+    returnable.sort(key=lambda r: r["name"])
     return jsonify(
         requests=[_material_request_dict(mv) for mv in pending],
         materials=[{"id": m.id, "code": m.code, "name": m.name, "unit": m.unit, "stock_qty": float(m.stock_qty)}
                    for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
+        returnable_materials=returnable,
     )
 
 
 @bp.post("/api/projects/<int:project_id>/material-requests")
 def request_material(project_id):
-    """Ask for material to be issued to this project. Always waits for someone else to approve it from
-    Inventory's own Material requests tab (kohal, 2026-10-19: "it should not be auto approved... creator
-    user cannot be approval") - no self-approval shortcut here any more, not even for whoever already has
-    Inventory access themselves; see app/inventory.py's approve_material_request, which also refuses the
-    requester their own approval if they try it directly."""
+    """Ask for material to be issued to this project, or sent back from it (kohal, 2026-10-20: "there
+    should be a return to inventory request as well") - `kind: "in"` for a return, anything else (or left
+    out) defaults to the usual issue request. Always waits for someone else to approve it from Inventory's
+    own Material requests tab (kohal, 2026-10-19: "it should not be auto approved... creator user cannot be
+    approval") - no self-approval shortcut here any more, not even for whoever already has Inventory access
+    themselves; see app/inventory.py's approve_material_request, which also refuses the requester their own
+    approval if they try it directly."""
     project = _project_or_404(project_id)
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
 
+    kind = "in" if payload.get("kind") == "in" else "out"
     f = Fields(payload)
     f.money("quantity", nullable=False)
     f.text("note", 200)
@@ -559,19 +600,25 @@ def request_material(project_id):
     if material is None or not material.is_active:
         errors["material_id"] = "Pick a material"
 
-    # Asking for more than what's currently in stock is fine - that's the point of a request someone else
-    # has to approve (kohal, 2026-10-17: "say if stock has 5 pipes and request was raised for 7 pipes").
     qty = f.data.get("quantity")
     if qty is None:
         errors.setdefault("quantity", "Enter a quantity greater than 0")
     elif qty <= 0:
         errors["quantity"] = "Enter a quantity greater than 0"
+    elif kind == "in" and material is not None:
+        # Unlike an issue - asking for more than what's in stock is fine there, that's the point of a
+        # request someone else has to approve (kohal, 2026-10-17) - a return can't claim more than the
+        # project could possibly still be holding (kohal, 2026-10-20: "whatever is present in the
+        # project").
+        cap = _net_issued(project.id, material.id)
+        if qty > cap:
+            errors["quantity"] = f"Only {cap} {material.unit or ''} from this project can be returned".strip()
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
 
     rate = material.avg_rate
     movement = MaterialMovement(
-        material=material, kind="out", quantity=qty, rate=rate, amount=qty * rate,
+        material=material, kind=kind, quantity=qty, rate=rate, amount=qty * rate,
         project_id=project.id, note=f.data.get("note", ""), entry_date=today_local(),
         created_by_code=g.user.code, requested=True,
         **inv._status_fields(False),

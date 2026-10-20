@@ -549,15 +549,17 @@ def reject_stock_in(material_id, movement_id):
     return jsonify(material=material.to_dict(), movement=movement.to_dict())
 
 
-# ---------- Material requests (kohal, 2026-10-17, updated 2026-10-19) ----------
+# ---------- Material requests (kohal, 2026-10-17, updated 2026-10-19, 2026-10-20) ----------
 #
-# Every pending issue ('out') request, gathered from every project, in one place - "anyone with Inventory
-# access can approve", so this needs nothing beyond the blueprint's own check_module("inventory") gate
-# above, except whoever asked for it in the first place (kohal, 2026-10-19: "creator user cannot be
-# approval" - no self-approval, not even for an admin's own request); approving records who physically took
-# the material out of the store, how, and when. Asking for more than what's in stock approves only what's
-# there and splits the rest into a new pending request for the same project, which surfaces here again once
-# there's enough stock.
+# Every pending request, gathered from every project, in one place - an issue ('out') to a project, or a
+# return ('in') from one back to stock (kohal, 2026-10-20: "there should be a return to inventory request
+# as well"). "Anyone with Inventory access can approve", so this needs nothing beyond the blueprint's own
+# check_module("inventory") gate above, except whoever asked for it in the first place (kohal, 2026-10-19:
+# "creator user cannot be approval" - no self-approval, not even for an admin's own request); approving
+# records who physically handled the material, how, and when. Asking to issue more than what's in stock
+# approves only what's there and splits the rest into a new pending request for the same project, which
+# surfaces here again once there's enough stock - a return has no such ceiling (adding stock back can't run
+# out), so approving less than claimed just corrects the quantity down instead.
 
 def _material_request_dict(movement):
     d = movement.to_dict()
@@ -572,8 +574,11 @@ def _material_request_dict(movement):
 def material_requests():
     # requested=True only (kohal, 2026-10-19) - a direct issue from Inventory itself is never pending
     # anyway (see MaterialMovement's own docstring), so this filter changes nothing here in practice; it's
-    # here for the same reason material_request_history below actually needs it.
-    pending = (MaterialMovement.query.filter_by(kind="out", status="pending", requested=True)
+    # here for the same reason material_request_history below actually needs it. Both kinds (kohal,
+    # 2026-10-20) - an issue request and a return request sit in the same queue, told apart by `kind` in
+    # what's returned.
+    pending = (MaterialMovement.query.filter(MaterialMovement.kind.in_(("out", "in")),
+                                              MaterialMovement.status == "pending", MaterialMovement.requested.is_(True))
                .order_by(MaterialMovement.created_at).all())
     return jsonify(
         requests=[_material_request_dict(mv) for mv in pending],
@@ -593,7 +598,8 @@ def material_request_history():
     turned off for requests specifically. A direct issue still shows - in the material's own movement
     history - just not here, since it was never a request in the first place."""
     rows = (MaterialMovement.query
-            .filter(MaterialMovement.kind == "out", MaterialMovement.status != "pending", MaterialMovement.requested.is_(True))
+            .filter(MaterialMovement.kind.in_(("out", "in")), MaterialMovement.status != "pending",
+                    MaterialMovement.requested.is_(True))
             .order_by(MaterialMovement.approved_at.desc(), MaterialMovement.created_at.desc())
             .limit(200).all())
     return jsonify(requests=[_material_request_dict(mv) for mv in rows])
@@ -601,7 +607,8 @@ def material_request_history():
 
 @bp.post("/api/inventory/material-requests/<int:movement_id>/approve")
 def approve_material_request(movement_id):
-    movement = MaterialMovement.query.filter_by(id=movement_id, kind="out").first()
+    movement = MaterialMovement.query.filter(MaterialMovement.id == movement_id,
+                                              MaterialMovement.kind.in_(("out", "in"))).first()
     if movement is None:
         abort(404)
     _pending_or_409(movement)
@@ -610,6 +617,7 @@ def approve_material_request(movement_id):
     material = movement.material
     requested = movement.quantity
     payload = _payload()
+    is_return = movement.kind == "in"
 
     f = Fields(payload)
     f.money("quantity", nullable=False)
@@ -620,29 +628,37 @@ def approve_material_request(movement_id):
         f.errors["quantity"] = "Enter a quantity greater than 0"
     elif qty > requested:
         f.errors["quantity"] = f"Only {requested} {material.unit or ''} was requested".strip()
-    elif qty > material.stock_qty:
+    elif not is_return and qty > material.stock_qty:
         f.errors["quantity"] = f"Only {material.stock_qty} {material.unit or 'in'} stock"
     _validate_given_by(payload, f, required=True)
     _transport_fields(payload, f, required=True)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
-    shortfall = requested - qty
     movement.quantity = qty
+    if is_return:
+        # _recompute_material only re-stamps rate/amount for an issue ('out') during its replay - an 'in'
+        # row's amount is never touched there, so approving a smaller quantity than claimed has to be
+        # reflected here or it would silently overstate what came back.
+        movement.amount = (qty * movement.rate).quantize(Decimal("0.01"))
     movement.given_by_worker_id = f.data.get("given_by_worker_id")
     movement.transport_mode = f.data.get("transport_mode", "")
     movement.transported_at = f.data.get("transported_at")
     remainder = None
-    if shortfall > 0:
-        # The part that couldn't be covered stays as its own pending request against the same project, so
-        # it's still there - and still flagged (see Material.pending_requested_qty) - once more stock comes
-        # in, instead of silently losing track of what was short.
-        remainder = MaterialMovement(
-            material=material, kind="out", quantity=shortfall, rate=movement.rate, amount=shortfall * movement.rate,
-            project_id=movement.project_id, note=movement.note, entry_date=movement.entry_date,
-            created_by_code=movement.created_by_code, status="pending", requested=True,
-        )
-        db.session.add(remainder)
+    if not is_return:
+        shortfall = requested - qty
+        if shortfall > 0:
+            # The part that couldn't be covered stays as its own pending request against the same project,
+            # so it's still there - and still flagged (see Material.pending_requested_qty) - once more
+            # stock comes in, instead of silently losing track of what was short. A return has no such
+            # shortfall to carry forward - approving less than claimed just means less actually came back,
+            # not that the project is still owed anything.
+            remainder = MaterialMovement(
+                material=material, kind="out", quantity=shortfall, rate=movement.rate, amount=shortfall * movement.rate,
+                project_id=movement.project_id, note=movement.note, entry_date=movement.entry_date,
+                created_by_code=movement.created_by_code, status="pending", requested=True,
+            )
+            db.session.add(remainder)
     try:
         approve_movement(movement, g.user)
     except _NegativeStock as exc:
@@ -656,7 +672,8 @@ def approve_material_request(movement_id):
 
 @bp.post("/api/inventory/material-requests/<int:movement_id>/reject")
 def reject_material_request(movement_id):
-    movement = MaterialMovement.query.filter_by(id=movement_id, kind="out").first()
+    movement = MaterialMovement.query.filter(MaterialMovement.id == movement_id,
+                                              MaterialMovement.kind.in_(("out", "in"))).first()
     if movement is None:
         abort(404)
     _pending_or_409(movement)

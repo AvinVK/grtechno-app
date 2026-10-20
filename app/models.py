@@ -707,12 +707,23 @@ class MaterialMovement(db.Model):
     becomes the approved amount, and a new 'pending' row for the shortfall takes its place, surfacing again
     once there's enough stock - see inventory.py's approve_material_request.
 
-    `requested` used to also tell a project's request apart from a direct issue straight from Inventory
-    itself - a shortcut, self-approved on the spot, that existed briefly (kohal, 2026-10-17 to 2026-10-19,
-    `requested=False`) before being removed entirely ("even issue to project should have the same process
-    as material request") in favour of always going through a request. A `requested=False` row still on
-    file from that era is historical only - still visible on its material's own movement history, just
-    never in the Material requests tab, same as always.
+    A project can also ask for the reverse (kohal, 2026-10-20: "whatever material is requested by the site
+    supervisor, some of them are not used in the project, so there should be a return to inventory request
+    as well") - a return is a stock-*in* (`kind='in'`) that also carries `project_id` and `requested=True`,
+    the one place `project_id` means anything for an 'in' row at all. Same request/approve shape as an
+    issue, reusing the exact same `requested`/approval machinery, except: the quantity is capped at what's
+    still actually out at that project for that material (see app/projects.py's _net_issued), there's no
+    stock ceiling to hit on approval (adding stock can't go negative), and approving less than claimed just
+    corrects the quantity down - no shortfall remainder row, there's nothing still owed anyone the way an
+    under-stocked issue has. given_by_worker_id/transport_mode there record who received it back and how,
+    not who took it out.
+
+    `requested` used to also tell a project's own issue request apart from a direct issue straight from
+    Inventory itself - a shortcut, self-approved on the spot, that existed briefly (kohal, 2026-10-17 to
+    2026-10-19, `requested=False`) before being removed entirely ("even issue to project should have the
+    same process as material request") in favour of always going through a request. A `requested=False` row
+    still on file from that era is historical only - still visible on its material's own movement history,
+    just never in the Material requests tab, same as always.
 
     A movement stays `status='pending'` - excluded from _recompute_material's replay, so it has no effect on
     stock_qty/avg_rate at all - until approved. Rejected the same way, permanently. Every movement from
@@ -739,9 +750,10 @@ class MaterialMovement(db.Model):
     gst_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount * gst_percent / 100
     total_cost = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount + gst_amount
     bill_filename = db.Column(db.String(80), nullable=True)
-    # Issue (stock-out) only - who physically took the material out of the store, not who happened to be
-    # signed in and recorded the entry (created_by_code, below); how it got from the store to the project,
-    # and when that actually happened - filled in at approval time (kohal, 2026-10-17).
+    # A project's own request only (issue or return, see the class docstring) - who physically took the
+    # material out of the store (or received it back in), not who happened to be signed in and recorded
+    # the entry (created_by_code, below); how it travelled between the store and the project, and when that
+    # actually happened - filled in at approval time (kohal, 2026-10-17).
     given_by_worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True, index=True)
     transport_mode = db.Column(db.String(40), nullable=False, default="", server_default="")
     transported_at = db.Column(db.DateTime, nullable=True)
@@ -751,8 +763,9 @@ class MaterialMovement(db.Model):
     status = db.Column(db.String(10), nullable=False, default="approved", server_default="approved")
     approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
-    # Issue ('out') only - a project's own request, vs a direct issue from Inventory itself (see the class
-    # docstring). Meaningless for a stock-in ('in'), always False there.
+    # A project's own request - an issue ('out') to it, or a return ('in') from it back to stock - vs a
+    # direct stock-in with no project involved at all (see the class docstring). Always False for a plain
+    # stock-in purchase.
     requested = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
 
     material = db.relationship("Material", back_populates="movements")

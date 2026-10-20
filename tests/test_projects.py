@@ -701,6 +701,76 @@ def test_requesting_more_than_stock_is_fine_for_anyone_now_it_always_waits(app, 
     assert res.status_code == 201 and res.get_json()["request"]["status"] == "pending"
 
 
+# ---------- return to inventory (kohal, 2026-10-20) ----------
+#
+# "whatever material is requested by the site supervisor, some of them are not used in the project, so
+# there should be a return to inventory request as well but the quantity and material source will be
+# whatever is present in the project" - a return is a `kind: "in"` request, capped at how much of that
+# material is still out at this project (approved issues minus whatever's already come back).
+
+def test_no_returnable_materials_until_something_has_actually_been_issued(client, admin_client):
+    pid = make_project(client, admin_client)
+    data = admin_client.get(f"/api/projects/{pid}/material-requests").get_json()
+    assert data["returnable_materials"] == []
+
+
+def test_returnable_materials_lists_whats_still_out_at_the_project(app, admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Returnable Site"}).get_json()["project"]["id"]
+    material = add_material_and_issue(app, admin_client, pid, "Cement", quantity=10, rate=50)
+    data = admin_client.get(f"/api/projects/{pid}/material-requests").get_json()
+    row = next(m for m in data["returnable_materials"] if m["id"] == material["id"])
+    assert row["returnable_qty"] == 10 and row["code"] == material["code"]
+
+
+def test_requesting_a_return_for_more_than_whats_out_is_rejected(app, admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Over-return Site"}).get_json()["project"]["id"]
+    material = add_material_and_issue(app, admin_client, pid, "Cement", quantity=10, rate=50)
+    res = admin_client.post(f"/api/projects/{pid}/material-requests",
+                             json={"material_id": material["id"], "quantity": 11, "kind": "in"})
+    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
+
+
+def test_requesting_a_return_within_whats_out_waits_for_approval(app, admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Within-return Site"}).get_json()["project"]["id"]
+    material = add_material_and_issue(app, admin_client, pid, "Cement", quantity=10, rate=50)
+    res = admin_client.post(f"/api/projects/{pid}/material-requests",
+                             json={"material_id": material["id"], "quantity": 10, "kind": "in"})
+    assert res.status_code == 201
+    body = res.get_json()["request"]
+    assert body["status"] == "pending" and body["kind"] == "in"
+
+
+def test_a_material_never_issued_to_the_project_cannot_be_returned(app, admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Nothing Issued Site"}).get_json()["project"]["id"]
+    mat_id = stocked_material(admin_client, qty=20, name="Sand")
+    res = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 1, "kind": "in"})
+    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
+
+
+def test_the_materials_list_shows_a_returned_amount_as_a_negative_cost(app, admin_client):
+    """So the project's own total material cost nets out (issued minus returned) without any separate
+    subtraction logic on the frontend (kohal, 2026-10-20)."""
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Netted Cost Site"}).get_json()["project"]["id"]
+    material = add_material_and_issue(app, admin_client, pid, "Cement", quantity=10, rate=50)
+    req = admin_client.post(f"/api/projects/{pid}/material-requests",
+                             json={"material_id": material["id"], "quantity": 4, "kind": "in"})
+    movement_id = req.get_json()["request"]["id"]
+    approver = signed_in(app, make_user("Returns Approver", role="accounts"))
+    with app.app_context():
+        wid = Worker(name="Returns Storekeeper")
+        db.session.add(wid)
+        db.session.commit()
+        wid = wid.id
+    res = approver.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                         json={"quantity": 4, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
+    assert res.status_code == 200, res.get_json()
+
+    detail = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert detail["total_material_cost"] == 300           # 10*50 issued - 4*50 returned
+    returned_row = next(m for m in detail["materials"] if m["kind"] == "in")
+    assert returned_row["amount"] == -200
+
+
 # ---------- Commission (kohal, 2026-10-18) ----------
 #
 # "the person assigned to [Project manager Chandrapur] gets commission on the negotiated amount of the

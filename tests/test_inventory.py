@@ -736,3 +736,86 @@ def test_a_welder_without_inventory_access_cannot_approve_a_request(app, admin_c
     welder = signed_in(app, make_user("Wendy Welder", role="welder"))
     assert welder.get("/api/inventory/material-requests").status_code == 403
     assert welder.post(f"/api/inventory/material-requests/{movement_id}/approve", json={"quantity": 5}).status_code == 403
+
+
+# ---------- Return to inventory (kohal, 2026-10-20) ----------
+#
+# "whatever material is requested by the site supervisor, some of them are not used in the project, so
+# there should be a return to inventory request as well but the quantity and material source will be
+# whatever is present in the project" - a return is a `kind='in'` request against the same queue, told
+# apart by `kind` on each row (see app/projects.py's own "return to inventory" section for the
+# request-side cap, since that's where it's created).
+
+def pending_return(admin_client, app, issued=10, qty=5, material_name="Cement"):
+    """An approved issue to a project, then a pending return of some of it - the requester (the admin here)
+    still can't approve their own, same as any other request."""
+    material = add_material(admin_client, name=material_name)
+    mat_id = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mat_id}/stock-in", json={"quantity": 50, "rate": 10})
+    pid = add_project(admin_client)
+    approved_issue(app, admin_client, mat_id, pid, issued)
+    res = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": qty, "kind": "in"})
+    assert res.status_code == 201, res.get_json()
+    return mat_id, pid, res.get_json()["request"]["id"]
+
+
+def test_a_return_shows_up_in_the_pending_list_with_its_kind(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    data = accounts_client.get("/api/inventory/material-requests").get_json()
+    row = next(r for r in data["requests"] if r["id"] == movement_id)
+    assert row["kind"] == "in" and row["quantity"] == 4 and row["project_id"] == pid
+
+
+def test_approving_a_return_adds_to_stock_with_no_ceiling_to_hit(app, admin_client, accounts_client):
+    """Unlike an issue, a return can never be blocked by "not enough stock" - it's adding stock, not taking
+    it, so there's nothing to run out of."""
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    before = accounts_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"]
+    wid = add_worker(accounts_client, "Ramesh Storekeeper")
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": 4, "given_by_worker_id": wid, "transport_mode": "Own vehicle",
+    })
+    assert res.status_code == 200, res.get_json()
+    mv = res.get_json()["movement"]
+    assert mv["status"] == "approved" and mv["kind"] == "in" and mv["amount"] == 40      # 4 * rate 10
+    assert res.get_json()["remainder"] is None
+    after = accounts_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"]
+    assert after == before + 4
+
+
+def test_approving_less_than_claimed_on_a_return_has_no_shortfall_remainder(app, admin_client, accounts_client):
+    """A return has nothing still "owed" the way an under-stocked issue does - approving less than claimed
+    just means less actually came back, so there's no remainder row to carry the rest forward."""
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=6)
+    wid = add_worker(accounts_client)
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": 3, "given_by_worker_id": wid, "transport_mode": "Hand carried",
+    })
+    assert res.status_code == 200, res.get_json()
+    body = res.get_json()
+    assert body["movement"]["quantity"] == 3 and body["movement"]["amount"] == 30
+    assert body["remainder"] is None
+    assert accounts_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["pending_requested_qty"] == 0
+
+
+def test_cannot_approve_more_than_claimed_on_a_return(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={"quantity": 5})
+    assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
+
+
+def test_the_requester_cannot_approve_their_own_return(app, admin_client):
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    wid = add_worker(admin_client)
+    res = admin_client.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                             json={"quantity": 4, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
+    assert res.status_code == 403
+
+
+def test_rejecting_a_return_leaves_stock_untouched(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    before = accounts_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"]
+    res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/reject")
+    assert res.status_code == 200 and res.get_json()["movement"]["status"] == "rejected"
+    after = accounts_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"]
+    assert after == before

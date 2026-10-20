@@ -1012,6 +1012,7 @@ a.p-client-name { color: var(--accent-dark); }
 .p-section h3 { font: 600 16px/1.1 var(--font-display); }
 .p-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .p-section-head h3 { margin: 0; }
+.btn-pair { display: flex; gap: 8px; flex: none; }
 
 .pay-summary.bad { color: var(--signal); }
 .pay-summary { font-size: 14px; color: var(--muted); }

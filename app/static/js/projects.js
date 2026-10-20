@@ -1115,10 +1115,13 @@
           materials.length ? h('span', { class: 'p-code' }, money(data.total_material_cost, cur)) : null),
         materials.length
           ? h('ul', { class: 'card-group' }, materials.map((m) => h('li', { class: 'p-row' },
+              m.kind === 'in' ? h('span', { class: 'chip chip-off' }, 'Returned') : null,
               h('span', { class: 'p-main' },
                 h('span', { class: 'row-title' }, `${m.material_code} · ${m.material_name}`),
                 h('span', { class: 'row-sub' },
-                  [fmtDate(m.entry_date), `${m.quantity} ${m.unit || ''}`.trim(), m.given_by_name ? `Given by ${m.given_by_name}` : null, m.note || null]
+                  [fmtDate(m.entry_date), `${m.quantity} ${m.unit || ''}`.trim(),
+                    m.given_by_name ? (m.kind === 'in' ? `Received by ${m.given_by_name}` : `Given by ${m.given_by_name}`) : null,
+                    m.note || null]
                     .filter(Boolean).join(' · '))),
               h('span', { class: 'row-value' }, money(m.amount, cur)))))
           : h('p', { class: 'hint' }, 'No material has been issued to this project yet - see Inventory.'))));
@@ -1151,16 +1154,21 @@
     // Inventory access handles it from there now, not from the project itself, since approving also means
     // recording who physically took the material out and how. This box is read-only: what's still waiting.
     const rows = pending.map((r) => h('li', { class: 'p-row' },
-      h('span', { class: 'chip chip-today' }, 'Pending'),
+      h('span', { class: 'chip chip-today' }, r.kind === 'in' ? 'Return' : 'Pending'),
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
         h('span', { class: 'row-sub' },
           [`${r.quantity} ${r.unit || ''}`.trim(), r.note || null, r.created_by_name ? `Requested by ${r.created_by_name}` : null]
             .filter(Boolean).join(' · ')))));
+    const returnable = data.returnable_materials || [];
     clear(box).append(
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Material requests'),
-        h('button', { class: 'btn small', type: 'button', onclick: () => openRequestMaterial(projectId, data.materials, reload) }, '+ Request material')),
+        h('div', { class: 'btn-pair' },
+          returnable.length
+            ? h('button', { class: 'btn small', type: 'button', onclick: () => openReturnMaterial(projectId, returnable, reload) }, '+ Return material')
+            : null,
+          h('button', { class: 'btn small', type: 'button', onclick: () => openRequestMaterial(projectId, data.materials, reload) }, '+ Request material'))),
       pending.length
         ? h('ul', { class: 'card-group' }, rows)
         : h('p', { class: 'hint' }, 'No pending requests.'));
@@ -1172,6 +1180,14 @@
   // show in it), not just the start.
   function materialSearchField(materials, value) {
     const items = materials.map((m) => ({ value: m.id, label: `${m.code} · ${m.name} (${m.stock_qty} ${m.unit || ''} in stock)`.trim() }));
+    return searchField(items, value, { placeholder: 'Search materials…' });
+  }
+
+  // Same picker, but over `returnable_materials` - only what this project actually still has some of (kohal,
+  // 2026-10-20: "the quantity and material source will be whatever is present in the project"), each
+  // labelled with how much of it could still come back rather than how much is in the main store.
+  function returnableMaterialSearchField(materials, value) {
+    const items = materials.map((m) => ({ value: m.id, label: `${m.code} · ${m.name} (${m.returnable_qty} ${m.unit || ''} returnable)`.trim() }));
     return searchField(items, value, { placeholder: 'Search materials…' });
   }
 
@@ -1212,6 +1228,50 @@
         saveBtn));
     const card = h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Request material' },
       h('h2', {}, 'Request material'), form);
+    const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) overlay.remove(); } }, card);
+    document.body.append(overlay);
+    materialSel.focus?.();
+  }
+
+  // The mirror of openRequestMaterial above, for sending material back (kohal, 2026-10-20: "whatever is
+  // requested by the site supervisor, some of them are not used in the project... there should be a return
+  // to inventory request as well"). Only materials this project could still be holding are offered, each
+  // capped at how much - same `kind: "in"` request Inventory's own Material requests tab then has to accept.
+  function openReturnMaterial(projectId, returnable, reload) {
+    const materialSel = returnableMaterialSearchField(returnable, '');
+    const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' });
+    const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Send return');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          const res = await api(`/api/projects/${projectId}/material-requests`, {
+            method: 'POST', body: { material_id: materialSel.value, quantity: qtyInput.value, note: noteInput.value, kind: 'in' },
+          });
+          toast(res.request.status === 'approved' ? 'Material returned to stock' : 'Return sent for approval');
+          overlay.remove();
+          reload();
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      field('material_id', 'Material', materialSel, { wide: true }),
+      field('quantity', 'Quantity', qtyInput),
+      field('note', 'Note', noteInput, { wide: true }),
+      h('div', { class: 'confirm-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => overlay.remove() }, 'Cancel'),
+        saveBtn));
+    const card = h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Return material' },
+      h('h2', {}, 'Return material'), form);
     const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) overlay.remove(); } }, card);
     document.body.append(overlay);
     materialSel.focus?.();

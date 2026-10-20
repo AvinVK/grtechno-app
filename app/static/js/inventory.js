@@ -110,16 +110,20 @@
   // and time"), plus the quantity actually handed over. Approving less than requested splits the shortfall
   // into a new pending request, flagged on the material from then on (see Material.pending_requested_qty).
   function approveRequestSheet(r, data, onDone) {
+    const isReturn = r.kind === 'in';
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-    const maxQty = Math.min(Number(r.quantity), Number(r.stock_qty));
+    // A return can't exceed what was claimed, but unlike an issue it's never also capped by current stock -
+    // adding stock back can't go negative, so there's no second ceiling to take the min against here.
+    const maxQty = isReturn ? Number(r.quantity) : Math.min(Number(r.quantity), Number(r.stock_qty));
     const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(maxQty) });
-    const givenBy = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Who took it' });
+    const givenBy = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '',
+      { placeholder: isReturn ? 'Who brought it back' : 'Who took it' });
     const transportMode = transportModePicker(data.transport_modes, '');
     const transportedAt = h('input', { type: 'datetime-local', value: nowForDatetimeLocal() });
 
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
-    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Approve');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, isReturn ? 'Accept' : 'Approve');
     const finish = closeOnBack(() => overlay.remove());
     overlay.onclick = (e) => { if (e.target === overlay) finish(); };
     cancelBtn.onclick = () => finish();
@@ -135,7 +139,10 @@
           },
         });
         finish();
-        toast(res.remainder ? `Approved ${qty.value} - ${res.remainder.quantity} ${r.unit || ''} still pending` : 'Request approved');
+        // A return never comes back with a remainder (see app/inventory.py's approve_material_request) -
+        // approving less than claimed just means less actually came back, nothing still owed anyone.
+        toast(res.remainder ? `Approved ${qty.value} - ${res.remainder.quantity} ${r.unit || ''} still pending`
+          : (isReturn ? 'Return accepted' : 'Request approved'));
         onDone();
       } catch (err) {
         errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
@@ -143,10 +150,12 @@
       }
     };
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
-      h('h2', {}, `Approve · ${r.material_name}`),
-      h('p', { class: 'hint' }, `${r.quantity} ${r.unit || ''} requested · ${r.stock_qty} ${r.unit || ''} in stock`.trim()),
-      field('quantity', 'Quantity to hand over', qty),
-      field('given_by_worker_id', 'Given by', givenBy),
+      h('h2', {}, `${isReturn ? 'Accept return' : 'Approve'} · ${r.material_name}`),
+      h('p', { class: 'hint' }, isReturn
+        ? `${r.quantity} ${r.unit || ''} to come back`.trim()
+        : `${r.quantity} ${r.unit || ''} requested · ${r.stock_qty} ${r.unit || ''} in stock`.trim()),
+      field('quantity', isReturn ? 'Quantity actually returned' : 'Quantity to hand over', qty),
+      field('given_by_worker_id', isReturn ? 'Received by' : 'Given by', givenBy),
       field('transport_mode', 'Transport', transportMode),
       field('transported_at', 'Date and time', transportedAt),
       errEl,
@@ -174,7 +183,8 @@
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
         h('span', { class: 'row-sub' },
-          [`${r.quantity} ${r.unit || ''}`.trim(),
+          [r.kind === 'in' ? 'Return' : null,
+            `${r.quantity} ${r.unit || ''}`.trim(),
             r.project_title ? `${r.project_code} · ${r.project_title}` : null,
             r.created_by_name ? `Requested by ${r.created_by_name}` : null,
             r.approved_by_name ? `${r.status === 'approved' ? 'Approved' : 'Rejected'} by ${r.approved_by_name}` : null]
@@ -196,16 +206,17 @@
 
     const reload = () => showRequests();
     const rows = data.requests.map((r) => h('li', { class: 'p-row' },
-      h('span', { class: 'chip chip-today' }, 'Pending'),
+      h('span', { class: 'chip chip-today' }, r.kind === 'in' ? 'Return' : 'Pending'),
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
         h('span', { class: 'row-sub' },
-          [`${r.quantity} ${r.unit || ''} requested`.trim(), `${r.stock_qty} ${r.unit || ''} in stock`.trim(),
+          [r.kind === 'in' ? `${r.quantity} ${r.unit || ''} to return`.trim() : `${r.quantity} ${r.unit || ''} requested`.trim(),
+            r.kind === 'in' ? null : `${r.stock_qty} ${r.unit || ''} in stock`.trim(),
             r.project_title ? `${r.project_code} · ${r.project_title}` : null,
             r.created_by_name ? `Requested by ${r.created_by_name}` : null, r.note || null]
             .filter(Boolean).join(' · ')),
         h('span', { class: 'bill-links' },
-          h('button', { type: 'button', class: 'link-btn', onclick: () => approveRequestSheet(r, data, reload) }, 'Approve'),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => approveRequestSheet(r, data, reload) }, r.kind === 'in' ? 'Accept' : 'Approve'),
           h('button', { type: 'button', class: 'link-btn', onclick: () => rejectRequest(r, reload) }, 'Reject')))));
 
     clear(view).append(h('div', {},
