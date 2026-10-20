@@ -414,3 +414,111 @@ def test_a_huge_range_is_rejected(app, admin_client):
         wid = daily_wage_worker().id
     res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start=2026-01-01&end=2026-12-31")
     assert res.status_code == 422
+
+
+# ---------- /api/payroll/periods - a daily-wage/contractor person's cycles, current and previous ----------
+#
+# kohal, 2026-10-20: "it should open consolidates 15 days cycles. current and previous. along with its
+# total dues" - the screen between Overview and one cycle's own day-by-day.
+
+def prev_slot(start):
+    """The slot immediately before the one that starts on `start` - test infrastructure only, a plain
+    reimplementation independent of app/payroll.py's own _day_rate_periods (the thing under test)."""
+    if start.day == 16:
+        return date(start.year, start.month, 1), date(start.year, start.month, 15)
+    prev_month_last = start - timedelta(days=1)
+    return date(prev_month_last.year, prev_month_last.month, 16), prev_month_last
+
+
+def test_periods_needs_the_workforce_module(client, accounts_client, app):
+    with app.app_context():
+        wid = daily_wage_worker().id
+    url = f"/api/payroll/periods?worker_id={wid}"
+    assert client.get(url).status_code == 403
+    assert accounts_client.get(url).status_code == 200
+
+
+def test_a_worker_who_started_this_slot_has_only_the_current_one(app, admin_client):
+    start, _ = current_slot()
+    with app.app_context():
+        wid = daily_wage_worker(first_seen=start).id
+    res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert len(body["periods"]) == 1
+    assert body["periods"][0]["period_start"] == start.isoformat()
+    assert body["total_outstanding"] == body["periods"][0]["outstanding"]
+
+
+def test_periods_go_back_to_first_seen_current_first(app, admin_client):
+    start, end = current_slot()
+    one_back_start, _ = prev_slot(start)
+    two_back_start, _ = prev_slot(one_back_start)
+    with app.app_context():
+        wid = daily_wage_worker(first_seen=two_back_start).id
+        extend_data_until(end)
+    res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
+    assert res.status_code == 200
+    periods = res.get_json()["periods"]
+    assert len(periods) == 3
+    assert [p["period_start"] for p in periods] == [start.isoformat(), one_back_start.isoformat(), two_back_start.isoformat()]
+
+
+def test_periods_each_carry_their_own_earned_paid_outstanding(app, admin_client):
+    start, end = complete_slot()
+    worked_day = a_weekday_in(start, end)
+    sundays = 0
+    d = start
+    while d <= end:
+        if d.weekday() == 6 and d != worked_day:
+            sundays += 1
+        d += timedelta(days=1)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
+        present(w, worked_day)
+        db.session.add(WorkerPayment(worker=w, label="Advance", amount=Decimal("200"),
+                                      paid_date=end, period_start=start))
+        extend_data_until(end)
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
+    assert res.status_code == 200
+    row = next(p for p in res.get_json()["periods"] if p["period_start"] == start.isoformat())
+    expected_earned = 500.0 * (1 + sundays)
+    assert row["earned"] == expected_earned and row["paid"] == 200.0 and row["outstanding"] == expected_earned - 200.0
+
+
+def test_total_outstanding_is_the_sum_of_every_period_shown(app, admin_client):
+    start, end = current_slot()
+    one_back_start, _ = prev_slot(start)
+    with app.app_context():
+        wid = daily_wage_worker(first_seen=one_back_start).id
+        extend_data_until(end)
+    res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
+    body = res.get_json()
+    assert body["total_outstanding"] == round(sum(p["outstanding"] for p in body["periods"]), 2)
+
+
+def test_a_contractor_also_gets_periods(app, admin_client):
+    start, _ = current_slot()
+    with app.app_context():
+        wid = daily_wage_worker(employment_type="contractor", first_seen=start).id
+    res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
+    assert res.status_code == 200 and len(res.get_json()["periods"]) == 1
+
+
+def test_a_salaried_worker_has_no_periods(app, admin_client):
+    """Pay isn't period-sliced for a salaried employee - nothing for this endpoint to show."""
+    with app.app_context():
+        wid = salaried_worker().id
+    res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
+    assert res.status_code == 404
+
+
+def test_periods_unknown_or_unwaged_worker_is_a_404(app, admin_client):
+    assert admin_client.get("/api/payroll/periods?worker_id=999999").status_code == 404
+    with app.app_context():
+        w = Worker(name="No Wage", category="manpower", employment_type="daily_wages")
+        db.session.add(w)
+        db.session.commit()
+        wid = w.id
+    assert admin_client.get(f"/api/payroll/periods?worker_id={wid}").status_code == 404

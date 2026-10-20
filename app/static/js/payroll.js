@@ -68,37 +68,39 @@
       oninput: (e) => { state.q = e.target.value; render(); },
     });
 
-    // A daily-wage/contractor employee gets two rows, one per this month's own pay-period slot (kohal,
-    // 2026-10-20: "Daily wages should have two slots in month 1 to 15 And 16 to 30 or 31") - the slot shows
-    // right in the title since the name alone no longer tells the rows apart; a salaried employee still
-    // gets one flat monthly row, title unchanged.
-    // Tapping a row opens the day-by-day behind it (kohal, 2026-10-20: "clicking on one should show logged
-    // in hours for each day and corresponding pay and then total at the top") - a day-rate slot's own
-    // start/end carry straight into the link; a salaried row has no period of its own (its pay isn't
-    // day-based at all), so it links to this month's days-so-far instead, for attendance context only.
+    // One row per person, not one per slot - a daily-wage/contractor employee's two current slots (see
+    // app/payroll.py's own docstring) fold into a single row here, outstanding summed across both, same
+    // grouping showWagesList below already does. Tapping a daily-wage/contractor row now opens the list of
+    // pay-period cycles behind them, current and previous, each with its own due (kohal, 2026-10-20: "it
+    // should open consolidates 15 days cycles. current and previous. along with its total dues") rather
+    // than jumping straight to one slot's days; a salaried row has no such cycle (pay isn't period-sliced
+    // for them), so it still goes straight to this month's days-so-far, for attendance context only.
+    const byId = new Map();
+    for (const e of rows) {
+      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0 });
+      byId.get(e.id).outstanding += e.outstanding;
+    }
+    const people = [...byId.values()];
+
     function employeeRow(e) {
-      const title = e.period_label ? `${e.name} · ${e.period_label}` : e.name;
-      const basis = e.employment_type === 'regular'
-        ? `${plural(e.months || 0, 'month', 'months')} since they started`
-        : `${plural(e.days || 0, 'day', 'days')} paid, Sundays included`;
-      const href = e.period_start
-        ? `#overview/person/${e.id}/${e.period_start}/${e.period_end}`
-        : `#overview/person/${e.id}`;
+      const isDayRate = e.employment_type !== 'regular';
+      const basis = isDayRate ? null : `${plural(e.months || 0, 'month', 'months')} since they started`;
+      const href = isDayRate ? `#overview/person/${e.id}/cycles` : `#overview/person/${e.id}`;
       return h('li', {}, h('a', { class: 'p-row people-row', href },
         h('span', { class: 'p-main' },
-          h('span', { class: 'row-title' }, title),
+          h('span', { class: 'row-title' }, e.name),
           h('span', { class: 'row-sub' },
-            `${EMPLOYMENT_LABEL[e.employment_type]} · ${money(e.wage_amount, cur)} · ${basis} · Earned ${money(e.earned, cur)} · Paid ${money(e.paid, cur)}`)),
+            [EMPLOYMENT_LABEL[e.employment_type], money(e.wage_amount, cur), basis].filter(Boolean).join(' · '))),
         h('span', { class: 'row-value' }, money(e.outstanding, cur))));
     }
 
     function render() {
       const q = state.q.trim().toLowerCase();
-      const people = rows.filter((e) => !q || e.name.toLowerCase().includes(q));
-      count.textContent = plural(new Set(people.map((e) => e.id)).size, 'person', 'people');
-      clear(listBox).append(people.length
-        ? h('ul', { class: 'card-group' }, people.map(employeeRow))
-        : h('p', { class: 'empty-state' }, rows.length ? 'Nobody matches this search.' : 'No employee has a wage set yet - add one from Employee management.'));
+      const filtered = people.filter((e) => !q || e.name.toLowerCase().includes(q));
+      count.textContent = plural(filtered.length, 'person', 'people');
+      clear(listBox).append(filtered.length
+        ? h('ul', { class: 'card-group' }, filtered.map(employeeRow))
+        : h('p', { class: 'empty-state' }, people.length ? 'Nobody matches this search.' : 'No employee has a wage set yet - add one from Employee management.'));
     }
     render();
 
@@ -433,6 +435,32 @@
     clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, sectionBox));
   }
 
+  /* ---------- one daily-wage/contractor person's pay-period cycles, current and previous ---------- */
+
+  async function showPersonPeriods(id) {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api(`/api/payroll/periods?worker_id=${id}`); }
+    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    LD.setAppbarBack?.('Overview', '#overview');
+    const cur = data.currency;
+
+    function periodRow(p, isCurrent) {
+      return h('li', {}, h('a', { class: 'p-row people-row', href: `#overview/person/${id}/${p.period_start}/${p.period_end}` },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, p.period_label, isCurrent ? h('span', { class: 'chip chip-today' }, 'Current') : null),
+          h('span', { class: 'row-sub' }, `${plural(p.days || 0, 'day', 'days')} paid, Sundays included`)),
+        h('span', { class: 'row-value' }, money(p.outstanding, cur))));
+    }
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('div', { class: 'att-head' }, h('h2', {}, data.worker.name), h('span', { class: 'att-head-date' }, EMPLOYMENT_LABEL[data.worker.employment_type])),
+      h('p', { class: 'wk-legend' }, `Total due: ${money(data.total_outstanding, cur)}`),
+      data.periods.length
+        ? h('ul', { class: 'card-group' }, data.periods.map((p, i) => periodRow(p, i === 0)))
+        : h('p', { class: 'empty-state' }, 'No pay cycles yet.')));
+  }
+
   /* ---------- one Overview row's own days: hours logged and the pay each one carries ---------- */
 
   function dayRow(d, cur, isDayRate) {
@@ -455,7 +483,10 @@
     try { overview = await api('/api/payroll/overview'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     const myRows = (overview.employees || []).filter((e) => e.id === id);
     if (!myRows.length) { clear(view).append(h('p', { class: 'empty-state' }, 'Not found.')); return; }
-    LD.setAppbarBack?.('Overview', '#overview');
+    // Reached with an explicit period means from that person's own cycles list - back goes there, not all
+    // the way out to Overview; a salaried row (never a period of its own) always came straight from Overview.
+    if (startIso && endIso) LD.setAppbarBack?.('Cycles', `#overview/person/${id}/cycles`);
+    else LD.setAppbarBack?.('Overview', '#overview');
 
     const isDayRate = myRows[0].employment_type !== 'regular';
     let start = startIso;
@@ -489,7 +520,9 @@
 
   function route() {
     const hash = window.location.hash;
-    let m = /^#overview\/person\/(\d+)(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(hash);
+    let m = /^#overview\/person\/(\d+)\/cycles$/.exec(hash);
+    if (m) return showPersonPeriods(Number(m[1]));
+    m = /^#overview\/person\/(\d+)(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(hash);
     if (m) return showPersonDays(Number(m[1]), m[2] || null, m[3] || null);
     m = /^#payments\/person\/(\d+)$/.exec(hash);
     if (m) return showPersonPayments(Number(m[1]));

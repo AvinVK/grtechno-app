@@ -40,6 +40,7 @@ from .validation import api_errors
 from .workers import EMPLOYMENT_TYPES, _period
 
 DAY_BY_DAY_MAX_RANGE = 62   # a pay-period slot is ~16 days, a month ~31 - this is generous headroom, not a real limit
+MAX_PERIODS = 24   # a year's worth of slots back from the current one - plenty for "current and previous", not unbounded
 
 bp = Blueprint("payroll", __name__)
 api_errors(bp)
@@ -134,6 +135,41 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     }
 
 
+def _day_rate_periods(w, today: date, data_until_end):
+    """Every pay-period slot behind one daily-wage/contractor employee, current first and going back to
+    whenever they first showed up (or MAX_PERIODS slots, whichever is shorter) - each with its own
+    earned/paid/outstanding, same figures _current_month_slots' two rows already use (kohal, 2026-10-20: "it
+    should open consolidates 15 days cycles. current and previous. along with its total dues"). A payment
+    made before WorkerPayment.period_start existed has no period tag to match against, so a slot from before
+    that still shows as fully outstanding even if it was actually paid at the time - same caveat
+    _payroll_rows' own current-month-only scoping was written to dodge, now accepted deliberately since
+    seeing the history is the whole point of this list."""
+    periods = []
+    y, m = today.year, today.month
+    half = 1 if today.day <= 15 else 2
+    limit_date = w.first_seen or today
+    while len(periods) < MAX_PERIODS:
+        last_day = calendar.monthrange(y, m)[1]
+        d1, d2 = (1, 15) if half == 1 else (16, last_day)
+        slot_start = date(y, m, d1)
+        slot_end = date(y, m, d2)
+        if slot_end < limit_date:
+            break
+        label = f"{d1}–{d2} {MONTH_ABBR[m]} {y}"
+        periods.append(_day_rate_slot_row(w, slot_start, slot_end, label, data_until_end))
+        # Step to the previous (older) slot: 16th-end steps back to the same month's 1st-15th; 1st-15th
+        # steps back to the *previous* month's 16th-end.
+        if half == 2:
+            half = 1
+        else:
+            half = 2
+            m -= 1
+            if m == 0:
+                m = 12
+                y -= 1
+    return periods
+
+
 def _payroll_rows() -> list:
     """One row per employee with a wage set (two, for a daily-wage/contractor one - see this module's own
     docstring) - nobody with no wage_amount shows here, there's nothing to compute from. 'earned' is always
@@ -219,6 +255,30 @@ def _day_by_day(w, start: date, end: date, data_until_end):
 @bp.get("/api/payroll/overview")
 def overview():
     return jsonify(employees=_payroll_rows(), currency=settings_for_client()["currency"])
+
+
+@bp.get("/api/payroll/periods")
+def periods():
+    """Every pay-period cycle behind one daily-wage/contractor Overview row, current first (kohal,
+    2026-10-20: "it should open consolidates 15 days cycles. current and previous. along with its total
+    dues") - the screen between Overview and one cycle's own day-by-day (app/static/js/payroll.js's
+    showPersonPeriods). Salaried has no such cycle - pay isn't period-sliced for them (see _payroll_rows'
+    own docstring) - so there's nothing for this endpoint to return for one; the frontend never calls it for
+    a regular employee, straight to the days view instead."""
+    worker = db.session.get(Worker, request.args.get("worker_id", type=int))
+    if worker is None or worker.wage_amount is None or worker.employment_type not in DAY_RATE_TYPES:
+        abort(404)
+    _, data_until = _period()
+    today = date.today()
+    data_until_end = min(today, data_until) if data_until else None
+    rows = _day_rate_periods(worker, today, data_until_end)
+    return jsonify(
+        worker={"id": worker.id, "name": worker.name, "employment_type": worker.employment_type,
+                "wage_amount": float(worker.wage_amount)},
+        periods=rows,
+        total_outstanding=round(sum(r["outstanding"] for r in rows), 2),
+        currency=settings_for_client()["currency"],
+    )
 
 
 @bp.get("/api/payroll/days")
