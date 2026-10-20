@@ -169,13 +169,18 @@
         if (day < firstDay || day > todayDate) continue;
         const sessions = byDay.get(dayKey(day));
         if (sessions && sessions.length) {
-          // Only an approved session counts toward the week's days/hours (see Attendance.status) - a
-          // pending or rejected one still shows in the row itself (with its own chip), just not counted
-          // here yet.
+          // Only an approved session counts toward the week's worked days/hours (see Attendance.status) -
+          // a day with nothing approved but something rejected counts as absent instead (kohal, 2026-10-20:
+          // "if the attendance is rejected, it should show absent for the person"), same as a day with no
+          // session at all; a still-pending one (no approval yet, nothing rejected either) stays uncounted
+          // either way until it's decided. The row itself still shows its own "Rejected" chip either way -
+          // more specific than a plain Absent would be.
           const approved = sessions.filter((a) => a.status === 'approved');
           if (approved.length) {
             worked += 1;
             total += approved.reduce((sum, a) => sum + (a.hours || 0), 0);
+          } else if (sessions.some((a) => a.status === 'rejected')) {
+            absent += 1;
           }
           rows.push(sessions.length === 1 ? recordRow(shortDate(day), sessions[0], onDeleted) : groupedDayRow(shortDate(day), sessions, onDeleted));
         } else if (day < todayDate && day.getDay() !== 0) {
