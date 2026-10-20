@@ -335,15 +335,38 @@
     const picker = searchField(people, personId || '', { placeholder: 'Search employees…' });
     const detailBox = h('div', {});
 
+    // Currently due and last paid (kohal, 2026-10-20: "it has to show current payment to be done and last
+    // paid for what term") - the same figures Overview already computes, just for this one person, plus
+    // their own most recent paid entry and whichever period it was tagged to (if any). For a daily-wage/
+    // contractor employee "currently due" is both of this month's slots added together, since that's what
+    // actually needs settling right now; a salaried employee has just the one unsplit row.
     async function loadPerson(id) {
       clear(detailBox).append(h('p', { class: 'loading' }, 'Loading…'));
-      let data;
-      try { data = await api(`/api/workforce/${id}`); } catch (err) { clear(detailBox).append(h('p', { class: 'empty-state' }, err.message)); return; }
+      let data, overview;
+      try {
+        [data, overview] = await Promise.all([api(`/api/workforce/${id}`), api('/api/payroll/overview')]);
+      } catch (err) { clear(detailBox).append(h('p', { class: 'empty-state' }, err.message)); return; }
+      const cur = data.currency;
       const sub = [EMPLOYMENT_LABEL[data.worker.employment_type],
-        data.worker.wage_amount != null ? money(data.worker.wage_amount, data.currency) : null].filter(Boolean).join(' · ');
-      clear(detailBox).append(
+        data.worker.wage_amount != null ? money(data.worker.wage_amount, cur) : null].filter(Boolean).join(' · ');
+
+      const myRows = (overview.employees || []).filter((e) => e.id === id);
+      const dueLine = myRows.length
+        ? h('p', { class: 'wk-legend' }, `Currently due: ${money(myRows.reduce((sum, r) => sum + r.outstanding, 0), cur)}`)
+        : null;
+
+      const paidEntries = (data.worker.payments || []).filter((p) => p.paid_date);
+      const lastPaid = paidEntries.length
+        ? paidEntries.reduce((a, b) => (a.paid_date > b.paid_date ? a : b)) : null;
+      const lastPaidLine = h('p', { class: 'hint' }, lastPaid
+        ? `Last paid ${money(lastPaid.amount, cur)}${lastPaid.period_start ? ` for ${periodLabelFor(lastPaid.period_start)}` : ''} · ${shortDate(parseDay(lastPaid.paid_date))}`
+        : 'No payments recorded yet.');
+
+      clear(detailBox).append(...[
         h('div', { class: 'att-head' }, h('h3', {}, data.worker.name), h('span', { class: 'att-head-date' }, sub)),
-        paymentsSection(data.worker, id, data.currency, data.payment_modes, () => loadPerson(id)));
+        dueLine, lastPaidLine,
+        paymentsSection(data.worker, id, cur, data.payment_modes, () => loadPerson(id)),
+      ].filter(Boolean));
     }
 
     picker.addEventListener('change', () => {
