@@ -683,6 +683,23 @@ def test_the_requester_cannot_approve_their_own_request(app, admin_client):
     assert res2.status_code == 200 and res2.get_json()["movement"]["approved_by_name"] == "Other Accounts"
 
 
+def test_the_requester_cannot_reject_their_own_request_either(app, admin_client):
+    """Same ban as approving (kohal, 2026-10-20: "even reject material for request and return both should
+    not be done by the creator") - deciding your own request either way is still deciding it."""
+    material = add_material(admin_client)
+    mat_id = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mat_id}/stock-in", json={"quantity": 20, "rate": 10})
+    pid = add_project(admin_client)
+    requester = signed_in(app, make_user("Anil Accounts", role="accounts"))
+    movement_id = requester.post(f"/api/projects/{pid}/material-requests", json={"material_id": mat_id, "quantity": 5}).get_json()["request"]["id"]
+
+    assert requester.post(f"/api/inventory/material-requests/{movement_id}/reject").status_code == 403
+
+    other = signed_in(app, make_user("Other Accounts", role="accounts"))
+    res = other.post(f"/api/inventory/material-requests/{movement_id}/reject")
+    assert res.status_code == 200 and res.get_json()["movement"]["status"] == "rejected"
+
+
 def test_material_request_history_shows_who_approved_or_rejected_it(app, admin_client, accounts_client):
     mat_id, pid, approved_id = pending_request(admin_client, app, material_name="Cement")
     wid = add_worker(accounts_client)
@@ -810,6 +827,11 @@ def test_the_requester_cannot_approve_their_own_return(app, admin_client):
     res = admin_client.post(f"/api/inventory/material-requests/{movement_id}/approve",
                              json={"quantity": 4, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
     assert res.status_code == 403
+
+
+def test_the_requester_cannot_reject_their_own_return_either(app, admin_client):
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    assert admin_client.post(f"/api/inventory/material-requests/{movement_id}/reject").status_code == 403
 
 
 def test_rejecting_a_return_leaves_stock_untouched(app, admin_client, accounts_client):

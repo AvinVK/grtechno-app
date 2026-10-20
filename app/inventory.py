@@ -555,8 +555,9 @@ def reject_stock_in(material_id, movement_id):
 # return ('in') from one back to stock (kohal, 2026-10-20: "there should be a return to inventory request
 # as well"). "Anyone with Inventory access can approve", so this needs nothing beyond the blueprint's own
 # check_module("inventory") gate above, except whoever asked for it in the first place (kohal, 2026-10-19:
-# "creator user cannot be approval" - no self-approval, not even for an admin's own request); approving
-# records who physically handled the material, how, and when. Asking to issue more than what's in stock
+# "creator user cannot be approval" - no self-approval, not even for an admin's own request, and the same
+# ban applies to rejecting it, kohal 2026-10-20 - deciding your own request either way is still deciding
+# it); approving records who physically handled the material, how, and when. Asking to issue more than what's in stock
 # approves only what's there and splits the rest into a new pending request for the same project, which
 # surfaces here again once there's enough stock - a return has no such ceiling (adding stock back can't run
 # out), so approving less than claimed just corrects the quantity down instead.
@@ -677,6 +678,8 @@ def reject_material_request(movement_id):
     if movement is None:
         abort(404)
     _pending_or_409(movement)
+    if movement.created_by_code == g.user.code:
+        abort(403, "Someone else needs to decide this - not whoever asked for it.")
     reject_movement(movement, g.user)
     db.session.commit()
     return jsonify(movement=_material_request_dict(movement))
