@@ -9,11 +9,13 @@ Gated by the "workforce" module (app/modules.py), same as any other service - lo
 read but not write access there (Accountant, Office Assistant: can't add, edit, remove, or change roles);
 everyone else who has it at all, and the real admin always, has both.
 
-Two pages under Manage share one script (people.js): "Employee management" (who's where, and the last
-week at a glance) and "Attendance sheet" (everyone ranked by attendance, lowest first, with each person's
-full day-by-day record). The older per-category JSON APIs (/api/workers, /api/staff) are kept exactly
-admin-only as they were - they still use category, not role_key, since Leads relies on them server-side,
-not through a browser session (see app/api.py)."""
+Two pages share one script (people.js): "Employee management" (who's where, and the last week at a
+glance - reached from Me - Manage) and "Attendance sheet" (everyone ranked by attendance, lowest first,
+with each person's full day-by-day record - reached from a "Sheet" link on the Attendance page itself,
+app/attendance.py, kohal, 2026-10-20: wanted the two attendance views reachable from one place instead of
+this one buried under Me - Manage). The older per-category JSON APIs (/api/workers, /api/staff) are kept
+exactly admin-only as they were - they still use category, not role_key, since Leads relies on them
+server-side, not through a browser session (see app/api.py)."""
 
 from datetime import date, timedelta
 
@@ -24,7 +26,7 @@ from werkzeug.exceptions import HTTPException, abort
 from .constants import PAYMENT_MODES
 from .extensions import db
 from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
-from .modules import can_write, check_module
+from .modules import can_write, check_module, has_module
 from .validation import Fields, parse_money
 
 EMPLOYMENT_TYPES = ("regular", "daily_wages", "contractor")
@@ -79,8 +81,12 @@ def workforce_page():
 
 @page_bp.get("/attendance-sheet")
 def sheet_page():
+    # A link back to Today's attendance (app/attendance.py, which now also folds this page's own top list
+    # in as an "Attendance register" subtab - kohal, 2026-10-20) - this page stays reachable on its own for
+    # its direct URL and a person's full day-by-day record, just no longer from Me - Manage.
     return render_template("people.html", mode="sheet", page_title="Attendance sheet",
-                            can_write=can_write(g.user, "workforce"))
+                            can_write=can_write(g.user, "workforce"),
+                            can_see_attendance=has_module(g.user, "attendance"))
 
 
 # The separate Manpower list and Staff list pages were folded into Employee management; old links still land.

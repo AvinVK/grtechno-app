@@ -36,8 +36,11 @@ def test_manage_is_for_the_admin_only(client, admin_client):
     assert "Manage" not in client.get("/me").get_data(as_text=True)
     html = admin_client.get("/me").get_data(as_text=True)
     assert 'id="me-manage"' in html
-    for href in ("/users", "/workforce", "/attendance-sheet"):
+    # Attendance sheet is no longer a Manage row - it's reached from the Attendance page itself
+    # (kohal, 2026-10-20), see test_attendance.py/test_workforce.py for that link's own gating.
+    for href in ("/users", "/workforce"):
         assert f'href="{href}"' in html
+    assert 'href="/attendance-sheet"' not in html
     # Hiding the links is not the access control - the pages still refuse anyone else.
     for url in ("/users", "/workforce", "/attendance-sheet"):
         assert client.get(url).status_code == 403

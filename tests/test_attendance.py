@@ -45,6 +45,15 @@ def test_needs_sign_in(anon):
     assert anon.get("/attendance").status_code == 302
 
 
+def test_the_sheet_link_only_shows_up_for_someone_who_can_also_see_it(manager_client, accounts_client, admin_client):
+    """A "Sheet" link to the Attendance sheet (app/workers.py) only makes sense for someone who can also
+    open it - the project manager has Attendance but not workforce, so data-can-see-workforce stays 0 for
+    them (kohal, 2026-10-20: wanted the two attendance views reachable from each other)."""
+    assert 'data-can-see-workforce="0"' in manager_client.get("/attendance").get_data(as_text=True)
+    assert 'data-can-see-workforce="1"' in accounts_client.get("/attendance").get_data(as_text=True)
+    assert 'data-can-see-workforce="1"' in admin_client.get("/attendance").get_data(as_text=True)
+
+
 # ---------- checking in and out ----------
 
 def test_check_in_with_no_project_then_check_out(client):

@@ -1,7 +1,9 @@
 /* Attendance: check yourself in and out as many times a day as you like (a lunch break, a second site),
-   optionally against a running project. Admin and the Accountant also get a Team tab with everyone's
+   optionally against a running project. Admin and the Accountant also get a Team link with everyone's
    register for a chosen day. The admin doesn't check in at all (data-team-only): their Attendance is just
-   that register. */
+   that register. Anyone who can also see the workforce module gets a second subtab, "Attendance register"
+   (kohal, 2026-10-20) - everyone ranked by attendance, lowest first; see showRegister below, and
+   app/workers.py/people.js for the fuller page (HR details, payments, day-by-day record) it links out to. */
 (() => {
   'use strict';
 
@@ -10,6 +12,7 @@
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
   const teamOnly = view.dataset.teamOnly === '1';
+  const canSeeWorkforce = view.dataset.canSeeWorkforce === '1';
 
   const today = () => new Date().toISOString().slice(0, 10);
 
@@ -276,6 +279,19 @@
     if (show && actions) actions.append(h('a', { id: 'att-team-link', class: 'att-team-link', href: '#team' }, 'Team'));
   }
 
+  /* "Today's attendance" / "Attendance register" subtabs - same .stage-filter/.filter-chip pattern as
+     Work plan/Announcements (app/static/js/workplan.js), kohal, 2026-10-20: "cant both be clubbed and
+     shown as 2 subtabs? attendance register and today's attendance" (an earlier, lighter attempt just
+     linked out to the Attendance sheet page from the app bar - this replaces that). Only shown to someone
+     who can also see the register; "Today's attendance" covers both the Mine and Team screens, which stay
+     reachable from each other the same way they always were (the "Team" app-bar link, untouched). */
+  function tabs(active) {
+    if (!canSeeWorkforce) return null;
+    return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Attendance section' },
+      h('a', { class: 'filter-chip', href: window.location.pathname, 'aria-current': active === 'today' ? 'page' : null }, "Today's attendance"),
+      h('a', { class: 'filter-chip', href: '#register', 'aria-current': active === 'register' ? 'page' : null }, 'Attendance register'));
+  }
+
   /* ---------- my attendance ---------- */
 
   async function showMine() {
@@ -380,6 +396,7 @@
     renderHistory();
 
     clear(view).append(h('div', {},
+      tabs('today'),
       h('div', { class: 'att-head' },
         h('h2', {}, 'Today'),
         h('span', { class: 'att-head-date' }, shortDate(new Date()))),
@@ -417,6 +434,7 @@
     dateInput.onchange = refresh;
 
     clear(view).append(h('div', {},
+      tabs('today'),
       // The top bar already says "Team attendance" for the admin (team_only) - only worth repeating
       // in-page for someone whose top bar still says "Your attendance" while they're looking at this;
       // the way back for them is the appbar's own back link (set above), not an in-page one.
@@ -425,7 +443,83 @@
     refresh();
   }
 
+  /* ---------- attendance register: everyone ranked by attendance, lowest first (kohal, 2026-10-20) -
+     same data and shape as the top list on the Attendance sheet page (app/workers.py/people.js), folded in
+     here as an instant-switch subtab instead of a separate page to click through to. A person's full
+     day-by-day record (HR details, payments, weeks of history) stays on that page though - richer code
+     shared with Employee management's own detail view, not worth duplicating here - so tapping a row is an
+     ordinary link out to it, not a hash within this script. ---------- */
+
+  const UNASSIGNED = 'unassigned';
+  const groupLabel = (k, roles) => (k === UNASSIGNED ? 'Unassigned' : roles[k] || k);
+  const rate = (p) => (p.days ? p.present_days / p.days : 1);
+
+  function sheetRow(p) {
+    const pct = Math.round(rate(p) * 100);
+    const fill = h('i', { class: pct >= 80 ? 'full' : pct < 50 ? 'low' : null });
+    fill.style.width = `${pct}%`;
+    return h('li', {}, h('a', { class: 'att-day people-row', href: `/attendance-sheet#p${p.id}` },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, p.name),
+        h('span', { class: 'att-day-hours', 'aria-label': `${p.present_days} of ${p.days} days` }, p.days ? `${p.present_days}/${p.days}` : '—')),
+      h('span', { class: 'att-day-sub' }, p.days
+        ? `${pct}% present · ${plural(p.days - p.present_days, 'day', 'days')} missed`
+        : 'Not counted - started after this period'),
+      p.days ? h('div', { class: 'att-bar', 'aria-hidden': 'true' }, fill) : null));
+  }
+
+  async function showRegister() {
+    LD.resetAppbarBack?.();
+    setTeamLink(false);
+    stopElapsedTimer();
+    document.body.classList.remove('has-att-bar');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/workforce'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    const groups = Object.keys(data).filter((k) => Array.isArray(data[k]));
+    const state = { q: '', group: 'all' };
+    const period = data.period ? `${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}` : null;
+    const order = (a, b) => rate(a) - rate(b) || a.name.localeCompare(b.name);
+
+    const count = h('span', { class: 'att-week-sum' });
+    const chips = h('div', { class: 'stage-filter people-chips', role: 'group', 'aria-label': 'Show group' });
+    const listBox = h('div', {});
+    const search = h('input', {
+      type: 'search', placeholder: 'Search by name', 'aria-label': 'Search by name',
+      oninput: (e) => { state.q = e.target.value; render(); },
+    });
+
+    function render() {
+      const pool = state.group === 'all' ? groups.flatMap((g) => data[g]) : data[state.group];
+      const q = state.q.trim().toLowerCase();
+      const people = pool.filter((p) => !q || p.name.toLowerCase().includes(q)).sort(order);
+      count.textContent = plural(people.length, 'person', 'people');
+      clear(chips).append(...[['all', 'All', groups.reduce((n, g) => n + data[g].length, 0)],
+        ...groups.map((g) => [g, groupLabel(g, data.roles), data[g].length])].map(([value, label, n]) => h('button', {
+        type: 'button', class: 'filter-chip', 'aria-pressed': String(state.group === value),
+        onclick: () => { state.group = value; render(); },
+      }, label, h('span', { class: 'n' }, n))));
+      clear(listBox).append(people.length
+        ? h('ul', { class: 'att-week-card' }, people.map(sheetRow))
+        : h('p', { class: 'empty-state' }, pool.length ? 'Nobody matches this search.' : 'Nobody here yet.'));
+    }
+    render();
+
+    clear(view).append(h('div', {},
+      tabs('register'),
+      h('div', { class: 'list-head' }, h('h2', {}, 'Everyone'), count),
+      search,
+      chips,
+      h('p', { class: 'wk-legend' }, ['Lowest attendance first', period].filter(Boolean).join(' · ')),
+      listBox,
+      h('p', { class: 'hint people-note' }, data.data_until
+        ? `Attendance data up to ${shortDate(parseDay(data.data_until))}`
+        : 'No attendance data yet.')));
+  }
+
   function route() {
+    if (canSeeWorkforce && window.location.hash === '#register') return showRegister();
     if (teamOnly || window.location.hash === '#team') return showTeam();
     return showMine();
   }

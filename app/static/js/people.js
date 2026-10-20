@@ -19,6 +19,7 @@
   const view = $('#view');
   const mode = view.dataset.mode;
   const canWrite = view.dataset.canWrite === '1';
+  const canSeeAttendance = view.dataset.canSeeAttendance === '1';
   const UNASSIGNED = 'unassigned';
   // Same key as app/constants.py's COMMISSION_ROLE_KEY - who earns commission on a project's negotiated
   // amount (kohal, 2026-10-18), gating the "Commission earned" stat below.
@@ -52,6 +53,18 @@
   const dataNote = (data) => h('p', { class: 'hint people-note' }, data.data_until
     ? `Attendance data up to ${shortDate(parseDay(data.data_until))}`
     : 'No attendance data yet.');
+
+  /* The reverse of attendance.js's own "Sheet" link - a way back to Team/Your attendance without going
+     through Me - Manage (kohal, 2026-10-20). Only shown on the Attendance sheet's own list screen (never
+     roster mode, since canSeeAttendance is only ever true when the sheet page's own route set it), and
+     hidden again once drilled into a person, same idea as attendance.js hiding its own Team link once
+     already on the Team screen. */
+  function setAttendanceLink(show) {
+    const existing = document.getElementById('people-attendance-link');
+    if (existing) existing.remove();
+    const actions = document.querySelector('.appbar-actions');
+    if (show && actions) actions.append(h('a', { id: 'people-attendance-link', class: 'att-team-link', href: '/attendance' }, 'Attendance'));
+  }
 
   async function load() {
     return api('/api/workforce');
@@ -100,6 +113,7 @@
     const groups = Object.keys(data).filter((k) => Array.isArray(data[k]));
     const state = { q: '', group: groups.includes(key) ? key : 'all' };
     const sheet = mode === 'sheet';
+    setAttendanceLink(sheet && canSeeAttendance);
     const period = data.period ? `${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}` : null;
     const legend = sheet
       ? h('p', { class: 'wk-legend' }, ['Lowest attendance first', period].filter(Boolean).join(' · '))
@@ -773,6 +787,7 @@
   }
 
   async function showPerson(id) {
+    setAttendanceLink(false);
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api(`/api/workforce/${id}`); } catch (err) {

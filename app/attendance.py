@@ -20,7 +20,7 @@ from .auth import (
 )
 from .extensions import db
 from .models import AbsenceRequest, Attendance, Project, User, utcnow
-from .modules import check_module
+from .modules import check_module, has_module
 from .timeutil import today_local, to_local
 from .validation import Fields, api_errors
 
@@ -65,10 +65,15 @@ def _coord(payload, name, low, high, errors):
 
 @bp.get("/attendance")
 def page():
+    # An "Attendance register" subtab shows up here for anyone who can also see it (kohal, 2026-10-20:
+    # "cant both be clubbed and shown as 2 subtabs? attendance register and today's attendance") - the
+    # register itself still lives on the Attendance sheet page (app/workers.py) for its own direct URL and
+    # a person's full day-by-day record, but its top list is folded into this page too, see attendance.js.
+    can_see_workforce = has_module(g.user, "workforce")
     # The admin doesn't check in or out - their Attendance is the team register for a chosen day.
     if g.user.is_admin:
-        return render_template("attendance.html", page_title="Team attendance", team_only=True)
-    return render_template("attendance.html", page_title="Your attendance", team_only=False)
+        return render_template("attendance.html", page_title="Team attendance", team_only=True, can_see_workforce=can_see_workforce)
+    return render_template("attendance.html", page_title="Your attendance", team_only=False, can_see_workforce=can_see_workforce)
 
 
 def _no_admin_check_ins():

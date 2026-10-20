@@ -60,10 +60,19 @@ def test_pages_and_api_are_role_gated(client, manager_client, accounts_client, a
     assert 'data-mode="sheet"' in sheet
 
 
-def test_both_are_in_the_admin_menu_only(client, admin_client):
-    for label in ("Employee management", "Attendance sheet"):
-        assert label not in client.get("/me").get_data(as_text=True)
-        assert label in admin_client.get("/me").get_data(as_text=True)
+def test_employee_management_is_in_the_admin_menu_only(client, admin_client):
+    assert "Employee management" not in client.get("/me").get_data(as_text=True)
+    assert "Employee management" in admin_client.get("/me").get_data(as_text=True)
+
+
+def test_attendance_sheet_is_no_longer_in_the_me_menu(admin_client):
+    """Moved off Me - Manage onto a "Sheet" link on the Attendance page itself (kohal, 2026-10-20) - see
+    test_attendance.py for that link's own gating, and the reciprocal "Attendance" link back from here."""
+    assert "Attendance sheet" not in admin_client.get("/me").get_data(as_text=True)
+
+
+def test_the_sheet_page_carries_a_link_back_to_attendance(accounts_client):
+    assert 'data-can-see-attendance="1"' in accounts_client.get("/attendance-sheet").get_data(as_text=True)
 
 
 def test_attendance_is_called_your_attendance_in_the_menu(client):

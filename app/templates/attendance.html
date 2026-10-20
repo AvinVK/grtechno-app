@@ -5,7 +5,7 @@
 {% block page_title %}{{ page_title }}{% endblock %}
 
 {% block content %}
-<main id="view" class="view" tabindex="-1" data-team-only="{{ 1 if team_only else 0 }}"><p class="loading">Loading attendance…</p></main>
+<main id="view" class="view" tabindex="-1" data-team-only="{{ 1 if team_only else 0 }}" data-can-see-workforce="{{ 1 if can_see_workforce else 0 }}"><p class="loading">Loading attendance…</p></main>
 <script src="{{ asset('js/attendance-core.js') }}" defer></script>
 <script src="{{ asset('js/attendance.js') }}" defer></script>
 {% endblock %}
