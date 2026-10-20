@@ -283,7 +283,6 @@
     clear(view).append(h('div', { class: 'project-detail' },
       tabs('announcements'),
       h('section', { class: 'p-section' },
-        h('h3', {}, 'Send an announcement'),
         field('worker_ids', 'Employees', pickerBox),
         field('message', 'Message', messageInput, { wide: true }),
         errEl,
