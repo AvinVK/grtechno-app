@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Payroll - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Payroll{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1" data-can-write="{{ '1' if can_write else '0' }}"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/payroll.js') }}" defer></script>
+{% endblock %}

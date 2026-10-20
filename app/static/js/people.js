@@ -570,10 +570,9 @@
     return out;
   }
 
-  /* ---------- one employee: HR details, and the salary/wages log ---------- */
+  /* ---------- one employee: HR details ---------- */
 
   const EMPLOYMENT_LABEL = { regular: 'Salary', daily_wages: 'Daily wages', contractor: 'Contractor' };
-  const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
 
   function detailsSection(w) {
     const rows = [
@@ -587,203 +586,6 @@
     return h('section', { class: 'fn-section' },
       h('span', { class: 'stat-label' }, 'Details'),
       h('dl', { class: 'pay-overview-grid' }, rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
-  }
-
-  // The log's own labels are positional, same convention as a project's payment schedule.
-  function paymentLabelFor(index) {
-    const n = index + 1;
-    const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
-    return `${n}${suffix} payment`;
-  }
-
-  function paymentsSection(worker, id, currency, modes, onChange) {
-    let steps = (worker.payments || []).map((p) => ({ ...p }));
-    const stepsLabel = h('p', { class: 'steps-label' });
-    const stepsList = h('div', { class: 'card-group step-list' });
-    const paidNote = h('p', { class: 'wk-legend' });
-
-    function toPayload(arr) {
-      return arr.map((s, i) => ({
-        label: (s.label || '').trim() || paymentLabelFor(i),
-        amount: s.amount === '' || s.amount == null ? 0 : s.amount,
-        mode: s.mode || '', paid_date: s.paid_date || null, comments: (s.comments || '').trim(),
-      }));
-    }
-
-    async function persistSteps(next) {
-      const saved = await api(`/api/workforce/${id}`, { method: 'PATCH', body: { payments: toPayload(next) } });
-      steps = saved.worker.payments.map((p) => ({ ...p }));
-      onChange(saved.worker);
-      renderStepsList();
-    }
-
-    function renderStepsList() {
-      const paid = steps.reduce((sum, s) => sum + (s.paid_date ? toNumber(s.amount) : 0), 0);
-      stepsLabel.textContent = `Payments · ${steps.length}`;
-      paidNote.textContent = steps.length ? `Paid so far: ${money(paid, currency)}` : '';
-      clear(stepsList);
-      steps.forEach((s, i) => {
-        const isPaid = !!s.paid_date;
-        const circle = isPaid
-          ? h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓')
-          : h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(i + 1));
-        const title = (s.label || '').trim() || paymentLabelFor(i);
-        const subParts = isPaid ? [`Paid ${shortDate(parseDay(s.paid_date))}`, s.mode || null].filter(Boolean) : ['Not paid yet'];
-        let sub = subParts.join(' · ');
-        if (s.comments) sub += ' · note';
-        stepsList.append(h('button', {
-          type: 'button', class: 'step-row',
-          'aria-label': `${title}, ${money(toNumber(s.amount), currency)}, ${isPaid ? 'paid' : 'not paid'}`,
-          onclick: () => openStepSheet(i),
-        },
-          circle,
-          h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, title), h('span', { class: 'step-sub' }, sub)),
-          h('span', { class: 'step-amount' }, money(toNumber(s.amount), currency))));
-      });
-      stepsList.append(h('button', { type: 'button', class: 'step-row step-add', onclick: () => openStepSheet(steps.length) },
-        h('span', { class: 'step-circle dashed', 'aria-hidden': 'true' }, '+'),
-        h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, '+ Add payment'))));
-    }
-
-    function openStepSheet(index) {
-      const isNew = index === steps.length;
-      const current = isNew ? { label: '', amount: '', mode: '', paid_date: null, comments: '' } : steps[index];
-      const trigger = document.activeElement;
-      const overlay = h('div', { class: 'overlay' });
-      const scroll = h('div', { class: 'drawer-scroll' });
-      const foot = h('div', { class: 'drawer-foot' });
-      const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-
-      const finish = closeOnBack(() => {
-        overlay.remove();
-        drawer.remove();
-        document.body.classList.remove('locked');
-        if (trigger && trigger.isConnected) trigger.focus();
-      });
-      overlay.onclick = () => finish();
-      const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
-      closeX.onclick = () => finish();
-
-      const labelInput = h('input', { type: 'text', maxlength: 120, value: current.label || '' });
-      const amountInput = h('input', { type: 'number', id: 'f-amount', min: '0', step: 'any', inputmode: 'decimal', value: current.amount ?? '' });
-      const chips = h('div', { class: 'step-chips' });
-      if (worker.wage_amount != null) {
-        chips.append(h('button', {
-          type: 'button', class: 'btn small',
-          onclick: () => { amountInput.value = worker.wage_amount; amountInput.dispatchEvent(new Event('input', { bubbles: true })); },
-        }, `Wage/salary amount · ${money(worker.wage_amount, currency)}`));
-      }
-
-      const modeSel = selectField(
-        [{ value: '', label: 'Mode of payment' }, ...modes.map((m) => ({ value: m, label: m }))],
-        current.mode || '', { title: 'Mode of payment', placeholder: 'Mode of payment' });
-      const paidDateInput = dateField(current.paid_date || '', { placeholder: 'Date of payment' });
-      const modeField = field('mode', 'Mode of payment', modeSel);
-      const dateFieldEl = field('paid_date', 'Date of payment', paidDateInput);
-      const paidToggleInput = h('input', { type: 'checkbox', checked: !!current.paid_date });
-      const paidToggle = h('label', { class: 'switch' },
-        paidToggleInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
-      function todayIso() {
-        const d = new Date();
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      }
-      function refreshPaidFields() {
-        const on = paidToggleInput.checked;
-        modeField.hidden = !on;
-        dateFieldEl.hidden = !on;
-        if (on && !paidDateInput.value) paidDateInput.value = todayIso();
-        if (!on) { modeSel.value = ''; paidDateInput.value = ''; }
-      }
-      paidToggleInput.addEventListener('change', refreshPaidFields);
-      refreshPaidFields();
-
-      const noteTextarea = h('textarea', { rows: 2 });
-      noteTextarea.value = current.comments || '';
-      const noteField = field('comments', 'Note', noteTextarea);
-      const noteToggleBtn = h('button', { type: 'button', class: 'link-btn' }, '+ Add a note');
-      const hasNote = !!(current.comments || '').trim();
-      noteField.hidden = !hasNote;
-      noteToggleBtn.hidden = hasNote;
-      noteToggleBtn.onclick = () => { noteField.hidden = false; noteToggleBtn.hidden = true; noteTextarea.focus(); };
-
-      const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save payment');
-      saveBtn.onclick = async () => {
-        errorBox.hidden = true;
-        showFieldErrors(scroll, {});
-        saveBtn.disabled = true;
-        const draft = {
-          label: labelInput.value, amount: amountInput.value, mode: modeSel.value,
-          paid_date: paidDateInput.value || null, comments: noteTextarea.value,
-        };
-        const next = steps.slice();
-        if (isNew) next.push(draft); else next[index] = draft;
-        try {
-          await persistSteps(next);
-          toast('Payment saved');
-          finish();
-        } catch (err) {
-          errorBox.textContent = (err.fields && err.fields.payments) || err.message;
-          errorBox.hidden = false;
-          saveBtn.disabled = false;
-        }
-      };
-
-      let deleteBtn = null;
-      if (!isNew) {
-        deleteBtn = h('button', { type: 'button', class: 'link-btn step-sheet-delete' }, 'Delete');
-        deleteBtn.onclick = async () => {
-          const sure = await confirm(`Remove ${(current.label || '').trim() || paymentLabelFor(index)}?`, { ok: 'Delete', danger: true, title: 'Delete payment' });
-          if (!sure) return;
-          deleteBtn.disabled = true;
-          const next = steps.slice();
-          next.splice(index, 1);
-          try {
-            await persistSteps(next);
-            toast('Payment removed');
-            finish();
-          } catch (err) {
-            errorBox.textContent = (err.fields && err.fields.payments) || err.message;
-            errorBox.hidden = false;
-            deleteBtn.disabled = false;
-          }
-        };
-      }
-
-      const total = isNew ? steps.length + 1 : steps.length;
-      const title = (current.label || '').trim() || paymentLabelFor(index);
-      scroll.append(
-        errorBox,
-        field('label', 'Label', labelInput),
-        h('div', { class: 'field' },
-          h('label', { for: 'f-amount' }, 'Amount'),
-          h('div', { class: 'amount-input-wrap' }, h('span', { class: 'amount-prefix', 'aria-hidden': 'true' }, currency), amountInput),
-          chips,
-          h('p', { class: 'err', id: 'err-amount', role: 'alert' })),
-        h('div', { class: 'toggle-row' }, h('span', {}, 'Payment made'), paidToggle),
-        modeField, dateFieldEl,
-        noteToggleBtn, noteField);
-      foot.append(saveBtn);
-
-      const drawer = h('div', { class: 'drawer' },
-        h('div', { class: 'drawer-head' },
-          h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
-          h('div', { class: 'drawer-head-row' },
-            h('div', { class: 'drawer-titles' },
-              h('p', { class: 'step-sheet-eyebrow' }, `Payment ${index + 1} of ${total}`),
-              h('h2', {}, title)),
-            deleteBtn, closeX)),
-        scroll);
-      drawer.append(foot);
-      document.body.classList.add('locked');
-      document.body.append(overlay, drawer);
-      (isNew ? amountInput : labelInput).focus();
-    }
-
-    renderStepsList();
-    return h('section', { class: 'fn-section' },
-      stepsLabel,
-      paidNote,
-      stepsList);
   }
 
   async function showPerson(id) {
@@ -800,13 +602,11 @@
     const label = groupLabel(key, data.roles);
     LD.setAppbarBack?.(label, `#${key}`);
     const onChange = () => { invalidateCache(); window.location.hash = `#${key}`; };
-    const onPaymentsChange = (freshWorker) => { data.worker = freshWorker; invalidateCache(); };
     clear(view).append(h('div', { class: 'people' },
       h('div', { class: 'att-head' },
         h('h2', {}, data.worker.name),
         h('span', { class: 'att-head-date' }, label)),
       detailsSection(data.worker),
-      paymentsSection(data.worker, id, data.currency, data.payment_modes, onPaymentsChange),
       h('span', { class: 'stat-label' }, 'Attendance'),
       data.period
         ? h('p', { class: 'wk-legend' }, `Came ${came} of ${days} days, ${dayMonth(parseDay(data.period.start))} – ${dayMonth(parseDay(data.period.end))}`)

@@ -26,8 +26,9 @@
 {# Gated by the "users"/"workforce" modules (app/modules.py check_module) - the admin always sees both;
    everyone else only the ones their role has (e.g. Accountant sees both, but look-only - the pages
    themselves enforce that, not this link). Hiding a link here is not access control on its own.
-   Attendance sheet used to be a third row here - it moved to a "Sheet" link on the Attendance page itself
-   (kohal, 2026-10-20: wanted it reachable from Team attendance, not buried under Me - Manage). #}
+   Attendance sheet used to be a third row here - it moved to an "Attendance register" subtab on the
+   Attendance page itself (kohal, 2026-10-20: wanted it reachable from Team attendance, not buried under
+   Me - Manage) - and Payroll, gated the same as Employee management, is new here the same day. #}
 {% macro manage(can_see_users=False, can_see_workforce=False) -%}
 {% set show_users = current_user.is_admin or can_see_users %}
 {% set show_workforce = current_user.is_admin or can_see_workforce %}
@@ -38,6 +39,7 @@
     {% for endpoint, ic, text, shown in [
       ('users_page.page', 'user', 'Users & roles', show_users),
       ('workers_page.workforce_page', 'manpower', 'Employee management', show_workforce),
+      ('payroll.page', 'wages', 'Payroll', show_workforce),
     ] %}
     {% if shown %}
     <a class="me-row" href="{{ url_for(endpoint) }}">{{ icon(ic) }}<span>{{ text }}</span><span class="me-chevron" aria-hidden="true">›</span></a>
