@@ -289,10 +289,39 @@ def _material_costs(project):
 
 def _expenses(project):
     """Money paid out of this project, not to the client - commission for now (kohal, 2026-10-18), with
-    daily wages and food meant to join it later as more ProjectExpense.kind values. One row per entry, same
-    shape as _material_costs above."""
+    food meant to join it later as more ProjectExpense.kind values (daily wages are computed instead, see
+    _wage_expenses below, rather than entered here). One row per entry, same shape as _material_costs above."""
     rows = [e.to_dict() for e in project.expenses]
     total = float(sum((e.amount for e in project.expenses), start=Decimal("0")))
+    return rows, total
+
+
+def _wage_expenses(project):
+    """A daily-wage worker's cost on this project, computed rather than entered (kohal, 2026-10-20: "for
+    every daily wages worker, admin has entered the daily wage amount... if the worker checks in project 1
+    on day 1,2,3, then the total expense will be = (daily wages*3)") - their day rate times how many distinct
+    days they're recorded present here, from whichever source actually has them: their own app check-in
+    (Attendance) or a WhatsApp day logged for them (WorkerAttendance), the same two sources _team above
+    combines - deduped by date so a day caught by both is never paid twice. Only employment_type ==
+    'daily_wages' workers with a wage_amount set are counted; a salaried worker's attendance isn't
+    project-costed this way."""
+    rows = []
+    workers = Worker.query.filter_by(employment_type="daily_wages").filter(Worker.wage_amount.isnot(None)).all()
+    for w in workers:
+        days = {a.work_date for a in WorkerAttendance.query.filter_by(
+            project_id=project.id, worker_id=w.id, status="present")}
+        if w.user_code:
+            days.update(a.work_date for a in Attendance.query.filter_by(
+                project_id=project.id, user_code=w.user_code, status="approved"))
+        if not days:
+            continue
+        amount = (w.wage_amount * len(days)).quantize(Decimal("0.01"))
+        rows.append({
+            "worker_id": w.id, "worker_name": w.name, "days": len(days),
+            "wage_amount": float(w.wage_amount), "amount": float(amount),
+        })
+    rows.sort(key=lambda r: r["worker_name"].lower())
+    total = float(sum((Decimal(str(r["amount"])) for r in rows), start=Decimal("0")))
     return rows, total
 
 
@@ -301,6 +330,7 @@ def _detail(project):
     can_assign = g.user.sees_all
     materials, total_material_cost = _material_costs(project)
     expenses, total_expense = _expenses(project)
+    wage_expenses, total_wage_expense = _wage_expenses(project)
     body = {
         "project": project.to_dict(detail=True),
         "client": {"id": client.id, "name": client.name, "contact_name": client.contact_name, "phone": client.phone},
@@ -312,6 +342,8 @@ def _detail(project):
         "total_material_cost": total_material_cost,
         "expenses": expenses,
         "total_expense": total_expense,
+        "wage_expenses": wage_expenses,
+        "total_wage_expense": total_wage_expense,
         # For the commission form's worker picker - only someone in that role earns it (kohal, 2026-10-18).
         "commission_workers": [{"id": w.id, "name": w.name}
                                 for w in Worker.query.filter_by(role_key=COMMISSION_ROLE_KEY).order_by(Worker.name)],
@@ -554,7 +586,9 @@ def request_material(project_id):
 # "the person assigned to [Project manager Chandrapur] gets commission on the negotiated amount of the
 # project... in payment subtab under project, i need to enter what percentage of commission was given to
 # whom and that should go towards project expense" - the first kind of ProjectExpense; see that model's own
-# docstring for why it's one table rather than a commission-only one.
+# docstring for why it's one table rather than a commission-only one. Moved from the Payment tab to its own
+# Expense tab (kohal, 2026-10-20), alongside the computed daily-wage figures from _wage_expenses - these
+# routes themselves are unchanged, only where the frontend shows the form.
 
 def _expense_fields(payload):
     """worker (a Worker in the commission role), percent, entry_date and note from the request - shared by

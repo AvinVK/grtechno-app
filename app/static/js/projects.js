@@ -30,7 +30,7 @@
 
   // The four sections of one project - a horizontally-scrolling chip row, same pattern as the stage
   // filters elsewhere, so it never depends on a fixed item count fitting a phone's width.
-  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['details', 'More details'], ['attendance', 'Attendance']];
+  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['expense', 'Expense'], ['details', 'More details'], ['attendance', 'Attendance']];
   const projectTabs = (id, active) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
     PROJECT_TABS.map(([slug, label]) => h('a', {
       class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
@@ -514,6 +514,7 @@
     }
     if (section === 'payments') renderPayments(data);
     else if (section === 'materials') { renderMaterials(data); loadMaterialRequests(id); }
+    else if (section === 'expense') renderExpense(data);
     else if (section === 'details') renderDetails(data);
     else if (section === 'attendance') renderAttendance(data);
     else renderDashboard(data);
@@ -848,10 +849,6 @@
 
     renderStepsList();
 
-    // Full-tab reload after a commission entry changes - simplest way to pick up both the new entry itself
-    // and total_expense together, same idea as Materials' own reload (see loadMaterialRequests above).
-    const reloadCommission = async () => renderPayments(await api(`/api/projects/${P.id}`));
-
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'payments'),
@@ -862,20 +859,48 @@
         h('p', { class: 'hint' }, 'Split the net amount into payments, each tied to its own site milestone.'),
         stepsLabel,
         stepsList,
-        paySummary),
-      commissionSection(data, reloadCommission)));
+        paySummary)));
     recalc();
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- Expense: daily wages (computed) + Commission (manual entries) - kohal, 2026-10-20: "we go
+     to calculating the worker expense for each project... this should show on the expense subtab in
+     projects. it should also have commission part which we implemented there. u can remove the commission
+     from payment and move that to expense tab". */
+
+  function renderExpense(data) {
+    const P = data.project;
+    const c = data.client;
+    const cur = data.currency;
+    const wages = data.wage_expenses || [];
+    const reload = async () => renderExpense(await api(`/api/projects/${P.id}`));
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, 'expense'),
+      h('section', { class: 'p-section' },
+        h('div', { class: 'p-section-head' },
+          h('h3', {}, 'Daily wages'),
+          wages.length ? h('span', { class: 'p-code' }, money(data.total_wage_expense, cur)) : null),
+        wages.length
+          ? h('ul', { class: 'card-group' }, wages.map((w) => h('li', { class: 'p-row' },
+              h('span', { class: 'p-main' },
+                h('span', { class: 'row-title' }, w.worker_name),
+                h('span', { class: 'row-sub' }, `${plural(w.days, 'day', 'days')} checked in × ${money(w.wage_amount, cur)}`)),
+              h('span', { class: 'row-value' }, money(w.amount, cur)))))
+          : h('p', { class: 'hint' }, 'No daily-wage worker has checked in here yet.')),
+      commissionSection(data, reload)));
     window.scrollTo(0, 0);
   }
 
   /* ---------- Commission: a cut of the negotiated amount, paid to the Project manager Chandrapur role
      (kohal, 2026-10-18: "the person assigned to this role gets commission on the negotiated amount of the
      project... what percentage of commission was given to whom and that should go towards project expense").
-     The first kind of "project expense" - daily wages and site food are meant to join it later (see
-     ProjectExpense's own docstring) - so this section is titled Commission specifically, not Expenses, even
-     though the data model underneath is already general. The rupee amount shown is whatever the server
-     computed and stored at save time (see app/projects.py's add_expense/update_expense) - this UI is
-     read-only about that math. */
+     Lives on the Expense tab (see renderExpense above), alongside Daily wages - site food is meant to join
+     it later too (see ProjectExpense's own docstring), while daily wages stays computed, not entered here.
+     The rupee amount shown is whatever the server computed and stored at save time (see
+     app/projects.py's add_expense/update_expense) - this UI is read-only about that math. */
 
   function commissionSection(data, reload) {
     const P = data.project;
@@ -1193,7 +1218,7 @@
   }
 
   function route() {
-    const m = /^#p(\d+)(\/(payments|materials|details|attendance))?$/.exec(window.location.hash);
+    const m = /^#p(\d+)(\/(payments|materials|expense|details|attendance))?$/.exec(window.location.hash);
     if (m) return showDetail(Number(m[1]), m[3] || '');
     const add = /^#new(?:\/c(\d+))?$/.exec(window.location.hash);
     if (add) return showNew(add[1] ? Number(add[1]) : null);

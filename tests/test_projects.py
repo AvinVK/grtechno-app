@@ -1,8 +1,9 @@
 from datetime import date
+from decimal import Decimal
 
 from app.constants import COMMISSION_ROLE_KEY
 from app.extensions import db
-from app.models import Attendance, Client, Lead, Project, ProjectPayment, Role, RoleModule, Service, User, Worker, utcnow
+from app.models import Attendance, Client, Lead, Project, ProjectPayment, Role, RoleModule, Service, User, Worker, WorkerAttendance, utcnow
 from conftest import make_user, signed_in, win_lead
 
 
@@ -816,6 +817,105 @@ def test_commission_workers_lists_only_the_chandrapur_role(app, client, admin_cl
         db.session.commit()
     data = admin_client.get(f"/api/projects/{pid}").get_json()
     assert [w["id"] for w in data["commission_workers"]] == [wid]
+
+
+# ---------- Daily-wage expense (kohal, 2026-10-20) ----------
+#
+# "now we go to calculating the woker expense for each project... if the worker checks in project 1 on day
+# 1,2,3, then the total expense will be = (dailiy wages*3)" - computed straight from attendance, never a
+# manual entry like commission; see app/projects.py's _wage_expenses.
+
+def daily_wage_worker(name="Deepak Daily", wage_amount=Decimal("500"), user_code=None):
+    worker = Worker(name=name, category="manpower", employment_type="daily_wages",
+                     wage_amount=wage_amount, user_code=user_code)
+    db.session.add(worker)
+    db.session.commit()
+    return worker
+
+
+def test_daily_wage_expense_is_days_checked_in_times_the_wage(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    with app.app_context():
+        worker = daily_wage_worker(wage_amount=Decimal("500"))
+        for d in (1, 2, 3):
+            db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, d), project_id=pid))
+        db.session.commit()
+        wid = worker.id
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert data["wage_expenses"] == [
+        {"worker_id": wid, "worker_name": "Deepak Daily", "days": 3, "wage_amount": 500.0, "amount": 1500.0},
+    ]
+    assert data["total_wage_expense"] == 1500.0
+
+
+def test_daily_wage_expense_ignores_absent_days_and_other_projects(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    other_pid = make_project(client, admin_client)
+    with app.app_context():
+        worker = daily_wage_worker()
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 1), project_id=pid))
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 2), project_id=pid, status="absent"))
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 3), project_id=other_pid))
+        db.session.commit()
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert data["wage_expenses"][0]["days"] == 1
+
+
+def test_a_regular_salaried_worker_has_no_wage_expense(app, client, admin_client):
+    """employment_type matters, not just having attendance - a 'regular' salary isn't project-costed by the
+    day the way daily wages are."""
+    pid = make_project(client, admin_client)
+    with app.app_context():
+        worker = Worker(name="Sunny Salaried", category="manpower", employment_type="regular", wage_amount=Decimal("30000"))
+        db.session.add(worker)
+        db.session.flush()
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 1), project_id=pid))
+        db.session.commit()
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert data["wage_expenses"] == [] and data["total_wage_expense"] == 0
+
+
+def test_wage_expense_needs_a_wage_amount_set(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    with app.app_context():
+        worker = Worker(name="No Wage Nilesh", category="manpower", employment_type="daily_wages")
+        db.session.add(worker)
+        db.session.flush()
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 1), project_id=pid))
+        db.session.commit()
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert data["wage_expenses"] == []
+
+
+def test_a_day_checked_in_both_ways_is_only_paid_once(app, client, admin_client):
+    """A daily-wage worker with a login could in principle show up in both Attendance (their own app
+    check-in) and WorkerAttendance (a WhatsApp day logged for them) for the same day and project - see
+    _team's own identical dedup reasoning. Must not be paid twice for it."""
+    pid = make_project(client, admin_client)
+    with app.app_context():
+        user = make_user("Deepak Daily")
+        worker = daily_wage_worker(user_code=user.code)
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 1), project_id=pid))
+        db.session.add(Attendance(user_code=user.code, work_date=date(2026, 10, 1), project_id=pid,
+                                   check_in_at=utcnow(), status="approved"))
+        db.session.commit()
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert data["wage_expenses"][0]["days"] == 1
+
+
+def test_wage_expense_and_commission_total_stay_separate(app, client, admin_client):
+    """The Expense tab shows both (kohal: "it should also have commission part which we implemented
+    there") but they're independent figures, not summed into one on the backend."""
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        cwid = commission_worker()
+        worker = daily_wage_worker(wage_amount=Decimal("500"))
+        db.session.add(WorkerAttendance(worker=worker, work_date=date(2026, 10, 1), project_id=pid))
+        db.session.commit()
+    admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": cwid, "percent": "5"})
+    data = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert data["total_wage_expense"] == 500.0
+    assert data["total_expense"] == 10000.0
 
 
 # ---------- Project manager Chandrapur's own project access (kohal, 2026-10-18) ----------

@@ -472,9 +472,10 @@ class ProjectPayment(db.Model):
 class ProjectExpense(db.Model):
     """Money paid out of a project to someone connected to it, not to the client - starts with commission
     (kohal, 2026-10-18: the Project manager Chandrapur role earns a percentage of a project's negotiated
-    amount, entered from the project's own Payment tab). Daily wages and site food are meant to land in
-    this same table as more `kind`s later, not separate ones, so "project expense" stays one place to total
-    from - for now `kind` is always "commission" (see _expense_fields in app/projects.py).
+    amount, entered from the project's own Expense tab). Site food is meant to land in this same table as
+    another `kind` later - for now `kind` is always "commission" (see _expense_fields in app/projects.py).
+    Daily wages are *not* stored here: they're computed straight from attendance rather than entered (kohal,
+    2026-10-20), see app/projects.py's own _wage_expenses.
 
     percent is what was actually typed in; basis_amount and amount are a snapshot of the project's
     net_amount and the rupee figure computed from it at the moment this was saved (or last edited) - so a
