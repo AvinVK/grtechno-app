@@ -11,11 +11,18 @@ wages will be calculated as running sum"): two subtabs, same shape as Work plan/
     brand new, so an older payment that predates it has no period on it at all - showing every past slot as
     "outstanding" the moment this ships would make every one of those look unpaid, when really they just
     were never tagged. Scoping to the current month only sidesteps that entirely.
-  - Wages & payments: the add/edit/delete payment log itself, moved here from the Attendance sheet's own
-    person page (kohal: "remove the paymant thing inside the attendance and move it here") - the data and
-    its API are unchanged (still a Worker's own `payments`, still saved through app/workers.py's PATCH
-    /api/workforce/<id>), only the page it's reached from. Each entry can now also carry which pay period
-    it was for (see app/workers.py's own _payments), so Overview's per-slot "paid" figure means something.
+  - Wages & payments: who's owed what, without having to look anyone up first (kohal, 2026-10-20: "i dont
+    have to pick anyone, in wages and payment, it should have daily wages and salaried subtab. in daily
+    wages, it should show all daily wages user and according to attendance their due pay and last paid.
+    same for salaried but on month level") - its own two sub-tabs, Daily wages and Salaried, each a plain
+    list (every employee of that kind, what they're currently due - both of this month's slots added
+    together for a daily-wage/contractor employee - and their own most recent paid entry). Tapping a
+    person opens the add/edit/delete payment log itself, moved here from the Attendance sheet's own person
+    page (kohal, in an earlier message: "remove the paymant thing inside the attendance and move it here")
+    - the data and its API are unchanged (still a Worker's own `payments`, still saved through
+    app/workers.py's PATCH /api/workforce/<id>), only the page it's reached from. Each entry can now also
+    carry which pay period it was for (see app/workers.py's own _payments), so both the per-slot "paid"
+    figure here and on Overview mean something, and so "last paid" can say which period it covered.
 
 Gated by the "workforce" module (app/modules.py), same as Employee management - a look-only role
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
@@ -84,6 +91,21 @@ def _current_month_slots(today: date):
     ]
 
 
+def _last_paid(w):
+    """This worker's own most recent paid entry - amount, when, and whichever pay period it was tagged to
+    (kohal, 2026-10-20: "it should show all daily wages user and according to attendance their due pay and
+    last paid"), or None if they've never had one. Same across every row a worker has (daily-wage/contractor
+    get two, one per slot) - it's a fact about the person, not about any one slot."""
+    paid = [p for p in w.payments if p.paid_date is not None]
+    if not paid:
+        return None
+    latest = max(paid, key=lambda p: p.paid_date)
+    return {
+        "amount": float(latest.amount), "paid_date": latest.paid_date.isoformat(),
+        "period_start": latest.period_start.isoformat() if latest.period_start else None,
+    }
+
+
 def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     """One daily-wage/contractor employee's figures for a single pay-period slot - 0 across the board if
     they hadn't started yet, or there's no attendance data reaching this far."""
@@ -105,7 +127,7 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
         "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
         "months": None, "days": days,
         "period_start": slot_start.isoformat(), "period_end": slot_end.isoformat(), "period_label": label,
-        "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2),
+        "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2), "last_paid": _last_paid(w),
     }
 
 
@@ -132,7 +154,7 @@ def _payroll_rows() -> list:
             rows.append({
                 "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
                 "months": months, "days": None, "period_start": None, "period_end": None, "period_label": None,
-                "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2),
+                "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2), "last_paid": _last_paid(w),
             })
         else:
             for slot_start, slot_end, label in slots:

@@ -4,14 +4,17 @@
    - Overview: every employee with a wage set, and what they've earned so far (app/payroll.py computes
      this fresh each time, never stored - see its own docstring for exactly how daily-wage/contractor and
      salaried employees differ).
-   - Wages & payments: pick an employee, see/add/edit/delete their payment log - the same WorkerPayment log
-     that used to live on the Attendance sheet's own person page (app/static/js/people.js), moved here
-     (kohal: "remove the paymant thing inside the attendance and move it here"); still saved through the
-     Worker's own PATCH /api/workforce/<id>, nothing changed server-side except where this UI lives. */
+   - Wages & payments: its own two sub-tabs, Daily wages and Salaried (kohal: "i dont have to pick anyone...
+     it should show all daily wages user and according to attendance their due pay and last paid. same for
+     salaried but on month level") - each a plain list, no picking required; tapping a person opens the
+     add/edit/delete payment log itself, the same WorkerPayment log that used to live on the Attendance
+     sheet's own person page (app/static/js/people.js), moved here (kohal, earlier: "remove the paymant
+     thing inside the attendance and move it here"); still saved through the Worker's own PATCH
+     /api/workforce/<id>, nothing changed server-side except where this UI lives. */
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, money, field, showFieldErrors, selectField, searchField, dateField, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, money, field, showFieldErrors, selectField, dateField, closeOnBack } = window.LD;
   const view = $('#view');
   const canWrite = view.dataset.canWrite === '1';
 
@@ -324,69 +327,111 @@
     return h('section', { class: 'p-section' }, stepsLabel, paidNote, stepsList);
   }
 
-  async function showPayments(personId) {
+  function paymentsTabs(active) {
+    return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Wages & payments section' },
+      h('a', { class: 'filter-chip', href: '#payments/daily', 'aria-current': active === 'daily' ? 'page' : null }, 'Daily wages'),
+      h('a', { class: 'filter-chip', href: '#payments/salary', 'aria-current': active === 'salary' ? 'page' : null }, 'Salaried'));
+  }
+
+  const lastPaidText = (lastPaid, cur) => (lastPaid
+    ? `Last paid ${money(lastPaid.amount, cur)}${lastPaid.period_start ? ` for ${periodLabelFor(lastPaid.period_start)}` : ''} · ${shortDate(parseDay(lastPaid.paid_date))}`
+    : 'No payments recorded yet.');
+
+  /* ---------- Daily wages / Salaried: everyone of that kind, due pay and last paid, no picking needed
+     (kohal, 2026-10-20: "i dont have to pick anyone... it should show all daily wages user and according to
+     attendance their due pay and last paid. same for salaried but on month level") ---------- */
+
+  async function showWagesList(category) {
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
-    let roster;
-    try { roster = await api('/api/workforce'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
-    const groups = Object.keys(roster).filter((k) => Array.isArray(roster[k]));
-    const people = groups.flatMap((g) => roster[g]).map((p) => ({ value: p.id, label: p.name }));
-
-    const picker = searchField(people, personId || '', { placeholder: 'Search employees…' });
-    const detailBox = h('div', {});
-
-    // Currently due and last paid (kohal, 2026-10-20: "it has to show current payment to be done and last
-    // paid for what term") - the same figures Overview already computes, just for this one person, plus
-    // their own most recent paid entry and whichever period it was tagged to (if any). For a daily-wage/
-    // contractor employee "currently due" is both of this month's slots added together, since that's what
-    // actually needs settling right now; a salaried employee has just the one unsplit row.
-    async function loadPerson(id) {
-      clear(detailBox).append(h('p', { class: 'loading' }, 'Loading…'));
-      let data, overview;
-      try {
-        [data, overview] = await Promise.all([api(`/api/workforce/${id}`), api('/api/payroll/overview')]);
-      } catch (err) { clear(detailBox).append(h('p', { class: 'empty-state' }, err.message)); return; }
-      const cur = data.currency;
-      const sub = [EMPLOYMENT_LABEL[data.worker.employment_type],
-        data.worker.wage_amount != null ? money(data.worker.wage_amount, cur) : null].filter(Boolean).join(' · ');
-
-      const myRows = (overview.employees || []).filter((e) => e.id === id);
-      const dueLine = myRows.length
-        ? h('p', { class: 'wk-legend' }, `Currently due: ${money(myRows.reduce((sum, r) => sum + r.outstanding, 0), cur)}`)
-        : null;
-
-      const paidEntries = (data.worker.payments || []).filter((p) => p.paid_date);
-      const lastPaid = paidEntries.length
-        ? paidEntries.reduce((a, b) => (a.paid_date > b.paid_date ? a : b)) : null;
-      const lastPaidLine = h('p', { class: 'hint' }, lastPaid
-        ? `Last paid ${money(lastPaid.amount, cur)}${lastPaid.period_start ? ` for ${periodLabelFor(lastPaid.period_start)}` : ''} · ${shortDate(parseDay(lastPaid.paid_date))}`
-        : 'No payments recorded yet.');
-
-      clear(detailBox).append(...[
-        h('div', { class: 'att-head' }, h('h3', {}, data.worker.name), h('span', { class: 'att-head-date' }, sub)),
-        dueLine, lastPaidLine,
-        paymentsSection(data.worker, id, cur, data.payment_modes, () => loadPerson(id)),
-      ].filter(Boolean));
+    let data;
+    try { data = await api('/api/payroll/overview'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const cur = data.currency;
+    const wantRegular = category === 'salary';
+    // A daily-wage/contractor employee has two rows (one per slot) in the raw data - folded into one line
+    // here, due pay summed across both, since "their due pay" is one figure to the person asking for it.
+    const byId = new Map();
+    for (const e of data.employees || []) {
+      if ((e.employment_type === 'regular') !== wantRegular) continue;
+      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0 });
+      byId.get(e.id).outstanding += e.outstanding;
     }
-
-    picker.addEventListener('change', () => {
-      const id = picker.value;
-      window.location.hash = id ? `#payments/${id}` : '#payments';
+    const people = [...byId.values()];
+    const state = { q: '' };
+    const count = h('span', { class: 'att-week-sum' });
+    const listBox = h('div', {});
+    const search = h('input', {
+      type: 'search', placeholder: 'Search by name', 'aria-label': 'Search by name',
+      oninput: (e) => { state.q = e.target.value; render(); },
     });
 
-    if (personId) await loadPerson(personId);
-    else clear(detailBox).append(h('p', { class: 'hint' }, 'Search for an employee above to see or add their payments.'));
+    function personRow(p) {
+      return h('li', {}, h('a', { class: 'att-day people-row', href: `#payments/person/${p.id}` },
+        h('div', { class: 'att-day-top' },
+          h('span', { class: 'att-day-date' }, p.name),
+          h('span', { class: 'att-day-hours' }, `Due ${money(p.outstanding, cur)}`)),
+        h('span', { class: 'att-day-sub' }, lastPaidText(p.last_paid, cur))));
+    }
+
+    function render() {
+      const q = state.q.trim().toLowerCase();
+      const filtered = people.filter((p) => !q || p.name.toLowerCase().includes(q));
+      count.textContent = plural(filtered.length, 'person', 'people');
+      clear(listBox).append(filtered.length
+        ? h('ul', { class: 'att-week-card' }, filtered.map(personRow))
+        : h('p', { class: 'empty-state' }, people.length ? 'Nobody matches this search.' : 'Nobody here yet - add a wage from Employee management.'));
+    }
+    render();
 
     clear(view).append(h('div', { class: 'project-detail' },
       tabs('payments'),
-      field('employee', 'Employee', picker),
-      detailBox));
+      paymentsTabs(wantRegular ? 'salary' : 'daily'),
+      h('div', { class: 'list-head' }, h('h2', {}, wantRegular ? 'Salaried' : 'Daily wages'), count),
+      search,
+      listBox));
+  }
+
+  /* ---------- one person: add/edit/delete their payment log ---------- */
+
+  async function showPersonPayments(id) {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data, overview;
+    try {
+      [data, overview] = await Promise.all([api(`/api/workforce/${id}`), api('/api/payroll/overview')]);
+    } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const cur = data.currency;
+    const isRegular = data.worker.employment_type === 'regular';
+    LD.setAppbarBack?.(isRegular ? 'Salaried' : 'Daily wages', isRegular ? '#payments/salary' : '#payments/daily');
+
+    const sub = [EMPLOYMENT_LABEL[data.worker.employment_type],
+      data.worker.wage_amount != null ? money(data.worker.wage_amount, cur) : null].filter(Boolean).join(' · ');
+    const myRows = (overview.employees || []).filter((e) => e.id === id);
+    const dueLine = myRows.length
+      ? h('p', { class: 'wk-legend' }, `Currently due: ${money(myRows.reduce((sum, r) => sum + r.outstanding, 0), cur)}`)
+      : null;
+    const lastPaid = myRows.length ? myRows[0].last_paid : null;
+
+    const headBox = h('div', {});
+    const sectionBox = h('div', {});
+    async function reload() {
+      const fresh = await api(`/api/workforce/${id}`);
+      clear(sectionBox).append(paymentsSection(fresh.worker, id, cur, fresh.payment_modes, reload));
+    }
+    clear(headBox).append(...[
+      h('div', { class: 'att-head' }, h('h3', {}, data.worker.name), h('span', { class: 'att-head-date' }, sub)),
+      dueLine, h('p', { class: 'hint' }, lastPaidText(lastPaid, cur)),
+    ].filter(Boolean));
+    clear(sectionBox).append(paymentsSection(data.worker, id, cur, data.payment_modes, reload));
+
+    clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, sectionBox));
   }
 
   function route() {
     const hash = window.location.hash;
-    const m = /^#payments(?:\/(\d+))?$/.exec(hash);
-    if (m) return showPayments(m[1] ? Number(m[1]) : null);
+    let m = /^#payments\/person\/(\d+)$/.exec(hash);
+    if (m) return showPersonPayments(Number(m[1]));
+    m = /^#payments(?:\/(daily|salary))?$/.exec(hash);
+    if (m) return showWagesList(m[1] || 'daily');
     return showOverview();
   }
 
