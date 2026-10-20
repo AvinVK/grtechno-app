@@ -920,6 +920,11 @@ class Attendance(db.Model):
     status = db.Column(db.String(10), nullable=False, default="approved", server_default="approved")
     approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
+    # When the person themselves has seen a rejection, so the popup (app/static/js/common.js) only shows it
+    # once (kohal, 2026-10-20: "a popup as soon as attendance was rejected so that user knows" - the session
+    # stayed open with no sign of this at all otherwise, see the Attendance page's own rejected-session
+    # banner for the other half of that fix). Meaningless unless status == 'rejected'.
+    rejection_seen_at = db.Column(db.DateTime, nullable=True)
 
     user = db.relationship("User", foreign_keys=[user_code])
     project = db.relationship("Project")

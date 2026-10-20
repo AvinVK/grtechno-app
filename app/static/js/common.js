@@ -547,6 +547,48 @@ window.LD = (() => {
   })();
 })();
 
+/* A rejected check-in, popped up the same way an announcement is (kohal, 2026-10-20: "a popup as soon as
+   attendance was rejected so that user knows") - the session itself stays open with no other sign of this
+   (see the Attendance page's own banner for that), so this is the only thing that actively tells them,
+   wherever in the app they happen to be when they next load a page. */
+(() => {
+  'use strict';
+  const { h, api } = window.LD;
+  const CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+  const fmtDate = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  function showNext(queue) {
+    if (!queue.length) return;
+    const a = queue.shift();
+    const closeBtn = h('button', { type: 'button', class: 'icon-btn announcement-close', 'aria-label': 'Dismiss' });
+    closeBtn.innerHTML = CLOSE_SVG;
+    const card = h('div', {
+      class: 'confirm-card announcement-card', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'rejection-title',
+    },
+      closeBtn,
+      h('h2', { id: 'rejection-title' }, 'Attendance rejected'),
+      h('p', {}, `Your check-in on ${fmtDate(a.work_date)}${a.work_label ? ` (${a.work_label})` : ''} was rejected${a.approved_by_name ? ` by ${a.approved_by_name}` : ''}. It won't count toward your attendance.`));
+    const overlay = h('div', { class: 'confirm-overlay' }, card);
+    document.body.append(overlay);
+
+    closeBtn.onclick = async () => {
+      overlay.remove();
+      try { await api(`/api/attendance/${a.id}/dismiss-rejection`, { method: 'POST' }); } catch (err) { /* already gone either way */ }
+      showNext(queue);
+    };
+  }
+
+  (async () => {
+    try {
+      const data = await api('/api/attendance/rejections');
+      if (data.rejections && data.rejections.length) showNext(data.rejections);
+    } catch (err) { /* nothing waiting, or not actually signed in on this load - quietly skip either way */ }
+  })();
+})();
+
 /* Pushed screens' "‹" appbar back link (the label is spoken, not shown - see app.css), for a page whose
    own client-side routing goes deeper than one level (a person's detail under Manpower & staff, say) -
    the nearer place (LD.setAppbarBack) is more useful there than jumping straight back to Me, which is

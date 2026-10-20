@@ -396,6 +396,60 @@ def test_cannot_approve_or_reject_twice(app, client):
     assert manager.post(f"/api/attendance/{record_id}/reject").status_code == 409
 
 
+# ---------- the rejection popup (kohal, 2026-10-20: "a popup as soon as attendance was rejected so that
+# user knows" - before this, a rejected session just sat as a chip further down their own history, with
+# nothing actively telling them) ----------
+
+def test_a_rejected_record_shows_up_for_the_person_it_belongs_to(app, client):
+    with app.app_context():
+        pid = make_project().id
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    manager = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    manager.post(f"/api/attendance/{record_id}/reject")
+
+    res = client.get("/api/attendance/rejections")
+    assert res.status_code == 200
+    rows = res.get_json()["rejections"]
+    assert len(rows) == 1 and rows[0]["id"] == record_id and rows[0]["status"] == "rejected"
+
+
+def test_an_approved_record_never_shows_up_as_a_rejection(app, client):
+    with app.app_context():
+        pid = make_project().id
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    manager = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    manager.post(f"/api/attendance/{record_id}/approve")
+    assert client.get("/api/attendance/rejections").get_json()["rejections"] == []
+
+
+def test_dismissing_a_rejection_removes_it_from_the_list(app, client):
+    with app.app_context():
+        pid = make_project().id
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    manager = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    manager.post(f"/api/attendance/{record_id}/reject")
+
+    assert client.post(f"/api/attendance/{record_id}/dismiss-rejection").status_code == 204
+    assert client.get("/api/attendance/rejections").get_json()["rejections"] == []
+
+
+def test_only_the_person_it_belongs_to_can_dismiss_it(app, client):
+    with app.app_context():
+        pid = make_project().id
+    record_id = check_in(client, project_id=pid).get_json()["today"]["id"]
+    manager = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    manager.post(f"/api/attendance/{record_id}/reject")
+
+    other = signed_in(app, make_user("Someone Else"))
+    assert other.post(f"/api/attendance/{record_id}/dismiss-rejection").status_code == 404
+    # Still there for the person it actually belongs to - someone else's attempt didn't quietly dismiss it.
+    assert len(client.get("/api/attendance/rejections").get_json()["rejections"]) == 1
+
+
+def test_dismissing_an_unknown_record_is_a_404(client):
+    assert client.post("/api/attendance/999999/dismiss-rejection").status_code == 404
+
+
 def test_checking_in_or_out_never_needs_approval_first(client):
     """The check-in/check-out action itself is never blocked by approval - only counts/reports are (see
     the next tests) - otherwise someone could get stuck unable to check out until somebody approves."""

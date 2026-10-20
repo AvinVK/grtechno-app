@@ -176,6 +176,27 @@ def check_out():
     return jsonify(today=row.to_dict())
 
 
+@bp.get("/api/attendance/rejections")
+def rejections():
+    """Rejected records the signed-in person hasn't seen a popup about yet (kohal, 2026-10-20: "a popup as
+    soon as attendance was rejected so that user knows") - oldest first, same convention as the
+    announcements popup (app/me.py). Read by the popup in app/static/js/common.js, which runs on every
+    signed-in page, not just Attendance - someone could be anywhere in the app when this fires."""
+    rows = (Attendance.query.filter_by(user_code=g.user.code, status="rejected", rejection_seen_at=None)
+            .order_by(Attendance.approved_at).all())
+    return jsonify(rejections=[a.to_dict() for a in rows])
+
+
+@bp.post("/api/attendance/<int:record_id>/dismiss-rejection")
+def dismiss_rejection(record_id):
+    row = db.session.get(Attendance, record_id)
+    if row is None or row.user_code != g.user.code:
+        return jsonify(error="Not found"), 404
+    row.rejection_seen_at = utcnow()
+    db.session.commit()
+    return "", 204
+
+
 @bp.delete("/api/attendance/<int:record_id>")
 def delete_record(record_id):
     """Admin and other sees_all roles can remove a wrong or test record. Nobody else - a person deleting

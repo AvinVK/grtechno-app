@@ -387,7 +387,14 @@
         }
       };
       bar = actionBar(checkOutBtn);
-      clear(cardBox).append(h('div', { class: 'att-today' }, h('ol', { class: 'att-steps' }, steps)));
+      // The admin can reject an open session without closing it (kohal, 2026-10-20: "what will the person
+      // who's attendance was rejectedd, see" - answered: nothing at all until now, it just sat as a
+      // "Rejected" chip further down in their own history) - this banner is the only thing on the live card
+      // itself that says so; the session stays open and Check out still works exactly the same either way.
+      const rejectedNotice = t.status === 'rejected'
+        ? h('p', { class: 'notice error' }, `Rejected by ${t.approved_by_name || 'the admin'} - you can still check out, but this session won't count toward your attendance.`)
+        : null;
+      clear(cardBox).append(h('div', {}, rejectedNotice, h('div', { class: 'att-today' }, h('ol', { class: 'att-steps' }, steps))));
       clear(barBox);
       if (bar) barBox.append(bar);
     }
