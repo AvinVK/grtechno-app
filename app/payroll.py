@@ -31,12 +31,15 @@ import calendar
 from datetime import date, timedelta
 from decimal import Decimal
 
-from flask import Blueprint, g, jsonify, render_template
+from flask import Blueprint, abort, g, jsonify, render_template, request
 
+from .extensions import db
 from .models import Attendance, Worker, WorkerAttendance, settings_for_client
 from .modules import can_write, check_module
 from .validation import api_errors
 from .workers import EMPLOYMENT_TYPES, _period
+
+DAY_BY_DAY_MAX_RANGE = 62   # a pay-period slot is ~16 days, a month ~31 - this is generous headroom, not a real limit
 
 bp = Blueprint("payroll", __name__)
 api_errors(bp)
@@ -162,6 +165,86 @@ def _payroll_rows() -> list:
     return rows
 
 
+def _day_by_day(w, start: date, end: date, data_until_end):
+    """One row per calendar day in [start, end] - hours logged that day (if any - needs both a check-in
+    and a check-out time to say, same as Attendance/WorkerAttendance's own `hours`), and whether it counts
+    toward pay (present, or an uncredited Sunday - the same rule _day_rate_slot_row uses) with the rupee
+    figure that represents (kohal, 2026-10-20: "clicking on one should show logged in hours for each day
+    and corresponding pay"). A day past whatever attendance data actually reaches is left blank, not
+    guessed at - same "no data yet" principle as everywhere else attendance is read in this app."""
+    is_day_rate = w.employment_type in DAY_RATE_TYPES
+    wage = float(w.wage_amount) if w.wage_amount is not None else 0.0
+    wa_by_day = {a.work_date: a for a in WorkerAttendance.query.filter_by(worker_id=w.id)
+                 .filter(WorkerAttendance.work_date >= start, WorkerAttendance.work_date <= end)}
+    att_by_day = {}
+    if w.user_code:
+        for a in (Attendance.query.filter_by(user_code=w.user_code, status="approved")
+                  .filter(Attendance.work_date >= start, Attendance.work_date <= end)):
+            att_by_day.setdefault(a.work_date, []).append(a)
+
+    rows = []
+    d = start
+    while d <= end:
+        is_sunday = d.weekday() == 6
+        # Before they'd even first shown up, or past whatever data actually reaches - either way nothing
+        # to say about the day, and a Sunday here must not be credited (same first_seen guard
+        # _day_rate_slot_row's own effective_start applies) - otherwise this list's own total would come
+        # out higher than the "Total" above it, computed the same way but period-wide.
+        too_early = w.first_seen is not None and d < w.first_seen
+        if too_early or data_until_end is None or d > data_until_end:
+            rows.append({"date": d.isoformat(), "present": False, "hours": None, "is_sunday": is_sunday,
+                         "not_yet": True, "pay": 0.0 if is_day_rate else None})
+            d += timedelta(days=1)
+            continue
+        wa = wa_by_day.get(d)
+        present = (wa is not None and wa.status == "present") or d in att_by_day
+        hours = None
+        if wa is not None and wa.status == "present" and wa.hours is not None:
+            hours = wa.hours
+        elif d in att_by_day:
+            timed = [a.hours for a in att_by_day[d] if a.hours is not None]
+            if timed:
+                hours = round(sum(timed), 1)
+        counted = present or is_sunday
+        # A day rate genuinely has a per-day figure; a flat salary doesn't (kohal picked unconditional,
+        # not pro-rated, when this was built) - pay stays null for a salaried employee's days rather than
+        # attributing a whole month's salary to one day, or inventing a daily rate nobody set.
+        pay = (round(wage, 2) if counted else 0.0) if is_day_rate else None
+        rows.append({"date": d.isoformat(), "present": present, "hours": hours, "is_sunday": is_sunday,
+                     "not_yet": False, "pay": pay})
+        d += timedelta(days=1)
+    return rows
+
+
 @bp.get("/api/payroll/overview")
 def overview():
     return jsonify(employees=_payroll_rows(), currency=settings_for_client()["currency"])
+
+
+@bp.get("/api/payroll/days")
+def days():
+    """The day-by-day breakdown behind one Overview row - a daily-wage/contractor slot's own start/end, or
+    whatever range the caller asks for (Overview passes this month's days-so-far for a salaried row, since
+    their pay isn't actually day-based - see app/static/js/payroll.js)."""
+    worker = db.session.get(Worker, request.args.get("worker_id", type=int))
+    if worker is None or worker.wage_amount is None:
+        abort(404)
+    start = request.args.get("start")
+    end = request.args.get("end")
+    try:
+        start = date.fromisoformat(start)
+        end = date.fromisoformat(end)
+    except (TypeError, ValueError):
+        abort(422, "Give start and end as YYYY-MM-DD")
+    if end < start or (end - start).days > DAY_BY_DAY_MAX_RANGE:
+        abort(422, "That range doesn't make sense")
+
+    _, data_until = _period()
+    today = date.today()
+    data_until_end = min(today, data_until) if data_until else None
+    return jsonify(
+        worker={"id": worker.id, "name": worker.name, "employment_type": worker.employment_type,
+                "wage_amount": float(worker.wage_amount)},
+        days=_day_by_day(worker, start, end, data_until_end),
+        currency=settings_for_client()["currency"],
+    )

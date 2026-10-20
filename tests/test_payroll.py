@@ -6,7 +6,7 @@ the thing being tested) rather than hardcoded, since the slots are always relati
 actually runs."""
 
 import calendar
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -286,3 +286,131 @@ def test_an_unpaid_entry_with_no_paid_date_does_not_count_as_paid(app, admin_cli
         wid = w.id
     row = next(r for r in rows_for(admin_client.get("/api/payroll/overview").get_json(), wid) if r["period_start"] == start.isoformat())
     assert row["paid"] == 0.0
+
+
+# ---------- /api/payroll/days - the day-by-day behind one Overview row ----------
+
+def day_in(days, iso):
+    return next(d for d in days if d["date"] == iso)
+
+
+def test_days_needs_the_workforce_module(client, accounts_client, app):
+    start, end = complete_slot()
+    with app.app_context():
+        wid = daily_wage_worker(first_seen=start).id
+        extend_data_until(end)
+    url = f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}"
+    assert client.get(url).status_code == 403
+    assert accounts_client.get(url).status_code == 200
+
+
+def test_a_present_day_with_in_and_out_times_shows_hours(app, admin_client):
+    start, end = complete_slot()
+    worked_day = a_weekday_in(start, end)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
+        db.session.add(WorkerAttendance(worker=w, work_date=worked_day,
+                                         check_in_at=datetime.combine(worked_day, datetime.min.time().replace(hour=8)),
+                                         check_out_at=datetime.combine(worked_day, datetime.min.time().replace(hour=17))))
+        extend_data_until(end)
+        db.session.commit()
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}")
+    assert res.status_code == 200
+    d = day_in(res.get_json()["days"], worked_day.isoformat())
+    assert d["present"] is True and d["hours"] == 9.0 and d["pay"] == 500.0
+
+
+def test_a_present_day_with_no_times_has_no_hours_but_is_still_paid(app, admin_client):
+    start, end = complete_slot()
+    worked_day = a_weekday_in(start, end)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
+        present(w, worked_day)   # the shared helper - no check-in/out times, just lat/lng
+        extend_data_until(end)
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}")
+    d = day_in(res.get_json()["days"], worked_day.isoformat())
+    assert d["present"] is True and d["hours"] is None and d["pay"] == 500.0
+
+
+def test_an_absent_weekday_is_zero_pay(app, admin_client):
+    start, end = complete_slot()
+    worked_day = a_weekday_in(start, end)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
+        extend_data_until(end)   # nothing present for this worker at all
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}")
+    d = day_in(res.get_json()["days"], worked_day.isoformat())
+    assert d["present"] is False and d["pay"] == 0.0 and d["not_yet"] is False
+
+
+def test_an_unworked_sunday_is_credited_in_the_day_list_too(app, admin_client):
+    start, end = complete_slot()
+    sunday = a_sunday_in(start, end)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
+        extend_data_until(end)
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}")
+    d = day_in(res.get_json()["days"], sunday.isoformat())
+    assert d["present"] is False and d["is_sunday"] is True and d["pay"] == 500.0
+
+
+def test_a_day_before_first_seen_is_not_yet_and_a_sunday_there_is_not_credited(app, admin_client):
+    """Matches _day_rate_slot_row's own effective_start guard - otherwise this list's own total would come
+    out different from the "Total" figure above it, computed the same way but period-wide."""
+    start, end = complete_slot()
+    sunday = a_sunday_in(start, end)
+    joined = sunday + timedelta(days=1)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=joined)
+        extend_data_until(end)
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}")
+    d = day_in(res.get_json()["days"], sunday.isoformat())
+    assert d["not_yet"] is True and d["pay"] == 0.0
+
+
+def test_salary_days_have_no_per_day_pay_figure(app, admin_client):
+    with app.app_context():
+        w = salaried_worker(wage_amount=Decimal("30000"), first_seen=date.today().replace(day=1))
+        today = date.today()
+        present(w, today)
+        wid = w.id
+    start = date.today().replace(day=1).isoformat()
+    end = date.today().isoformat()
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start}&end={end}")
+    assert res.status_code == 200
+    for d in res.get_json()["days"]:
+        assert d["pay"] is None
+
+
+def test_an_unknown_worker_is_a_404(admin_client):
+    res = admin_client.get("/api/payroll/days?worker_id=999999&start=2026-10-01&end=2026-10-15")
+    assert res.status_code == 404
+
+
+def test_a_worker_with_no_wage_is_a_404(app, admin_client):
+    with app.app_context():
+        w = Worker(name="No Wage", category="manpower", employment_type="daily_wages")
+        db.session.add(w)
+        db.session.commit()
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start=2026-10-01&end=2026-10-15")
+    assert res.status_code == 404
+
+
+def test_end_before_start_is_rejected(app, admin_client):
+    with app.app_context():
+        wid = daily_wage_worker().id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start=2026-10-15&end=2026-10-01")
+    assert res.status_code == 422
+
+
+def test_a_huge_range_is_rejected(app, admin_client):
+    with app.app_context():
+        wid = daily_wage_worker().id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start=2026-01-01&end=2026-12-31")
+    assert res.status_code == 422

@@ -72,17 +72,24 @@
     // 2026-10-20: "Daily wages should have two slots in month 1 to 15 And 16 to 30 or 31") - the slot shows
     // right in the title since the name alone no longer tells the rows apart; a salaried employee still
     // gets one flat monthly row, title unchanged.
+    // Tapping a row opens the day-by-day behind it (kohal, 2026-10-20: "clicking on one should show logged
+    // in hours for each day and corresponding pay and then total at the top") - a day-rate slot's own
+    // start/end carry straight into the link; a salaried row has no period of its own (its pay isn't
+    // day-based at all), so it links to this month's days-so-far instead, for attendance context only.
     function employeeRow(e) {
       const title = e.period_label ? `${e.name} · ${e.period_label}` : e.name;
       const basis = e.employment_type === 'regular'
         ? `${plural(e.months || 0, 'month', 'months')} since they started`
         : `${plural(e.days || 0, 'day', 'days')} paid, Sundays included`;
-      return h('li', { class: 'p-row' },
+      const href = e.period_start
+        ? `#overview/person/${e.id}/${e.period_start}/${e.period_end}`
+        : `#overview/person/${e.id}`;
+      return h('li', {}, h('a', { class: 'p-row people-row', href },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, title),
           h('span', { class: 'row-sub' },
             `${EMPLOYMENT_LABEL[e.employment_type]} · ${money(e.wage_amount, cur)} · ${basis} · Earned ${money(e.earned, cur)} · Paid ${money(e.paid, cur)}`)),
-        h('span', { class: 'row-value' }, money(e.outstanding, cur)));
+        h('span', { class: 'row-value' }, money(e.outstanding, cur))));
     }
 
     function render() {
@@ -426,9 +433,65 @@
     clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, sectionBox));
   }
 
+  /* ---------- one Overview row's own days: hours logged and the pay each one carries ---------- */
+
+  function dayRow(d, cur, isDayRate) {
+    let subLabel;
+    if (d.not_yet) subLabel = 'No data yet';
+    else if (d.present) subLabel = d.hours != null ? `${d.hours} h logged` : 'Present (no in/out time)';
+    else if (d.is_sunday) subLabel = 'Sunday · credited';
+    else subLabel = 'Absent';
+    const payText = isDayRate ? money(d.pay, cur) : '';
+    return h('li', { class: 'att-day' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, shortDate(parseDay(d.date))),
+        h('span', { class: 'att-day-hours' }, payText)),
+      h('span', { class: 'att-day-sub' }, subLabel));
+  }
+
+  async function showPersonDays(id, startIso, endIso) {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let overview;
+    try { overview = await api('/api/payroll/overview'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const myRows = (overview.employees || []).filter((e) => e.id === id);
+    if (!myRows.length) { clear(view).append(h('p', { class: 'empty-state' }, 'Not found.')); return; }
+    LD.setAppbarBack?.('Overview', '#overview');
+
+    const isDayRate = myRows[0].employment_type !== 'regular';
+    let start = startIso;
+    let end = endIso;
+    let row;
+    if (start && end) {
+      row = myRows.find((r) => r.period_start === start) || myRows[0];
+    } else {
+      // A salaried row has no period of its own - this month's days so far, for attendance context only
+      // (kohal's own pick was flat, unconditional salary, never pro-rated by attendance).
+      row = myRows[0];
+      const today = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      start = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-01`;
+      end = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    }
+
+    let data;
+    try { data = await api(`/api/payroll/days?worker_id=${id}&start=${start}&end=${end}`); }
+    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const cur = data.currency;
+
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('div', { class: 'att-head' },
+        h('h2', {}, data.worker.name),
+        h('span', { class: 'att-head-date' }, row.period_label || 'This month')),
+      h('p', { class: 'wk-legend' }, `Total: ${money(row.earned, cur)}`),
+      isDayRate ? null : h('p', { class: 'hint' }, "Flat monthly salary, not paid per day - hours below are for attendance reference only."),
+      h('ul', { class: 'att-week-card' }, data.days.map((d) => dayRow(d, cur, isDayRate)))));
+  }
+
   function route() {
     const hash = window.location.hash;
-    let m = /^#payments\/person\/(\d+)$/.exec(hash);
+    let m = /^#overview\/person\/(\d+)(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(hash);
+    if (m) return showPersonDays(Number(m[1]), m[2] || null, m[3] || null);
+    m = /^#payments\/person\/(\d+)$/.exec(hash);
     if (m) return showPersonPayments(Number(m[1]));
     m = /^#payments(?:\/(daily|salary))?$/.exec(hash);
     if (m) return showWagesList(m[1] || 'daily');
