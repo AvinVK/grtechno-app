@@ -226,10 +226,9 @@
       }
       search.value = '';   // clears the field so the same box can pick the next person too
     });
-    const wrap = h('div', {},
-      h('label', { class: 'toggle-row' }, h('span', {}, 'Select all'), selectAllInput),
-      search, chipsBox);
+    const wrap = h('div', {}, search, chipsBox);
     Object.defineProperty(wrap, 'value', { get: () => [...chosen.keys()], configurable: true });
+    wrap.selectAllInput = selectAllInput;   // so the caller can put it beside the "Employees" label itself
     return wrap;
   }
 
@@ -243,12 +242,22 @@
       return;
     }
 
-    const pickerBox = h('div', {});
+    // "Employees" and the "Select all" tick box share one line (kohal, 2026-10-20: "select all and employees
+    // can be in one line") - same .p-section-head pattern as a heading with a button next to it elsewhere.
+    const employeesField = h('div', { class: 'field' });
     const messageInput = h('textarea', { maxlength: 500, rows: 3, placeholder: 'What do you want to tell them?' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const sendBtn = h('button', { class: 'btn primary', type: 'button' }, 'Send');
-    let picker = multiWorkerPicker(data.workers);
-    clear(pickerBox).append(picker);
+    let picker;
+    function renderPicker() {
+      picker = multiWorkerPicker(data.workers);
+      clear(employeesField).append(
+        h('div', { class: 'p-section-head' },
+          h('label', {}, 'Employees'),
+          h('label', { class: 'toggle-row' }, h('span', {}, 'Select all'), picker.selectAllInput)),
+        picker);
+    }
+    renderPicker();
 
     const historyList = h('ul', { class: 'card-group' });
     function renderHistory() {
@@ -272,8 +281,7 @@
         data.announcements.unshift(res.announcement);
         renderHistory();
         messageInput.value = '';
-        picker = multiWorkerPicker(data.workers);
-        clear(pickerBox).append(picker);
+        renderPicker();
       } catch (err) {
         errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
       }
@@ -283,7 +291,7 @@
     clear(view).append(h('div', { class: 'project-detail' },
       tabs('announcements'),
       h('section', { class: 'p-section' },
-        field('worker_ids', 'Employees', pickerBox),
+        employeesField,
         field('message', 'Message', messageInput, { wide: true }),
         errEl,
         h('div', { class: 'form-actions' }, sendBtn)),
