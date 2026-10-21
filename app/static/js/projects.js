@@ -1237,6 +1237,11 @@
 
   // A small form to ask for material - whoever can already approve it (the project's manager, or a site
   // supervisor currently checked in there) has it go through immediately; anyone else's goes in as pending.
+  // Typing a name that isn't in the catalog yet is fine too (kohal, 2026-10-21: "if the requested material
+  // is not present in inventory, its showing this error, it shouldnt. if not in inventory, it should go to
+  // inventory restock") - material_name rides along as a fallback for whatever's typed but never picked
+  // from the dropdown, and the server adds it to the catalog on the spot rather than refusing the request
+  // (see app/projects.py's request_material).
   function openRequestMaterial(projectId, materials, reload) {
     const materialSel = materialSearchField(materials, '');
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' });
@@ -1251,7 +1256,10 @@
         saveBtn.disabled = true;
         try {
           const res = await api(`/api/projects/${projectId}/material-requests`, {
-            method: 'POST', body: { material_id: materialSel.value, quantity: qtyInput.value, note: noteInput.value },
+            method: 'POST', body: {
+              material_id: materialSel.value, material_name: materialSel.querySelector('input').value,
+              quantity: qtyInput.value, note: noteInput.value,
+            },
           });
           toast(res.request.status === 'approved' ? 'Material issued' : 'Request sent for approval');
           overlay.remove();
@@ -1264,7 +1272,8 @@
         }
       } },
       errorBox,
-      field('material_id', 'Material', materialSel, { wide: true }),
+      field('material_id', 'Material', materialSel, { wide: true,
+        hint: "Not listed? Type the name anyway - it'll be added and flagged for restock." }),
       field('quantity', 'Quantity', qtyInput),
       field('note', 'Note', noteInput, { wide: true }),
       h('div', { class: 'confirm-actions' },

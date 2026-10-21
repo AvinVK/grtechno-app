@@ -745,6 +745,47 @@ def test_a_request_from_the_projects_own_manager_now_waits_too(app, client, admi
     assert admin_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"] == 20  # untouched
 
 
+# "if the requested material is not present in inventory, its showing this error, it shouldnt. if not in
+# inventory, it should go to inventory restock" (kohal, 2026-10-21) - typing a name no Material row matches
+# yet adds it to the catalog on the spot (0 stock) instead of refusing the request, so the shortfall
+# surfaces on Restock (test_inventory.py's own Restock section) like any other.
+
+def test_requesting_an_unlisted_material_by_name_creates_it(client, admin_client):
+    pid = make_project(client, admin_client)
+    res = admin_client.post(f"/api/projects/{pid}/material-requests",
+                             json={"material_name": "Branch Pipe", "quantity": 5})
+    assert res.status_code == 201
+    body = res.get_json()["request"]
+    assert body["status"] == "pending" and body["material_name"] == "Branch Pipe"
+    material = admin_client.get("/api/inventory/materials").get_json()["materials"]
+    row = next(m for m in material if m["name"] == "Branch Pipe")
+    assert row["stock_qty"] == 0
+
+
+def test_requesting_an_unlisted_material_with_no_name_still_fails(client, admin_client):
+    pid = make_project(client, admin_client)
+    res = admin_client.post(f"/api/projects/{pid}/material-requests", json={"quantity": 5})
+    assert res.status_code == 422 and "material_id" in res.get_json()["fields"]
+
+
+def test_requesting_by_name_reuses_an_existing_material_case_insensitively(client, admin_client):
+    pid = make_project(client, admin_client)
+    mat_id = stocked_material(admin_client, qty=20, name="Cement")
+    res = admin_client.post(f"/api/projects/{pid}/material-requests",
+                             json={"material_name": "cement", "quantity": 5})
+    assert res.status_code == 201
+    assert res.get_json()["request"]["material_id"] == mat_id
+    assert len(admin_client.get("/api/inventory/materials").get_json()["materials"]) == 1  # no duplicate
+
+
+def test_a_return_cannot_create_a_new_material_by_name(client, admin_client):
+    pid = make_project(client, admin_client)
+    res = admin_client.post(f"/api/projects/{pid}/material-requests",
+                             json={"material_name": "Never Issued", "quantity": 5, "kind": "in"})
+    assert res.status_code == 422 and "material_id" in res.get_json()["fields"]
+    assert admin_client.get("/api/inventory/materials").get_json()["materials"] == []
+
+
 def test_a_supervisor_not_checked_in_there_cant_even_see_the_project(app, client, admin_client):
     """visible_projects() already hides a project from a site supervisor until they've checked into it, so
     there's nothing to request here in the first place - not a 403, a 404, same as everywhere else that

@@ -662,6 +662,24 @@ def request_material(project_id):
     raw_id = payload.get("material_id")
     if str(raw_id).isdigit():
         material = db.session.get(Material, int(raw_id))
+    if (material is None or not material.is_active) and kind == "out":
+        # Asking for something that isn't in the catalog at all yet (kohal, 2026-10-21: "if the requested
+        # material is not present in inventory, its showing this error, it shouldnt... it should go to
+        # inventory restock") - add it on the spot rather than refusing the request outright, with nothing
+        # on hand (0 stock), so it surfaces on Restock exactly like any other shortfall (see
+        # app/inventory.py's _restock_rows) for someone with Inventory access to actually buy and stock it.
+        # A return can't do this - there's nothing to send back of something that was never issued.
+        raw_name = str(payload.get("material_name") or "").strip()[:120]
+        if raw_name:
+            existing = Material.query.filter(func.lower(Material.name) == raw_name.lower()).first()
+            if existing is not None:
+                existing.is_active = True
+                material = existing
+            else:
+                # avg_rate/stock_qty set explicitly, not left to their column defaults - those only apply
+                # at INSERT time, and rate = material.avg_rate just below needs a real number right now.
+                material = Material(name=raw_name, is_active=True, avg_rate=Decimal("0"), stock_qty=Decimal("0"))
+                db.session.add(material)
     if material is None or not material.is_active:
         errors["material_id"] = "Pick a material"
 
