@@ -333,3 +333,65 @@ def test_the_purchase_approval_tile_shows_nothing_when_theres_no_queue(admin_cli
     assert "Purchase approval" in html
     # no "X pending" sum line when the queue is empty, same as Fooding shows no count at zero
     assert "0 pending" not in html
+
+
+# ---------- Allocated cash & balance subtab (kohal, 2026-10-21) ----------
+#
+# "allocate cash should be a button and then this form should open. and the subtab should be allocated cash
+# and balance and their it should show employees to whom cash is allocated and how much they have balance
+# rn. clicking on one employee should show the history of cash expense and whether approved or rejected."
+
+def test_accounts_needs_admin_or_accountant(client, accounts_client, admin_client):
+    assert client.get("/api/cash-purchases/accounts").status_code == 403
+    assert accounts_client.get("/api/cash-purchases/accounts").status_code == 200
+    assert admin_client.get("/api/cash-purchases/accounts").status_code == 200
+
+
+def test_accounts_only_lists_workers_whove_actually_been_given_cash(app, admin_client, accounts_client):
+    who, wid = worker_user(app)
+    never_given = add_worker("Never Given Anything")
+    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1500", "payment_mode": "Cash"})
+
+    data = admin_client.get("/api/cash-purchases/accounts").get_json()
+    ids = [a["worker_id"] for a in data["accounts"]]
+    assert wid in ids and never_given not in ids
+    row = next(a for a in data["accounts"] if a["worker_id"] == wid)
+    assert row["given_total"] == 1500.0 and row["spent_total"] == 0.0 and row["remaining"] == 1500.0
+
+
+def test_accounts_includes_workers_and_payment_modes_for_the_give_sheet(accounts_client):
+    add_worker("Ramesh Welder")
+    data = accounts_client.get("/api/cash-purchases/accounts").get_json()
+    assert any(w["name"] == "Ramesh Welder" for w in data["workers"])
+    assert "Cash" in data["payment_modes"] and "Online/UPI" in data["payment_modes"]
+
+
+def test_worker_history_needs_admin_or_accountant(app, client, accounts_client):
+    who, wid = worker_user(app)
+    assert client.get(f"/api/cash-purchases/{wid}").status_code == 403
+    assert accounts_client.get(f"/api/cash-purchases/{wid}").status_code == 200
+
+
+def test_worker_history_shows_every_entry_regardless_of_status(app, accounts_client):
+    who, wid = worker_user(app)
+    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "Cash"})
+    e1 = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
+    e2 = who.post("/api/cash-purchases/me", json={"material_name": "Cement", "amount": "400"}).get_json()["entry"]["id"]
+    accounts_client.post(f"/api/cash-purchases/{e1}/approve")
+    accounts_client.post(f"/api/cash-purchases/{e2}/reject")
+
+    data = accounts_client.get(f"/api/cash-purchases/{wid}").get_json()
+    assert data["worker"]["name"] == "Deepak Daily"
+    assert data["account"]["remaining"] == 1100.0
+    statuses = {e["id"]: e["status"] for e in data["entries"]}
+    assert statuses[e1] == "approved" and statuses[e2] == "rejected"
+
+
+def test_worker_history_for_a_worker_never_given_cash_shows_no_account(accounts_client):
+    wid = add_worker("Never Given Anything")
+    data = accounts_client.get(f"/api/cash-purchases/{wid}").get_json()
+    assert data["account"] is None and data["entries"] == []
+
+
+def test_worker_history_for_an_unknown_worker_is_a_404(accounts_client):
+    assert accounts_client.get("/api/cash-purchases/999999").status_code == 404

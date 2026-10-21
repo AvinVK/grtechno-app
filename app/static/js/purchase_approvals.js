@@ -1,16 +1,20 @@
 /* Purchase approval (kohal, 2026-10-21: "this pending approval should have its own block next to fooding.
    named as purchase approval - this is only visisble to admin. inside this there will be approvals and
-   alocate cash (same as fooding types)"; then: "here there should be an subtab with aoption to assign
-   money/cash to someone. and one subtab for apoorvals") - admin/accountant only, its own page off a Me-hub
-   tile. Two subtabs, same pill shape as Inventory's own Materials/Material requests/Restock bar:
+   alocate cash (same as fooding types)"; then: "allocate cash should be a button and then this form should
+   open. and the subtab should be allocated cash and balance and their it should show employees to whom
+   cash is allocated and how much they have balance rn. clicking on one employee should show the history of
+   cash expense and whether approved or rejected") - admin/accountant only, its own page off a Me-hub tile.
+   Two subtabs, same pill shape as Inventory's own Materials/Material requests/Restock bar:
    - Approvals (default): every pending purchase, approve or reject it.
-   - Allocate cash: hand an employee cash - applied immediately, same as Fooding's own allot.
+   - Allocated cash & balance: every employee cash has actually been given to and what they have left,
+     "+ Allocate cash" opening a sheet (same idea as Fooding's own allot) rather than a form on the page
+     itself, tapping a row opening that one employee's own purchase history.
    The employee's own balance and purchase log stays on the Me hub itself (see app/static/js/me.js) - this
    page is the management side only, see app/cash_purchases.py. */
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, confirm, field, selectField, searchField, showFieldErrors, money } = window.LD;
+  const { $, h, clear, api, toast, confirm, field, selectField, searchField, money, closeOnBack } = window.LD;
   const view = $('#view');
 
   function fmtDate(iso) {
@@ -21,7 +25,7 @@
   function tabs(active) {
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Purchase approval section' },
       h('a', { class: 'filter-chip', href: '#approvals', 'aria-current': active === 'approvals' ? 'page' : null }, 'Approvals'),
-      h('a', { class: 'filter-chip', href: '#allocate', 'aria-current': active === 'allocate' ? 'page' : null }, 'Allocate cash'));
+      h('a', { class: 'filter-chip', href: '#balances', 'aria-current': active === 'balances' ? 'page' : null }, 'Allocated cash & balance'));
   }
 
   /* ---------- Approvals: every pending purchase, approve or reject it ---------- */
@@ -52,6 +56,7 @@
   }
 
   async function showApprovals() {
+    LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api('/api/cash-purchases/pending'); }
@@ -64,64 +69,114 @@
         : h('p', { class: 'empty-state' }, 'Nothing waiting on approval right now.')));
   }
 
-  /* ---------- Allocate cash: hand an employee cash, applied immediately ---------- */
+  /* ---------- Allocated cash & balance: who's been given cash, and what's left ---------- */
 
-  async function showAllocate() {
-    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
-    let data;
-    try { data = await api('/api/cash-purchases/pending'); }
-    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
-
+  function openGiveSheet(data, onDone) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const workerSel = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Choose an employee' });
     const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
     const modeSel = selectField([{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
       '', { title: 'How was it paid', placeholder: 'Mode of payment' });
     const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
-    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Give cash');
-
-    const form = h('form', { novalidate: true, class: 'project-form',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        errorBox.hidden = true;
-        showFieldErrors(form, {});
-        if (!workerSel.value) {
-          errorBox.textContent = 'Choose an employee';
-          errorBox.hidden = false;
-          return;
-        }
-        saveBtn.disabled = true;
-        try {
-          await api(`/api/cash-purchases/${workerSel.value}/give`, {
-            method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value, note: noteInput.value },
-          });
-          toast('Cash given');
-          workerSel.value = '';
-          amountInput.value = '';
-          modeSel.value = '';
-          noteInput.value = '';
-          workerSel.focus?.();
-        } catch (err) {
-          errorBox.textContent = err.message;
-          errorBox.hidden = false;
-          (showFieldErrors(form, err.fields) || errorBox).focus?.();
-        } finally {
-          saveBtn.disabled = false;
-        }
-      } },
-      errorBox,
-      field('worker_id', 'Employee', workerSel, { wide: true }),
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Give cash');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      if (!workerSel.value) { errEl.textContent = 'Choose an employee'; return; }
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api(`/api/cash-purchases/${workerSel.value}/give`, {
+          method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value, note: noteInput.value },
+        });
+        finish();
+        toast('Cash given');
+        onDone();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, 'Give cash'),
+      field('worker_id', 'Employee', workerSel),
       field('amount', 'Amount', amountInput),
       field('payment_mode', 'Mode of payment', modeSel),
-      field('note', 'Note', noteInput, { wide: true }),
-      h('div', { class: 'form-actions' }, saveBtn));
-
-    clear(view).append(h('div', {}, tabs('allocate'), h('section', { class: 'p-section' }, form)));
+      field('note', 'Note', noteInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
     workerSel.focus?.();
   }
 
+  function balanceRow(a, cur) {
+    return h('li', {}, h('a', { class: 'p-row', href: `#balances/person/${a.worker_id}` },
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, a.worker_name),
+        h('span', { class: 'row-sub' }, `Given ${money(a.given_total, cur)} · Spent ${money(a.spent_total, cur)}`)),
+      h('span', { class: 'row-value' }, money(a.remaining, cur)),
+      h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›')));
+  }
+
+  async function showBalances() {
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/cash-purchases/accounts'); }
+    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    clear(view).append(h('div', {},
+      tabs('balances'),
+      h('div', { class: 'list-head' },
+        h('h2', {}, `${data.accounts.length} ${data.accounts.length === 1 ? 'employee' : 'employees'}`),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openGiveSheet(data, showBalances) }, '+ Allocate cash')),
+      data.accounts.length
+        ? h('ul', { class: 'card-group' }, data.accounts.map((a) => balanceRow(a, data.currency)))
+        : h('p', { class: 'empty-state' }, 'Nobody has been given cash yet - use + Allocate cash to start.')));
+  }
+
+  /* ---------- one employee's own cash-purchase history ---------- */
+
+  const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' };
+  const STATUS_CLASS = { pending: 'chip-today', approved: 'chip-active', rejected: 'chip-off' };
+
+  function historyRow(e, cur) {
+    const sub = [fmtDate(e.entry_date), e.quantity != null ? `${e.quantity} ${e.unit || ''}`.trim() : null,
+      e.supplier || null, e.created_by_name ? `Logged by ${e.created_by_name}` : null,
+      e.approved_by_name ? `${e.status === 'approved' ? 'Approved' : 'Rejected'} by ${e.approved_by_name}` : null,
+      e.note || null].filter(Boolean).join(' · ');
+    return h('li', { class: 'p-row' },
+      h('span', { class: `chip ${STATUS_CLASS[e.status]}` }, STATUS_LABEL[e.status]),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, e.material_name),
+        h('span', { class: 'row-sub' }, sub),
+        e.bill_url ? h('a', { href: e.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill') : null),
+      h('span', { class: 'row-value' }, money(e.amount, cur)));
+  }
+
+  async function showPersonHistory(id) {
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api(`/api/cash-purchases/${id}`); }
+    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    LD.setAppbarBack?.('Allocated cash & balance', '#balances');
+    const cur = data.currency;
+    const a = data.account;
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('div', { class: 'att-head' }, h('h2', {}, data.worker.name), h('span', { class: 'att-head-date' }, 'Cash purchases')),
+      a ? h('p', { class: 'wk-legend' }, `Given ${money(a.given_total, cur)} · Spent ${money(a.spent_total, cur)} · Remaining ${money(a.remaining, cur)}`) : null,
+      data.entries.length
+        ? h('ul', { class: 'card-group' }, data.entries.map((e) => historyRow(e, cur)))
+        : h('p', { class: 'empty-state' }, 'Nothing logged yet.')));
+  }
+
   function route() {
-    if (window.location.hash === '#allocate') return showAllocate();
+    const hash = window.location.hash;
+    let m = /^#balances\/person\/(\d+)$/.exec(hash);
+    if (m) return showPersonHistory(Number(m[1]));
+    if (hash === '#balances') return showBalances();
     return showApprovals();
   }
 

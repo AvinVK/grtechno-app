@@ -206,6 +206,42 @@ def page():
     return render_template("purchase_approvals.html", page_title="Purchase approval")
 
 
+@bp.get("/api/cash-purchases/accounts")
+def accounts():
+    """Every employee cash has actually been given to, and how much they have left right now (kohal,
+    2026-10-21: "the subtab should be allocated cash and balance and their it should show employees to whom
+    cash is allocated and how much they have balance rn") - the list behind Purchase approval's own
+    Allocated cash & balance subtab, plus what its own "+ Allocate cash" sheet needs (every worker to pick
+    from, and the payment-mode choices) so that action stays a single round trip too."""
+    _manage_only()
+    rows = CashAccount.query.join(Worker).order_by(Worker.name).all()
+    return jsonify(
+        accounts=[a.to_dict() for a in rows],
+        workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
+        payment_modes=list(PAYMENT_MODES),
+        currency=settings_for_client()["currency"],
+    )
+
+
+@bp.get("/api/cash-purchases/<int:worker_id>")
+def worker_history(worker_id):
+    """One employee's own cash account and every purchase they've ever logged against it - pending,
+    approved or rejected (kohal, 2026-10-21: "clicking on one employee should show the history of cash
+    expense and whether approved or rejected") - same shape as my_cash_purchases, just for whichever
+    employee the admin/accountant taps into from the balances list, not only their own."""
+    _manage_only()
+    worker = db.session.get(Worker, worker_id)
+    if worker is None:
+        abort(404)
+    account = worker.cash_account
+    return jsonify(
+        worker={"id": worker.id, "name": worker.name},
+        account=account.to_dict() if account else None,
+        entries=[p.to_dict() for p in account.purchases] if account else [],
+        currency=settings_for_client()["currency"],
+    )
+
+
 @bp.post("/api/cash-purchases/<int:worker_id>/give")
 def give(worker_id):
     """Add to what's already been given (same answer kohal gave for fooding's own allot - a top-up adds to
