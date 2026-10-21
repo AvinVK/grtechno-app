@@ -692,6 +692,19 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .quick-dates { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .yes-no-row { display: flex; gap: 8px; margin-top: 4px; }
 .yes-no-row .btn { flex: 1; }
+
+/* The 3 documents a project must have on file before it can close (final estimate, work completion
+   certificate, final invoice) - a small checklist inside the Close project sheet. */
+.doc-list { display: grid; gap: 10px; margin-top: 4px; }
+.doc-row { display: flex; align-items: center; gap: 10px; }
+.doc-check {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line-strong);
+  font-size: 12px; font-weight: 700; color: transparent;
+}
+.doc-check.is-done { border-color: var(--ok); background: var(--ok); color: #fff; }
+.doc-label { flex: 1; min-width: 0; font-weight: 600; }
+.doc-row .link-btn { font-size: 13px; }
 /* The one-field amount box (Negotiated amount): a bottom sheet, so the soft keyboard pushes it up rather
    than cutting its buttons off the bottom of a centred dialog. */
 .amount-sheet {

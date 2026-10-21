@@ -11,18 +11,31 @@ from werkzeug.exceptions import abort
 
 from . import inventory as inv
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
-from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES
+from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES, PROJECT_DOCUMENT_TYPES
 from .extensions import db
-from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectExpense, ProjectPayment, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
+from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local, today_local
+from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors, parse_money
 
 bp = Blueprint("projects", __name__)
 api_errors(bp)
 
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
+PROJECT_DOCUMENT_LABELS = dict(PROJECT_DOCUMENT_TYPES)
+
+
+def _join_and(items: list) -> str:
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _missing_documents_message(project) -> str:
+    labels = [PROJECT_DOCUMENT_LABELS[k] for k in project.missing_documents]
+    return f"Upload the {_join_and(labels)} before closing this project."
 
 
 class ProjectError(Exception):
@@ -342,6 +355,7 @@ def _detail(project):
         "statuses": PROJECT_STATUSES,
         "currency": settings_for_client()["currency"],
         "payment_modes": PAYMENT_MODES,
+        "document_types": PROJECT_DOCUMENT_TYPES,
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,
@@ -439,6 +453,8 @@ def update_project(project_id):
     if data.get("status") == "completed" and project.status != "completed" and "status" not in errors:
         if final is None:
             errors["status"] = "Enter the final measurement amount before closing."
+        elif project.missing_documents:
+            errors["status"] = _missing_documents_message(project)
         elif project.paid_amount < final:
             errors["status"] = "The final amount hasn't been fully paid yet."
 
@@ -487,11 +503,60 @@ def close_project(project_id):
         return jsonify(error="This project is already closed."), 409
     if project.final_amount is None:
         abort(422, "Enter the final measurement amount before closing.")
+    if project.missing_documents:
+        abort(422, _missing_documents_message(project))
     if project.paid_amount < project.final_amount:
         abort(422, "The final amount hasn't been fully paid yet.")
     project.status = "completed"
     project.completed_at = utcnow()
     db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.post("/api/projects/<int:project_id>/documents/<doc_type>")
+def upload_document(project_id, doc_type):
+    """One of the documents required before close_project will allow this project to close (kohal,
+    2026-10-21: "need to mandatorily upload these 3 things once measure done = true. final estimate, work
+    completion certi, final invoice mandatory upload") - admin only, same gate as closing itself since
+    that's the only thing this serves. Re-uploading a type replaces what was there."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can upload a project's closing documents.")
+    if doc_type not in PROJECT_DOCUMENT_LABELS:
+        abort(404)
+    project = _project_or_404(project_id)
+    files = request.files.getlist("file")
+    if not files:
+        abort(422, "Choose a file")
+    try:
+        filename = save_upload(files[0], "project_documents", allowed=DOCUMENT_TYPES)
+    except UploadError as err:
+        abort(422, err.message)
+    existing = next((d for d in project.documents if d.doc_type == doc_type), None)
+    if existing:
+        delete_upload("project_documents", existing.filename)
+        existing.filename = filename
+        existing.uploaded_by_code = g.user.code
+        existing.created_at = utcnow()
+    else:
+        db.session.add(ProjectDocument(
+            project_id=project.id, doc_type=doc_type, filename=filename, uploaded_by_code=g.user.code,
+        ))
+    db.session.commit()
+    return jsonify(_detail(project)), 201
+
+
+@bp.delete("/api/projects/<int:project_id>/documents/<doc_type>")
+def delete_document(project_id, doc_type):
+    if not g.user.is_admin:
+        abort(403, "Only the admin can remove a project's closing documents.")
+    if doc_type not in PROJECT_DOCUMENT_LABELS:
+        abort(404)
+    project = _project_or_404(project_id)
+    existing = next((d for d in project.documents if d.doc_type == doc_type), None)
+    if existing:
+        delete_upload("project_documents", existing.filename)
+        db.session.delete(existing)
+        db.session.commit()
     return jsonify(_detail(project))
 
 

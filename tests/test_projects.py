@@ -1,10 +1,21 @@
+import io
 from datetime import date
 from decimal import Decimal
 
-from app.constants import COMMISSION_ROLE_KEY
+from app.constants import COMMISSION_ROLE_KEY, PROJECT_DOCUMENT_TYPES
 from app.extensions import db
 from app.models import Attendance, Client, Lead, Project, ProjectPayment, Role, RoleModule, Service, User, Worker, WorkerAttendance, utcnow
 from conftest import make_user, signed_in, win_lead
+
+
+def upload_all_documents(admin_client, pid):
+    """Satisfy the closing-documents gate (app/projects.py's close_project) for tests that don't care
+    about that gate itself - just want a project that's otherwise ready to close."""
+    for doc_type, _label in PROJECT_DOCUMENT_TYPES:
+        res = admin_client.post(f"/api/projects/{pid}/documents/{doc_type}",
+                                 data={"file": (io.BytesIO(b"fake"), "doc.pdf", "application/pdf")},
+                                 content_type="multipart/form-data")
+        assert res.status_code == 201, res.get_json()
 
 
 def make_lead(client, **fields):
@@ -502,6 +513,11 @@ def test_only_the_admin_can_close_a_project(client, admin_client, accounts_clien
         {"label": "Advance", "amount": 100000, "mode": "Bank transfer", "paid_date": "2026-09-23"},
         {"label": "Final", "amount": 50000, "mode": "Bank transfer", "paid_date": "2026-09-30"},
     ]})
+    # Fully paid now, but the 3 closing documents aren't on file yet - still refused.
+    still_blocked2 = admin_client.post(f"/api/projects/{pid}/close")
+    assert still_blocked2.status_code == 422
+
+    upload_all_documents(admin_client, pid)
     closed = admin_client.post(f"/api/projects/{pid}/close")
     assert closed.status_code == 200
     body = closed.get_json()
@@ -509,10 +525,87 @@ def test_only_the_admin_can_close_a_project(client, admin_client, accounts_clien
     assert admin_client.post(f"/api/projects/{pid}/close").status_code == 409
 
 
+# ---------- closing documents: final estimate, work completion certificate, final invoice ----------
+# (kohal, 2026-10-21: "need to mandatorily upload these 3 things once measure done = true")
+
+def test_only_the_admin_can_upload_or_remove_a_closing_document(client, admin_client, accounts_client, manager_client):
+    pid = make_project(client, admin_client)
+    for who in (accounts_client, manager_client):
+        res = who.post(f"/api/projects/{pid}/documents/final_estimate",
+                        data={"file": (io.BytesIO(b"fake"), "doc.pdf", "application/pdf")},
+                        content_type="multipart/form-data")
+        assert res.status_code == 403
+    admin_client.post(f"/api/projects/{pid}/documents/final_estimate",
+                       data={"file": (io.BytesIO(b"fake"), "doc.pdf", "application/pdf")},
+                       content_type="multipart/form-data")
+    assert accounts_client.delete(f"/api/projects/{pid}/documents/final_estimate").status_code == 403
+
+
+def test_unknown_document_type_is_rejected(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Doc Type Check"}).get_json()["project"]["id"]
+    res = admin_client.post(f"/api/projects/{pid}/documents/some_other_thing",
+                             data={"file": (io.BytesIO(b"fake"), "doc.pdf", "application/pdf")},
+                             content_type="multipart/form-data")
+    assert res.status_code == 404
+
+
+def test_uploading_a_document_requires_a_file(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "No File"}).get_json()["project"]["id"]
+    assert admin_client.post(f"/api/projects/{pid}/documents/final_estimate", data={}).status_code == 422
+
+
+def test_document_upload_shows_up_on_the_project_and_can_be_replaced_or_removed(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Doc Lifecycle"}).get_json()["project"]["id"]
+    res = admin_client.post(f"/api/projects/{pid}/documents/final_invoice",
+                             data={"file": (io.BytesIO(b"fake"), "invoice.pdf", "application/pdf")},
+                             content_type="multipart/form-data")
+    assert res.status_code == 201
+    docs = res.get_json()["project"]["documents"]
+    assert set(docs) == {"final_invoice"} and docs["final_invoice"]["url"]
+    first_url = docs["final_invoice"]["url"]
+
+    # Re-uploading the same type replaces it rather than adding a second entry.
+    replaced = admin_client.post(f"/api/projects/{pid}/documents/final_invoice",
+                                  data={"file": (io.BytesIO(b"fake2"), "invoice2.pdf", "application/pdf")},
+                                  content_type="multipart/form-data").get_json()
+    docs2 = replaced["project"]["documents"]
+    assert len(docs2) == 1 and docs2["final_invoice"]["url"] != first_url
+
+    cleared = admin_client.delete(f"/api/projects/{pid}/documents/final_invoice").get_json()
+    assert cleared["project"]["documents"] == {}
+
+
+def test_closing_is_blocked_until_all_three_documents_are_on_file(client, admin_client):
+    pid = make_project(client, admin_client)
+    admin_client.patch(f"/api/projects/{pid}", json={
+        "title": "T", "final_amount": 100000,
+        "payments": [{"label": "Final", "amount": 100000, "mode": "Cash", "paid_date": "2026-09-30"}],
+    })
+    for doc_type, _label in PROJECT_DOCUMENT_TYPES[:-1]:
+        admin_client.post(f"/api/projects/{pid}/documents/{doc_type}",
+                           data={"file": (io.BytesIO(b"fake"), "doc.pdf", "application/pdf")},
+                           content_type="multipart/form-data")
+    res = admin_client.post(f"/api/projects/{pid}/close")
+    assert res.status_code == 422
+    assert PROJECT_DOCUMENT_TYPES[-1][1] in res.get_json()["error"]
+
+    last_type = PROJECT_DOCUMENT_TYPES[-1][0]
+    admin_client.post(f"/api/projects/{pid}/documents/{last_type}",
+                       data={"file": (io.BytesIO(b"fake"), "doc.pdf", "application/pdf")},
+                       content_type="multipart/form-data")
+    assert admin_client.post(f"/api/projects/{pid}/close").status_code == 200
+
+
 def test_completed_at_follows_the_status_when_edited(client, admin_client):
     pid = make_project(client, admin_client)
     url = f"/api/projects/{pid}"
     assert admin_client.patch(url, json={"title": "T", "status": "completed"}).status_code == 422
+    blocked = admin_client.patch(url, json={
+        "title": "T", "status": "completed", "final_amount": 100000,
+        "payments": [{"label": "Final", "amount": 100000, "mode": "Cash", "paid_date": "2026-09-30"}],
+    })
+    assert blocked.status_code == 422                # measured and paid, but no closing documents yet
+    upload_all_documents(admin_client, pid)
     done = admin_client.patch(url, json={
         "title": "T", "status": "completed", "final_amount": 100000,
         "payments": [{"label": "Final", "amount": 100000, "mode": "Cash", "paid_date": "2026-09-30"}],
@@ -605,7 +698,8 @@ def test_a_closed_project_can_still_be_deleted(client, admin_client):
         "title": "T", "final_amount": 100000,
         "payments": [{"label": "Final", "amount": 100000, "mode": "Cash", "paid_date": "2026-09-30"}],
     })
-    admin_client.post(f"/api/projects/{pid}/close")
+    upload_all_documents(admin_client, pid)
+    assert admin_client.post(f"/api/projects/{pid}/close").status_code == 200
     dash = admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]
     assert dash["can_delete"] is True
     assert admin_client.delete(f"/api/projects/{pid}").status_code == 204

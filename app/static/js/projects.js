@@ -323,7 +323,34 @@
   // elsewhere, rather than a single yes/no confirm box that can't hold a form. Once the amount is
   // recorded it's locked - a real measurement isn't something to second-guess from here - so a repeat
   // visit to this sheet only ever shows it read-only, with just Close project left to do.
-  function openCloseSheet(P, cur, onClosed) {
+  // The three documents that must be on file before a project can close, once the final measurement is in
+  // (kohal, 2026-10-21: "need to mandatorily upload these 3 things once measure done = true. final
+  // estimate, work completion certi, final invoice mandatory upload") - same "goes up the moment it's
+  // picked" pattern as a cash purchase's own bill (app/static/js/me.js's billControl).
+  function documentRow(P, docType, label, onChanged) {
+    const doc = P.documents && P.documents[docType];
+    const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', hidden: true });
+    fileInput.onchange = async () => {
+      if (!fileInput.files.length) return;
+      const fd = new FormData();
+      fd.append('file', fileInput.files[0]);
+      try {
+        const res = await fetch(`/api/projects/${P.id}/documents/${docType}`, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not upload this document');
+        toast(doc ? 'Document replaced' : 'Document added');
+        onChanged(data);
+      } catch (err) { toast(err.message, true); }
+    };
+    const uploadBtn = h('label', { class: 'link-btn' }, doc ? 'Replace' : 'Upload', fileInput);
+    return h('div', { class: 'doc-row' },
+      h('span', { class: `doc-check ${doc ? 'is-done' : ''}`, 'aria-hidden': 'true' }, doc ? '✓' : ''),
+      h('span', { class: 'doc-label' }, label),
+      doc ? h('a', { href: doc.url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View') : null,
+      uploadBtn);
+  }
+
+  function openCloseSheet(P, cur, docTypes, onClosed) {
     const overlay = h('div', { class: 'overlay' });
     const finish = closeOnBack(() => { overlay.remove(); drawer.remove(); });
     const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
@@ -333,13 +360,16 @@
     const foot = h('div', { class: 'drawer-foot' });
 
     // Called once up front and again, in place (no re-opening the sheet - that would mean a second
-    // closeOnBack push racing the first's history.back()), once the amount is recorded.
+    // closeOnBack push racing the first's history.back()), once the amount is recorded or a document
+    // is uploaded/replaced.
     function renderContent() {
       const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
       let body, footer;
       if (P.final_amount != null) {
       const remaining = P.final_amount - (P.paid_amount || 0);
-      const closeBtn = h('button', { class: 'btn danger primary', type: 'button', disabled: remaining > 0 }, 'Close project');
+      const missingDocs = docTypes.filter(([key]) => !(P.documents && P.documents[key]));
+      const canClose = remaining <= 0 && missingDocs.length === 0;
+      const closeBtn = h('button', { class: 'btn danger primary', type: 'button', disabled: !canClose }, 'Close project');
       closeBtn.onclick = async () => {
         closeBtn.disabled = true;
         try {
@@ -360,7 +390,13 @@
           h('p', { class: 'stat-value is-text' }, money(P.final_amount, cur))),
         h('p', { class: 'hint' }, remaining > 0
           ? `${money(remaining, cur)} still to be paid before this project can close.`
-          : 'Fully paid - ready to close.'),
+          : 'Fully paid.'),
+        h('div', { class: 'field' },
+          h('label', {}, 'Closing documents'),
+          h('div', { class: 'doc-list' }, docTypes.map(([key, label]) => documentRow(P, key, label, (saved) => {
+            P.documents = saved.project.documents;
+            renderContent();
+          })))),
       ];
       footer = [closeBtn];
     } else {
@@ -458,7 +494,7 @@
       closeArea = h('p', { class: 'hint' }, D.completed_at ? `Closed on ${longDate(new Date(D.completed_at))}.` : 'This project is closed.');
     } else if (D.can_close) {
       const closeBtn = h('button', { class: 'btn danger dash-close', type: 'button' }, 'Close project');
-      closeBtn.onclick = () => openCloseSheet(P, cur, (saved) => renderDashboard(saved));
+      closeBtn.onclick = () => openCloseSheet(P, cur, data.document_types, (saved) => renderDashboard(saved));
       closeArea = closeBtn;
     }
 

@@ -12,6 +12,15 @@ PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other"]
 # (app/projects.py's commission entries, app/workers.py's "Commission earned" stat) checks against.
 COMMISSION_ROLE_KEY = "project_manager_chandrapur"
 
+# The paperwork that must be on file before a project can close, once the final on-site measurement is in
+# (kohal, 2026-10-21: "need to mandatorily upload these 3 things once measure done = true. final estimate,
+# work completion certi, final invoice mandatory upload"). Order is display order.
+PROJECT_DOCUMENT_TYPES = [
+    ("final_estimate", "Final estimate"),
+    ("completion_certificate", "Work completion certificate"),
+    ("final_invoice", "Final invoice"),
+]
+
 # This role also sees every project in this district specifically (kohal, 2026-10-18: "alocate chandrapur
 # region projects... to project manager chandrapur role"), on top of whatever it manages elsewhere - not
 # every project company-wide the way the plain project_manager role does (see auth.visible_projects).

@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from .constants import DEFAULT_SETTINGS
+from .constants import DEFAULT_SETTINGS, PROJECT_DOCUMENT_TYPES
 from .crypto import EncryptedText
 from .extensions import db
 
@@ -387,6 +387,7 @@ class Project(db.Model):
         "ProjectExpense", back_populates="project", cascade="all, delete-orphan",
         order_by="ProjectExpense.entry_date.desc(), ProjectExpense.id.desc()",
     )
+    documents = db.relationship("ProjectDocument", back_populates="project", cascade="all, delete-orphan")
 
     @property
     def code(self) -> str:
@@ -405,6 +406,14 @@ class Project(db.Model):
         """What's actually been received - the payment steps with a date of payment recorded, not every
         step in the schedule (a future step can sit there unpaid)."""
         return sum((p.amount for p in self.payments if p.paid_date is not None), Decimal(0))
+
+    @property
+    def missing_documents(self) -> list:
+        """Which of the required closing documents (see constants.PROJECT_DOCUMENT_TYPES) haven't been
+        uploaded yet - only meaningful once the final measurement is in, but returned regardless; the
+        caller decides when it matters (close_project checks it only once final_amount is set)."""
+        have = {d.doc_type for d in self.documents}
+        return [key for key, _label in PROJECT_DOCUMENT_TYPES if key not in have]
 
     @property
     def service_names(self) -> list:
@@ -438,6 +447,7 @@ class Project(db.Model):
                 "completion_days": self.completion_days,
                 "payment_terms": self.payment_terms, "special_terms": self.special_terms,
                 "payments": [p.to_dict() for p in self.payments],
+                "documents": {d.doc_type: d.to_dict() for d in self.documents},
             })
         return data
 
@@ -509,6 +519,34 @@ class ProjectExpense(db.Model):
             "percent": float(self.percent), "basis_amount": float(self.basis_amount), "amount": float(self.amount),
             "entry_date": self.entry_date.isoformat(), "note": self.note,
             "created_by_name": self.created_by.name if self.created_by else None,
+        }
+
+
+class ProjectDocument(db.Model):
+    """One of the documents a project must have on file before it can close, once the final measurement is
+    in (kohal, 2026-10-21: "need to mandatorily upload these 3 things once measure done = true. final
+    estimate, work completion certi, final invoice") - see constants.PROJECT_DOCUMENT_TYPES for which
+    doc_type values are required, and app/projects.py's close_project for the gate. Re-uploading the same
+    doc_type replaces what was there, so there's at most one row per (project, doc_type)."""
+
+    __tablename__ = "project_documents"
+    __table_args__ = (db.UniqueConstraint("project_id", "doc_type", name="uq_project_documents_project_type"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    doc_type = db.Column(db.String(30), nullable=False)
+    filename = db.Column(db.String(80), nullable=False)
+    uploaded_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    project = db.relationship("Project", back_populates="documents")
+    uploaded_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "doc_type": self.doc_type, "url": f"/uploads/project_documents/{self.filename}",
+            "uploaded_by_name": self.uploaded_by.name if self.uploaded_by else None,
+            "created_at": _iso(self.created_at),
         }
 
 
