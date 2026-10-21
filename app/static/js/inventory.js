@@ -23,14 +23,17 @@
 
   /* ---------- the Materials / Material requests tab bar ---------- */
 
-  // Two tabs at the top of Inventory, same pill shape as Projects' own section tabs (kohal, 2026-10-17:
-  // "the approval request should go to a new subtab inside inventory called material requests"). `badge`
-  // is the pending-requests count, shown only while there is one.
-  function inventoryTabs(active, badge) {
+  // Three tabs at the top of Inventory, same pill shape as Projects' own section tabs (kohal, 2026-10-17:
+  // "the approval request should go to a new subtab inside inventory called material requests"; restock
+  // added 2026-10-21). `requestBadge`/`restockBadge` are each tab's own count, shown only while there is one.
+  function inventoryTabs(active, requestBadge, restockBadge) {
+    const badge = (n) => (n ? h('span', { class: 'nav-badge' }, String(n)) : null);
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Inventory section' },
       h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'list' ? 'page' : null }, 'Materials'),
       h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null },
-        'Material requests', badge ? h('span', { class: 'nav-badge' }, String(badge)) : null));
+        'Material requests', badge(requestBadge)),
+      h('a', { class: 'filter-chip', href: '#restock', 'aria-current': active === 'restock' ? 'page' : null },
+        'Restock', badge(restockBadge)));
   }
 
   /* ---------- list: every material, its stock and what it's worth ---------- */
@@ -68,7 +71,7 @@
     }
     search.oninput = refresh;
 
-    clear(view).append(h('div', {}, inventoryTabs('list', data.pending_request_count), h('div', { class: 'filters' }, search), count, results));
+    clear(view).append(h('div', {}, inventoryTabs('list', data.pending_request_count, data.restock_count), h('div', { class: 'filters' }, search), count, results));
     refresh();
   }
 
@@ -220,7 +223,7 @@
           h('button', { type: 'button', class: 'link-btn', onclick: () => rejectRequest(r, reload) }, 'Reject')))));
 
     clear(view).append(h('div', {},
-      inventoryTabs('requests', data.requests.length),
+      inventoryTabs('requests', data.requests.length, data.restock_count),
       data.requests.length
         ? h('ul', { class: 'card-group' }, rows)
         : h('p', { class: 'empty-state' }, 'No pending requests right now.'),
@@ -228,6 +231,40 @@
       history.requests.length
         ? h('ul', { class: 'card-group' }, history.requests.map(historyRow))
         : h('p', { class: 'empty-state' }, 'Nothing dealt with yet.')));
+  }
+
+  /* ---------- Restock: every material a pending request needs more of than is on hand ---------- */
+
+  // kohal, 2026-10-21: "if the requested material quantity or the material itself is not available in the
+  // inventory then in inventory (in a new subtab called restock) there should be an entry created saying
+  // this material and min this much quantity needs to be restocked - required in this project". Read-only,
+  // same as Material requests' own pending list - stocking it in happens from the material's own page
+  // (tapping a row goes straight there), not from a form on this one.
+  async function showRestock() {
+    showBack(false);
+    showAddLink(false);
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/inventory/restock'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    function restockRow(r) {
+      const neededBy = r.projects
+        .map((p) => (p.project_title ? `${p.project_code} · ${p.project_title} (${p.quantity} ${r.unit || ''})`.trim() : null))
+        .filter(Boolean).join(', ');
+      return h('li', {}, h('a', { class: 'p-row', href: `#m${r.material_id}` },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
+          h('span', { class: 'row-sub' }, `${r.stock_qty} ${r.unit || ''} in stock · Required: ${neededBy}`.trim())),
+        h('span', { class: 'row-value' }, `Restock ${r.restock_qty} ${r.unit || ''}`.trim()),
+        h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›')));
+    }
+
+    clear(view).append(h('div', {},
+      inventoryTabs('restock', data.pending_request_count, data.restock.length),
+      data.restock.length
+        ? h('ul', { class: 'card-group' }, data.restock.map(restockRow))
+        : h('p', { class: 'empty-state' }, 'Nothing short right now - every pending request fits inside current stock.')));
   }
 
   /* ---------- one material: stock, cost, and its movement history ---------- */
@@ -856,6 +893,7 @@
     const hash = window.location.hash;
     if (hash === '#new') return showNew();
     if (hash === '#requests') return showRequests();
+    if (hash === '#restock') return showRestock();
     let m = /^#m(\d+)\/edit$/.exec(hash);
     if (m) return showEdit(Number(m[1]));
     m = /^#m(\d+)\/stock-in$/.exec(hash);

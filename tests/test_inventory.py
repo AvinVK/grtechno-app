@@ -841,3 +841,86 @@ def test_rejecting_a_return_leaves_stock_untouched(app, admin_client, accounts_c
     assert res.status_code == 200 and res.get_json()["movement"]["status"] == "rejected"
     after = accounts_client.get(f"/api/inventory/materials/{mat_id}").get_json()["material"]["stock_qty"]
     assert after == before
+
+
+# ---------- Restock (kohal, 2026-10-21) ----------
+#
+# "if the requested material quantity or the material itself is not available in the inventory then in
+# inventory (in a new subtab called restock) there should be an entry created saying this material and min
+# this much quantity needs to be restocked - required in this project".
+
+def test_restock_needs_the_inventory_module(client, accounts_client):
+    assert client.get("/api/inventory/restock").status_code == 403
+    assert accounts_client.get("/api/inventory/restock").status_code == 200
+
+
+def test_a_request_fully_covered_by_stock_does_not_show_in_restock(app, admin_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=5, stock=20)
+    data = admin_client.get("/api/inventory/restock").get_json()
+    assert mat_id not in {r["material_id"] for r in data["restock"]}
+
+
+def test_a_request_over_stock_shows_the_exact_shortfall(app, admin_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=7, stock=5)
+    data = admin_client.get("/api/inventory/restock").get_json()
+    row = next(r for r in data["restock"] if r["material_id"] == mat_id)
+    assert row["stock_qty"] == 5 and row["requested_qty"] == 7 and row["restock_qty"] == 2
+    assert len(row["projects"]) == 1
+    assert row["projects"][0]["project_id"] == pid and row["projects"][0]["quantity"] == 7.0
+
+
+def test_a_material_with_zero_stock_needs_the_full_amount_restocked(app, admin_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=10, stock=0)
+    data = admin_client.get("/api/inventory/restock").get_json()
+    row = next(r for r in data["restock"] if r["material_id"] == mat_id)
+    assert row["restock_qty"] == 10
+
+
+def test_restock_sums_pending_requests_from_multiple_projects(app, admin_client):
+    material = add_material(admin_client, name="Rebar")
+    mid = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 5, "rate": 10})
+    pid1 = add_project(admin_client, "Site Alpha")
+    pid2 = add_project(admin_client, "Site Beta")
+    admin_client.post(f"/api/projects/{pid1}/material-requests", json={"material_id": mid, "quantity": 4})
+    admin_client.post(f"/api/projects/{pid2}/material-requests", json={"material_id": mid, "quantity": 6})
+
+    data = admin_client.get("/api/inventory/restock").get_json()
+    row = next(r for r in data["restock"] if r["material_id"] == mid)
+    assert row["requested_qty"] == 10 and row["restock_qty"] == 5
+    by_project = {p["project_id"]: p["quantity"] for p in row["projects"]}
+    assert by_project == {pid1: 4.0, pid2: 6.0}
+    assert {p["project_title"] for p in row["projects"]} == {"Site Alpha", "Site Beta"}
+
+
+def test_an_approved_request_no_longer_counts_toward_restock(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=7, stock=5)
+    wid = add_worker(accounts_client)
+    accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve",
+                          json={"quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
+    # Approving less than requested splits a remainder - still pending, so the shortfall still shows, just
+    # now scoped to what's actually still outstanding (2), not the original ask (7).
+    data = admin_client.get("/api/inventory/restock").get_json()
+    row = next((r for r in data["restock"] if r["material_id"] == mat_id), None)
+    assert row is not None and row["requested_qty"] == 2 and row["restock_qty"] == 2
+
+
+def test_a_rejected_request_does_not_count_toward_restock(app, admin_client, accounts_client):
+    mat_id, pid, movement_id = pending_request(admin_client, app, qty=7, stock=5)
+    accounts_client.post(f"/api/inventory/material-requests/{movement_id}/reject")
+    data = admin_client.get("/api/inventory/restock").get_json()
+    assert mat_id not in {r["material_id"] for r in data["restock"]}
+
+
+def test_a_return_request_never_counts_toward_restock(app, admin_client):
+    mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
+    data = admin_client.get("/api/inventory/restock").get_json()
+    assert mat_id not in {r["material_id"] for r in data["restock"]}
+
+
+def test_restock_count_badge_appears_on_the_materials_and_requests_responses(app, admin_client):
+    pending_request(admin_client, app, qty=7, stock=5)
+    materials_data = admin_client.get("/api/inventory/materials").get_json()
+    requests_data = admin_client.get("/api/inventory/material-requests").get_json()
+    assert materials_data["restock_count"] == 1
+    assert requests_data["restock_count"] == 1

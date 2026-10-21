@@ -320,9 +320,11 @@ def list_materials():
         material_names=_material_names(),
         total_stock_value=float(sum((m.stock_value for m in materials), start=0)),
         currency=settings_for_client()["currency"],
-        # For the Material requests tab's badge (kohal, 2026-10-17) - cheap enough to just count here
-        # rather than make the list page wait on a second request only to show a number on a tab.
+        # For the Material requests / Restock tabs' own badges (kohal, 2026-10-17, restock 2026-10-21) -
+        # cheap enough to just count here rather than make the list page wait on a second request only to
+        # show a number on a tab.
         pending_request_count=MaterialMovement.query.filter_by(kind="out", status="pending").count(),
+        restock_count=len(_restock_rows()),
     )
 
 
@@ -585,6 +587,7 @@ def material_requests():
         requests=[_material_request_dict(mv) for mv in pending],
         workers=_workers_for_client(),
         transport_modes=list(TRANSPORT_MODES),
+        restock_count=len(_restock_rows()),
     )
 
 
@@ -604,6 +607,59 @@ def material_request_history():
             .order_by(MaterialMovement.approved_at.desc(), MaterialMovement.created_at.desc())
             .limit(200).all())
     return jsonify(requests=[_material_request_dict(mv) for mv in rows])
+
+
+# ---------- Restock (kohal, 2026-10-21) ----------
+#
+# "if the requested material quantity or the material itself is not available in the inventory then in
+# inventory (in a new subtab called restock) there should be an entry created saying this material and min
+# this much quantity needs to be restocked - required in this project" - every pending issue request that
+# current stock can't fully cover right now, grouped by material, so whoever buys stock has one list of
+# exactly what's short and which project(s) are waiting on it. Computed fresh from the same pending queue
+# Material requests already shows, never stored - a material already fully covered by stock never appears
+# here even while its request is still waiting on someone to approve it; only an actual shortage does.
+
+def _restock_rows():
+    pending = (MaterialMovement.query
+               .filter_by(kind="out", status="pending", requested=True)
+               .order_by(MaterialMovement.created_at).all())
+    by_material = {}
+    for mv in pending:
+        by_material.setdefault(mv.material_id, []).append(mv)
+
+    rows = []
+    for material_id, movements in by_material.items():
+        material = movements[0].material
+        total_requested = sum((mv.quantity for mv in movements), start=Decimal("0"))
+        shortfall = total_requested - material.stock_qty
+        if shortfall <= 0:
+            continue
+        by_project = {}
+        for mv in movements:
+            entry = by_project.setdefault(mv.project_id, {
+                "project_id": mv.project_id,
+                "project_code": mv.project.code if mv.project else None,
+                "project_title": mv.project.title if mv.project else None,
+                "quantity": Decimal("0"),
+            })
+            entry["quantity"] += mv.quantity
+        projects = sorted(by_project.values(), key=lambda p: p["project_title"] or "")
+        rows.append({
+            "material_id": material.id, "material_code": material.code, "material_name": material.name,
+            "unit": material.unit, "stock_qty": float(material.stock_qty),
+            "requested_qty": float(total_requested), "restock_qty": float(shortfall),
+            "projects": [{**p, "quantity": float(p["quantity"])} for p in projects],
+        })
+    rows.sort(key=lambda r: r["material_name"].lower())
+    return rows
+
+
+@bp.get("/api/inventory/restock")
+def restock():
+    return jsonify(
+        restock=_restock_rows(),
+        pending_request_count=MaterialMovement.query.filter_by(kind="out", status="pending").count(),
+    )
 
 
 @bp.post("/api/inventory/material-requests/<int:movement_id>/approve")
