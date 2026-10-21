@@ -67,8 +67,14 @@
       // The admin can always fix one; anyone else only while it's still pending - the server has the same
       // rule (kohal, 2026-10-19: "give option to update work plan") and is the real enforcement either way.
       const canChange = state.can_approve || a.status === 'pending';
-      return h('li', { class: 'p-row' },
-        h('span', { class: 'p-main' },
+      // .approval-row, not the plain .p-row every other list here uses (kohal, 2026-10-21: "while filling
+      // work plan its one char in one line") - .p-row never wraps, so up to 4 flex-none buttons (Approve/
+      // Reject/Edit/Delete at once) squeezed the name's own flex:1 column down toward zero width, and
+      // overflow-wrap: anywhere then broke it one character per line to fit. .approval-row already exists
+      // for exactly this - several buttons plus flex-wrap:wrap, same as every other approval-style row in
+      // the app (Inventory's material requests, Purchase approval).
+      return h('li', {}, h('div', { class: 'card me-row approval-row' },
+        h('div', { class: 'approval-main' },
           h('span', { class: 'row-title' }, a.worker_name),
           h('span', { class: 'row-sub' }, [where, a.task].filter(Boolean).join(' · '))),
         h('div', { class: 'approval-actions' },
@@ -76,7 +82,7 @@
           canAct ? h('button', { class: 'btn small primary', type: 'button', onclick: () => act(a, 'approve') }, 'Approve') : null,
           canAct ? h('button', { class: 'btn small', type: 'button', onclick: () => act(a, 'reject') }, 'Reject') : null,
           canChange ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); openSheet(a.kind, a); } }, 'Edit') : null,
-          canChange ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); removeOne(a); } }, 'Delete') : null));
+          canChange ? h('a', { href: '#', class: 'att-delete-link', onclick: (e) => { e.preventDefault(); removeOne(a); } }, 'Delete') : null)));
     }
 
     async function act(a, action) {
