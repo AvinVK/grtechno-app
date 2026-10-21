@@ -82,15 +82,6 @@
     <div id="me-cash-purchases-body"></div>
   </section>
 
-  {# Admin/accountant only: hand an employee cash, and approve or reject what they say they bought with it
-     (app/cash_purchases.py's can_manage_cash_purchases - same pair as fooding's own management). #}
-  <section class="me-section" id="me-cash-purchases-manage" aria-labelledby="me-cash-purchases-manage-h" hidden>
-    <div id="me-cash-purchases-manage-head" class="me-section-head">
-      <h2 id="me-cash-purchases-manage-h">Pending approvals</h2><span class="chip chip-role">Cash purchases</span>
-    </div>
-    <div id="me-cash-purchases-pending-list" class="card-group me-rows"></div>
-  </section>
-
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}
   {% if current_user.is_admin %}
   <section class="me-section" id="me-approvals" aria-labelledby="me-approvals-h" hidden>

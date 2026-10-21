@@ -291,3 +291,45 @@ def test_bill_upload_blocked_for_someone_else(app, accounts_client):
     res = accounts_client.post(f"/api/cash-purchases/{entry_id}/bill", data={"bill": (io.BytesIO(b"fake"), "bill.jpg", "image/jpeg")},
                                 content_type="multipart/form-data")
     assert res.status_code == 201
+
+
+# ---------- its own page, next to Fooding (kohal, 2026-10-21) ----------
+#
+# "this pending approval should have its own block next to fooding. named as purchase approval - this is
+# only visisble to admin. inside this there will be approvals and alocate cash (same as fooding types)."
+
+def test_purchase_approvals_page_is_admin_or_accountant_only(client, accounts_client, admin_client):
+    assert client.get("/purchase-approvals").status_code == 403
+    assert accounts_client.get("/purchase-approvals").status_code == 200
+    assert admin_client.get("/purchase-approvals").status_code == 200
+
+
+def test_an_ordinary_employee_never_sees_the_purchase_approval_tile(app):
+    who, wid = worker_user(app)
+    html = who.get("/me").get_data(as_text=True)
+    assert "Purchase approval" not in html
+    assert who.get("/purchase-approvals").status_code == 403
+
+
+def test_admin_and_accountant_get_a_purchase_approval_tile_next_to_fooding(admin_client, accounts_client):
+    for who in (admin_client, accounts_client):
+        html = who.get("/me").get_data(as_text=True)
+        assert html.count('href="/purchase-approvals"') == 1 and "Purchase approval" in html
+        assert 'href="/fooding"' in html   # both tiles together, same grid
+
+
+def test_the_purchase_approval_tile_shows_how_many_are_pending(app, admin_client, accounts_client):
+    who, wid = worker_user(app)
+    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "Cash"})
+    who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"})
+    who.post("/api/cash-purchases/me", json={"material_name": "Cement", "amount": "400"})
+
+    html = admin_client.get("/me").get_data(as_text=True)
+    assert "2 pending" in html
+
+
+def test_the_purchase_approval_tile_shows_nothing_when_theres_no_queue(admin_client):
+    html = admin_client.get("/me").get_data(as_text=True)
+    assert "Purchase approval" in html
+    # no "X pending" sum line when the queue is empty, same as Fooding shows no count at zero
+    assert "0 pending" not in html

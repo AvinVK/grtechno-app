@@ -12,6 +12,7 @@ from . import categories
 from .auth import (
     can_approve_stock_in,
     can_approve_work_assignment,
+    can_manage_cash_purchases,
     can_manage_fooding,
     visible_clients,
     visible_leads,
@@ -24,6 +25,7 @@ from .models import (
     Announcement,
     AnnouncementRecipient,
     Attendance,
+    CashPurchase,
     Client,
     Lead,
     LeadSurvey,
@@ -73,11 +75,15 @@ def _summaries(keys) -> dict:
 
 
 def _extra_tiles():
-    """Wages/Fooding (kohal, 2026-10-18) aren't modules - who gets which of these tiles, in the same
-    Services grid as the real ones (kohal: "i wasnt fooding blobk here in missing space"), depends on
-    something other than a role:
+    """Wages/Fooding/Purchase approval (kohal, 2026-10-18, cash purchases 2026-10-21) aren't modules - who
+    gets which of these tiles, in the same Services grid as the real ones (kohal: "i wasnt fooding blobk
+    here in missing space"), depends on something other than a role:
     - the admin or accountant (auth.can_manage_fooding) gets a Fooding tile - a real page, /fooding (kohal:
       "dude, fooding should open its own page!" - it used to only jump to a block further down this one).
+    - the admin or accountant (auth.can_manage_cash_purchases - the same pair) also gets a Purchase approval
+      tile, next to Fooding (kohal, 2026-10-21: "this pending approval should have its own block next to
+      fooding... inside this there will be approvals and alocate cash (same as fooding types)") - a real
+      page too, /purchase-approvals (see app/cash_purchases.py), not inline here the way it briefly was.
     - someone fooding_eligible (Worker.fooding_eligible - every daily-wage worker automatically, or a
       salaried/contractor one who's opted in, kohal: "now there are salaried employees which can be on
       200rs fooding thing") gets their own Fooding tile, a real page (see app/fooding.py).
@@ -86,7 +92,10 @@ def _extra_tiles():
       that placeholder to show them.
     - the Project manager Chandrapur role gets a Commission tile (kohal, 2026-10-18: "this guy has to see
       his comissions, how does he check that?" - previously only visible to an admin, through Employee
-      management's own popup), a real page (see app/commissions.py)."""
+      management's own popup), a real page (see app/commissions.py).
+
+    An employee's own cash-purchase balance and log stays a block further down the Me hub itself (not a
+    tile/page here) - see me.html's own me-cash-purchases section."""
     from .models import settings_for_client
 
     tiles = []
@@ -94,6 +103,11 @@ def _extra_tiles():
         n = fooding_eligible_workers().count()
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{n} on fooding" if n else None})
+    if can_manage_cash_purchases(g.user):
+        n = CashPurchase.query.filter_by(status="pending").count()
+        tiles.append({"href": "/purchase-approvals", "icon": "cash", "name": "Purchase approval",
+                       "sum": f"{n} pending" if n else None})
+    if tiles:
         return tiles
     worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker and worker.employment_type == "daily_wages":

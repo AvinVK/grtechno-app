@@ -19,7 +19,7 @@ See CashAccount/CashTopup/CashPurchase in app/models.py for the full data-model 
 
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, abort, g, jsonify, request
+from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .auth import can_manage_cash_purchases
 from .extensions import db
@@ -194,6 +194,17 @@ def delete_bill(purchase_id):
 
 
 # ---------- admin/accountant: give cash, approve or reject what came of it ----------
+
+@bp.get("/purchase-approvals")
+def page():
+    """Its own page off a Me-hub tile (kohal, 2026-10-21: "this pending approval should have its own block
+    next to fooding. named as purchase approval - this is only visisble to admin. inside this there will be
+    approvals and alocate cash (same as fooding types)") - same idea as /fooding's own management mode, but
+    admin/accountant only, nothing for an ordinary employee to see here (their own balance and log stay on
+    the Me hub itself - see app/static/js/me.js)."""
+    _manage_only()
+    return render_template("purchase_approvals.html", page_title="Purchase approval")
+
 
 @bp.post("/api/cash-purchases/<int:worker_id>/give")
 def give(worker_id):
