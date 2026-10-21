@@ -42,6 +42,13 @@ from .workers import EMPLOYMENT_TYPES, _period
 DAY_BY_DAY_MAX_RANGE = 62   # a pay-period slot is ~16 days, a month ~31 - this is generous headroom, not a real limit
 MAX_PERIODS = 24   # a year's worth of slots back from the current one - plenty for "current and previous", not unbounded
 
+# Nothing payroll computes ever reaches earlier than this (kohal, 2026-10-21: "payroll calc should start
+# from oct 1st") - a lot of worker.first_seen dates reach back through WhatsApp-imported attendance from
+# well before this app tracked pay at all, and that history was already settled outside it; this is the
+# floor every "how long have they been earning" figure below gets clamped to, on top of each worker's own
+# first_seen (see _payroll_start).
+PAYROLL_START = date(2026, 10, 1)
+
 bp = Blueprint("payroll", __name__)
 api_errors(bp)
 
@@ -84,6 +91,13 @@ def _sundays_not_present(start: date, end: date, present: set) -> int:
     return count
 
 
+def _payroll_start(w):
+    """The earliest day this worker's payroll ever counts from - their own first_seen, floored at
+    PAYROLL_START (kohal, 2026-10-21: "payroll calc should start from oct 1st"), or None if they have no
+    first_seen at all (nothing to compute from either way, same as before this floor existed)."""
+    return max(w.first_seen, PAYROLL_START) if w.first_seen else None
+
+
 def _current_month_slots(today: date):
     """This month's own two pay-period slots, in order: (start, end, label) each."""
     last_day = calendar.monthrange(today.year, today.month)[1]
@@ -115,7 +129,8 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     they hadn't started yet, or there's no attendance data reaching this far."""
     wage = float(w.wage_amount)
     days = 0
-    effective_start = max(slot_start, w.first_seen) if w.first_seen else None
+    payroll_start = _payroll_start(w)
+    effective_start = max(slot_start, payroll_start) if payroll_start else None
     effective_end = min(slot_end, data_until_end) if data_until_end else None
     if effective_start and effective_end and effective_end >= effective_start:
         present = {a.work_date for a in WorkerAttendance.query.filter_by(worker_id=w.id, status="present")
@@ -147,7 +162,7 @@ def _day_rate_periods(w, today: date, data_until_end):
     periods = []
     y, m = today.year, today.month
     half = 1 if today.day <= 15 else 2
-    limit_date = w.first_seen or today
+    limit_date = _payroll_start(w) or today
     while len(periods) < MAX_PERIODS:
         last_day = calendar.monthrange(y, m)[1]
         d1, d2 = (1, 15) if half == 1 else (16, last_day)
@@ -187,7 +202,8 @@ def _payroll_rows() -> list:
     for w in workers:
         if w.employment_type == "regular":
             wage = float(w.wage_amount)
-            months = max(0, _months_elapsed(w.first_seen, today)) if w.first_seen else 0
+            payroll_start = _payroll_start(w)
+            months = max(0, _months_elapsed(payroll_start, today)) if payroll_start else 0
             earned = round(wage * months, 2)
             paid = float(w.paid_amount)
             rows.append({
@@ -210,6 +226,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
     guessed at - same "no data yet" principle as everywhere else attendance is read in this app."""
     is_day_rate = w.employment_type in DAY_RATE_TYPES
     wage = float(w.wage_amount) if w.wage_amount is not None else 0.0
+    payroll_start = _payroll_start(w)
     wa_by_day = {a.work_date: a for a in WorkerAttendance.query.filter_by(worker_id=w.id)
                  .filter(WorkerAttendance.work_date >= start, WorkerAttendance.work_date <= end)}
     att_by_day = {}
@@ -226,7 +243,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
         # to say about the day, and a Sunday here must not be credited (same first_seen guard
         # _day_rate_slot_row's own effective_start applies) - otherwise this list's own total would come
         # out higher than the "Total" above it, computed the same way but period-wide.
-        too_early = w.first_seen is not None and d < w.first_seen
+        too_early = payroll_start is not None and d < payroll_start
         if too_early or data_until_end is None or d > data_until_end:
             rows.append({"date": d.isoformat(), "present": False, "hours": None, "is_sunday": is_sunday,
                          "not_yet": True, "pay": 0.0 if is_day_rate else None})

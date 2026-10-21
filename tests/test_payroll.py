@@ -13,6 +13,7 @@ import pytest
 
 from app.extensions import db
 from app.models import Worker, WorkerAttendance, WorkerPayment
+from app.payroll import PAYROLL_START
 
 
 def current_slot():
@@ -101,6 +102,16 @@ def months_ago(n):
 
 def rows_for(data, worker_id):
     return [e for e in data["employees"] if e["id"] == worker_id]
+
+
+def expected_months(first_seen):
+    """Calendar months from first_seen (floored at PAYROLL_START - kohal, 2026-10-21: "payroll calc should
+    start from oct 1st") through today, inclusive - a from-first-principles reimplementation independent of
+    app/payroll.py's own _months_elapsed, so these tests still make sense whenever the suite actually runs,
+    floor or no floor."""
+    today = date.today()
+    start = max(first_seen, PAYROLL_START)
+    return (today.year - start.year) * 12 + (today.month - start.month) + 1
 
 
 # ---------- module gating ----------
@@ -195,15 +206,34 @@ def test_contractor_uses_the_same_day_rate_math_as_daily_wages(app, admin_client
 # ---------- salary: one flat monthly row, unsplit ----------
 
 def test_salary_is_flat_times_months_elapsed_not_attendance_linked(app, admin_client):
+    first_seen = months_ago(2)
     with app.app_context():
-        w = salaried_worker(wage_amount=Decimal("30000"), first_seen=months_ago(2))
+        w = salaried_worker(wage_amount=Decimal("30000"), first_seen=first_seen)
         wid = w.id
     rows = rows_for(admin_client.get("/api/payroll/overview").get_json(), wid)
     assert len(rows) == 1
     row = rows[0]
-    assert row["months"] == 3
-    assert row["earned"] == 90000.0
+    months = expected_months(first_seen)
+    assert row["months"] == months
+    assert row["earned"] == 30000.0 * months
     assert row["days"] is None and row["period_start"] is None
+
+
+def test_salary_never_accrues_before_payroll_start(app, admin_client):
+    """kohal, 2026-10-21: "payroll calc should start from oct 1st" - someone whose attendance history
+    reaches back well before this app ever tracked pay doesn't retroactively owe for any of it; they're
+    treated exactly like someone who only started on the floor date itself."""
+    with app.app_context():
+        old_timer = salaried_worker(name="Old Timer", wage_amount=Decimal("30000"),
+                                     first_seen=PAYROLL_START - timedelta(days=200))
+        started_at_floor = salaried_worker(name="Started At Floor", wage_amount=Decimal("30000"),
+                                            first_seen=PAYROLL_START)
+        old_id, floor_id = old_timer.id, started_at_floor.id
+    data = admin_client.get("/api/payroll/overview").get_json()
+    old_row = rows_for(data, old_id)[0]
+    floor_row = rows_for(data, floor_id)[0]
+    assert old_row["months"] == floor_row["months"]
+    assert old_row["earned"] == floor_row["earned"]
 
 
 def test_salary_counts_the_current_partial_month_in_full(app, admin_client):
@@ -373,6 +403,21 @@ def test_a_day_before_first_seen_is_not_yet_and_a_sunday_there_is_not_credited(a
     assert d["not_yet"] is True and d["pay"] == 0.0
 
 
+def test_a_day_before_payroll_start_is_not_yet_even_if_first_seen_reaches_further_back(app, admin_client):
+    """kohal, 2026-10-21: "payroll calc should start from oct 1st" - same not_yet guard as first_seen's
+    own, just with PAYROLL_START as a second, shared floor on top of it."""
+    before = PAYROLL_START - timedelta(days=3)
+    after = PAYROLL_START + timedelta(days=2)
+    with app.app_context():
+        w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=PAYROLL_START - timedelta(days=200))
+        extend_data_until(after)
+        wid = w.id
+    res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={before.isoformat()}&end={after.isoformat()}")
+    days = res.get_json()["days"]
+    assert day_in(days, before.isoformat())["not_yet"] is True
+    assert day_in(days, PAYROLL_START.isoformat())["not_yet"] is False
+
+
 def test_salary_days_have_no_per_day_pay_figure(app, admin_client):
     with app.app_context():
         w = salaried_worker(wage_amount=Decimal("30000"), first_seen=date.today().replace(day=1))
@@ -451,6 +496,9 @@ def test_a_worker_who_started_this_slot_has_only_the_current_one(app, admin_clie
 
 
 def test_periods_go_back_to_first_seen_current_first(app, admin_client):
+    """Goes back to first_seen, but never earlier than PAYROLL_START even when first_seen reaches further
+    back than that (kohal, 2026-10-21: "payroll calc should start from oct 1st") - expected_starts is
+    filtered the same way whether or not that floor actually bites for whenever this suite happens to run."""
     start, end = current_slot()
     one_back_start, _ = prev_slot(start)
     two_back_start, _ = prev_slot(one_back_start)
@@ -460,8 +508,8 @@ def test_periods_go_back_to_first_seen_current_first(app, admin_client):
     res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
     assert res.status_code == 200
     periods = res.get_json()["periods"]
-    assert len(periods) == 3
-    assert [p["period_start"] for p in periods] == [start.isoformat(), one_back_start.isoformat(), two_back_start.isoformat()]
+    expected_starts = [s for s in (start, one_back_start, two_back_start) if s >= PAYROLL_START]
+    assert [p["period_start"] for p in periods] == [s.isoformat() for s in expected_starts]
 
 
 def test_periods_each_carry_their_own_earned_paid_outstanding(app, admin_client):
