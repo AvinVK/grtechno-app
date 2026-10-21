@@ -106,10 +106,15 @@ def _absent_days(start: date, end: date, present: set) -> int:
 
 
 def _payroll_start(w):
-    """The earliest day this worker's payroll ever counts from - their own first_seen, floored at
-    PAYROLL_START (kohal, 2026-10-21: "payroll calc should start from oct 1st"), or None if they have no
-    first_seen at all (nothing to compute from either way, same as before this floor existed)."""
-    return max(w.first_seen, PAYROLL_START) if w.first_seen else None
+    """The earliest day this worker's payroll ever counts from - PAYROLL_START (kohal, 2026-10-21: "payroll
+    calc should start from oct 1st"), or their own first_seen if that's later still. first_seen is only
+    ever set by the old WhatsApp-import flow - nothing in this app writes it - so most employees added
+    straight through Employee management simply never get one; that must not read as "hasn't started yet"
+    and zero out every figure below forever (kohal, 2026-10-21, reported against Meraj specifically: "it
+    shows zero due but the attendance shows he should be having dues" - his own day-by-day had real
+    attendance the whole time, only the period/month totals were collapsing to 0 for want of a first_seen
+    that nothing in this app was ever going to set)."""
+    return max(w.first_seen, PAYROLL_START) if w.first_seen else PAYROLL_START
 
 
 def _current_month_slots(today: date):
@@ -140,12 +145,12 @@ def _last_paid(w):
 
 def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     """One daily-wage/contractor employee's figures for a single pay-period slot - 0 across the board if
-    they hadn't started yet, or there's no attendance data reaching this far."""
+    this slot is entirely before their own first_seen (when they have one on file), or there's no
+    attendance data reaching this far yet."""
     wage = float(w.wage_amount)
     days = 0
     absent = 0
-    payroll_start = _payroll_start(w)
-    effective_start = max(slot_start, payroll_start) if payroll_start else None
+    effective_start = max(slot_start, _payroll_start(w))
     effective_end = min(slot_end, data_until_end) if data_until_end else None
     if effective_start and effective_end and effective_end >= effective_start:
         present = {a.work_date for a in WorkerAttendance.query.filter_by(worker_id=w.id, status="present")
@@ -178,7 +183,7 @@ def _day_rate_periods(w, today: date, data_until_end):
     periods = []
     y, m = today.year, today.month
     half = 1 if today.day <= 15 else 2
-    limit_date = _payroll_start(w) or today
+    limit_date = _payroll_start(w)
     while len(periods) < MAX_PERIODS:
         last_day = calendar.monthrange(y, m)[1]
         d1, d2 = (1, 15) if half == 1 else (16, last_day)
@@ -218,8 +223,7 @@ def _payroll_rows() -> list:
     for w in workers:
         if w.employment_type == "regular":
             wage = float(w.wage_amount)
-            payroll_start = _payroll_start(w)
-            months = max(0, _months_elapsed(payroll_start, today)) if payroll_start else 0
+            months = max(0, _months_elapsed(_payroll_start(w), today))
             earned = round(wage * months, 2)
             paid = float(w.paid_amount)
             rows.append({
@@ -259,7 +263,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
         # to say about the day, and a Sunday here must not be credited (same first_seen guard
         # _day_rate_slot_row's own effective_start applies) - otherwise this list's own total would come
         # out higher than the "Total" above it, computed the same way but period-wide.
-        too_early = payroll_start is not None and d < payroll_start
+        too_early = d < payroll_start
         if too_early or data_until_end is None or d > data_until_end:
             rows.append({"date": d.isoformat(), "present": False, "hours": None, "is_sunday": is_sunday,
                          "not_yet": True, "pay": 0.0 if is_day_rate else None})

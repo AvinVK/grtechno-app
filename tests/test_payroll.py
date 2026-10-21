@@ -188,6 +188,38 @@ def test_days_before_first_seen_are_not_credited(app, admin_client):
     assert row["days"] == sundays_after_joining
 
 
+def test_a_worker_with_no_first_seen_still_gets_credited_for_real_attendance(app, admin_client):
+    """kohal, 2026-10-21, reported against a real worker ("Meraj"): "when i click on meraj, it shows zero
+    due but the attendance shows he should be having dues" - his own day-by-day view already showed real
+    worked days and pay the whole time, only the Overview/period totals were collapsing to 0. first_seen is
+    only ever set by the old WhatsApp-import flow (nothing in this app writes it), so anyone added straight
+    through Employee management simply has none - that must not read as "hasn't started yet" and zero out
+    every figure, the same bug _payroll_start's own fix addresses for a salaried worker's months too."""
+    start, end = complete_slot()
+    worked_day = a_weekday_in(start, end)
+    with app.app_context():
+        w = Worker(name="No First Seen", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"))
+        db.session.add(w)
+        db.session.commit()
+        assert w.first_seen is None
+        present(w, worked_day)
+        extend_data_until(end)
+        wid = w.id
+    row = next(r for r in rows_for(admin_client.get("/api/payroll/overview").get_json(), wid) if r["period_start"] == start.isoformat())
+    assert row["days"] >= 1 and row["earned"] >= 500.0
+
+
+def test_a_salaried_worker_with_no_first_seen_still_accrues(app, admin_client):
+    with app.app_context():
+        w = Worker(name="No First Seen Salaried", category="staff", employment_type="regular", wage_amount=Decimal("30000"))
+        db.session.add(w)
+        db.session.commit()
+        assert w.first_seen is None
+        wid = w.id
+    row = rows_for(admin_client.get("/api/payroll/overview").get_json(), wid)[0]
+    assert row["months"] >= 1 and row["earned"] >= 30000.0
+
+
 def test_contractor_uses_the_same_day_rate_math_as_daily_wages(app, admin_client):
     start, end = complete_slot()
     worked_day = a_weekday_in(start, end)
