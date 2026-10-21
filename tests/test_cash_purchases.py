@@ -520,3 +520,24 @@ def test_requests_count_toward_the_purchase_approval_tiles_pending_sum(app, admi
     who.post("/api/cash-purchases/requests", json={"amount": "2000"})
     html = admin_client.get("/me").get_data(as_text=True)
     assert "1 pending" in html
+
+
+# ---------- each subtab knows the other subtabs' counts too, for their own badges ----------
+# (kohal, 2026-10-21: "should show the count of request in the subtab ust like in material reuest in
+# inventory") - pending/pending_requests/accounts each return both counts, the same bundling pattern
+# app/inventory.py's own tabs use (pending_request_count/restock_count on every one of its 3 endpoints).
+
+def test_each_subtab_response_carries_both_pending_counts(app, accounts_client):
+    who, wid = worker_user(app)
+    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "Cash"})
+    who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"})
+    who.post("/api/cash-purchases/requests", json={"amount": "3000"})
+
+    pending = accounts_client.get("/api/cash-purchases/pending").get_json()
+    assert len(pending["pending"]) == 1 and pending["pending_request_count"] == 1
+
+    requests = accounts_client.get("/api/cash-purchases/requests").get_json()
+    assert len(requests["requests"]) == 1 and requests["pending_purchase_count"] == 1
+
+    accounts = accounts_client.get("/api/cash-purchases/accounts").get_json()
+    assert accounts["pending_purchase_count"] == 1 and accounts["pending_request_count"] == 1

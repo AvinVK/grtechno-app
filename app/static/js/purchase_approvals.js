@@ -6,9 +6,11 @@
    cash expense and whether approved or rejected"; then: "add cash request for employees so that admin sees
    the request and then alocates... for admin in purchase approval, there should be a cash requests shubtab
    which will show user has requested for 5k and then after clicking on that, it should open allocate
-   form") - admin/accountant only, its own page off a Me-hub tile. Three subtabs, same pill shape as
-   Inventory's own Materials/Material requests/Restock bar:
-   - Approvals (default): every pending purchase, approve or reject it.
+   form"; then: "should show the count of request in the subtab ust like in material reuest in inventory",
+   "and rename approval to expense approval") - admin/accountant only, its own page off a Me-hub tile.
+   Three subtabs, same pill shape as Inventory's own Materials/Material requests/Restock bar, each carrying
+   a count badge the same way (see inventoryTabs in app/static/js/inventory.js):
+   - Expense approval (default): every pending purchase, approve or reject it.
    - Cash requests: every employee's unanswered ask for cash, tapping one opens the same Allocate form as
      "+ Allocate cash" below, pre-filled - giving the cash closes the request out as fulfilled (see
      app/cash_purchases.py's give()); a reject link turns it down without giving anything.
@@ -28,10 +30,13 @@
     return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   }
 
-  function tabs(active) {
+  function tabs(active, approvalBadge, requestBadge) {
+    const badge = (n) => (n ? h('span', { class: 'nav-badge' }, String(n)) : null);
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Purchase approval section' },
-      h('a', { class: 'filter-chip', href: '#approvals', 'aria-current': active === 'approvals' ? 'page' : null }, 'Approvals'),
-      h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null }, 'Cash requests'),
+      h('a', { class: 'filter-chip', href: '#approvals', 'aria-current': active === 'approvals' ? 'page' : null },
+        'Expense approval', badge(approvalBadge)),
+      h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null },
+        'Cash requests', badge(requestBadge)),
       h('a', { class: 'filter-chip', href: '#balances', 'aria-current': active === 'balances' ? 'page' : null }, 'Allocated cash & balance'));
   }
 
@@ -69,7 +74,7 @@
     try { data = await api('/api/cash-purchases/pending'); }
     catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     clear(view).append(h('div', {},
-      tabs('approvals'),
+      tabs('approvals', data.pending.length, data.pending_request_count),
       h('div', { class: 'list-head' }, h('h2', {}, `${data.pending.length} pending`)),
       data.pending.length
         ? h('ul', { class: 'card-group' }, data.pending.map((r) => row(r, data.currency)))
@@ -107,7 +112,7 @@
     try { data = await api('/api/cash-purchases/requests'); }
     catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     clear(view).append(h('div', {},
-      tabs('requests'),
+      tabs('requests', data.pending_purchase_count, data.requests.length),
       h('div', { class: 'list-head' }, h('h2', {}, `${data.requests.length} waiting`)),
       data.requests.length
         ? h('ul', { class: 'card-group' }, data.requests.map((r) => requestRow(r, data, data.currency, showRequests)))
@@ -179,7 +184,7 @@
     try { data = await api('/api/cash-purchases/accounts'); }
     catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     clear(view).append(h('div', {},
-      tabs('balances'),
+      tabs('balances', data.pending_purchase_count, data.pending_request_count),
       h('div', { class: 'list-head' },
         h('h2', {}, `${data.accounts.length} ${data.accounts.length === 1 ? 'employee' : 'employees'}`),
         h('button', { class: 'btn small', type: 'button', onclick: () => openGiveSheet(data, showBalances) }, '+ Allocate cash')),

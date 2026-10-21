@@ -270,6 +270,8 @@ def accounts():
         workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
         payment_modes=list(PAYMENT_MODES),
         currency=settings_for_client()["currency"],
+        pending_purchase_count=CashPurchase.query.filter_by(status="pending").count(),
+        pending_request_count=CashRequest.query.filter_by(status="pending").count(),
     )
 
 
@@ -347,6 +349,7 @@ def pending_requests():
         workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
         payment_modes=list(PAYMENT_MODES),
         currency=settings_for_client()["currency"],
+        pending_purchase_count=CashPurchase.query.filter_by(status="pending").count(),
     )
 
 
@@ -378,6 +381,7 @@ def pending():
         workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
         payment_modes=list(PAYMENT_MODES),
         currency=settings_for_client()["currency"],
+        pending_request_count=CashRequest.query.filter_by(status="pending").count(),
     )
 
 
