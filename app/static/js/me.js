@@ -371,6 +371,242 @@
   load();
 })();
 
+/* The signed-in person's own cash-purchase balance and log (kohal, 2026-10-21: "need this in me tab as
+   cash purchase block of employees") - hidden entirely until the admin/accountant has given them cash at
+   least once (see app/cash_purchases.py's my_cash_purchases). Logging a purchase is a two-step affair,
+   same as a material's own stock-in: the entry first (date, what, how much, cost, supplier, note), the
+   bill (optional) attached after the fact from the entry's own row, not part of this form. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-cash-purchases');
+  if (!section) return;
+  const body = document.getElementById('me-cash-purchases-body');
+  const { h, clear, api, toast, field, dateField, showFieldErrors, money } = window.LD;
+
+  function todayIso() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+
+  const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' };
+  const STATUS_CLASS = { pending: 'chip-today', approved: 'chip-active', rejected: 'chip-off' };
+
+  // Same "attached after the fact" pattern as a material stock-in's own bill (app/static/js/inventory.js's
+  // billControl) - the file goes up the moment it's picked, no separate save step.
+  function billControl(entry, onChanged) {
+    if (!entry.bill_url) {
+      const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', hidden: true });
+      fileInput.onchange = async () => {
+        if (!fileInput.files.length) return;
+        const fd = new FormData();
+        fd.append('bill', fileInput.files[0]);
+        try {
+          const res = await fetch(`/api/cash-purchases/${entry.id}/bill`, { method: 'POST', body: fd, credentials: 'same-origin' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'Could not upload the bill');
+          toast('Bill added');
+          onChanged();
+        } catch (err) { toast(err.message, true); }
+      };
+      return h('label', { class: 'link-btn' }, 'Add bill', fileInput);
+    }
+    return h('a', { href: entry.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill');
+  }
+
+  function entryRow(e, cur, onChanged) {
+    const sub = [fmtDate(e.entry_date), e.quantity != null ? `${e.quantity} ${e.unit || ''}`.trim() : null,
+      e.supplier || null, e.note || null].filter(Boolean).join(' · ');
+    return h('li', { class: 'p-row' },
+      h('span', { class: `chip ${STATUS_CLASS[e.status]}` }, STATUS_LABEL[e.status]),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, e.material_name),
+        h('span', { class: 'row-sub' }, sub),
+        h('span', { class: 'bill-links' }, billControl(e, onChanged))),
+      h('span', { class: 'row-value' }, money(e.amount, cur)));
+  }
+
+  function openLogSheet() {
+    const dateInput = dateField(todayIso());
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres' });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const supplierInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const noteInput = h('textarea', { rows: 2, maxlength: 500 });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Log purchase');
+
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          await api('/api/cash-purchases/me', {
+            method: 'POST', body: {
+              entry_date: dateInput.value, material_name: nameInput.value, quantity: qtyInput.value || null,
+              unit: unitInput.value, amount: amountInput.value, supplier: supplierInput.value, note: noteInput.value,
+            },
+          });
+          toast('Purchase logged');
+          overlay.remove();
+          load();
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      field('entry_date', 'Date', dateInput),
+      field('material_name', 'What did you buy', nameInput, { wide: true }),
+      field('quantity', 'Quantity', qtyInput),
+      field('unit', 'Unit', unitInput),
+      field('amount', 'Cost', amountInput),
+      field('supplier', 'Supplier', supplierInput, { wide: true }),
+      field('note', 'Note', noteInput, { wide: true }),
+      h('div', { class: 'confirm-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => overlay.remove() }, 'Cancel'),
+        saveBtn));
+    const card = h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Log purchase' },
+      h('h2', {}, 'Log purchase'), form);
+    const overlay = h('div', { class: 'confirm-overlay', onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, card);
+    document.body.append(overlay);
+    nameInput.focus?.();
+  }
+
+  async function load() {
+    let data;
+    try { data = await api('/api/cash-purchases/me'); }
+    catch (err) { section.hidden = true; return; }
+    section.hidden = !data.account;
+    if (!data.account) return;
+    const cur = data.currency;
+    const a = data.account;
+    clear(body).append(
+      h('div', { class: 'p-section-head' },
+        h('p', { class: 'wk-legend' }, `Given ${money(a.given_total, cur)} · Spent ${money(a.spent_total, cur)} · Remaining ${money(a.remaining, cur)}`),
+        h('button', { class: 'btn small', type: 'button', onclick: openLogSheet }, '+ Log purchase')),
+      data.entries.length
+        ? h('ul', { class: 'card-group' }, data.entries.map((e) => entryRow(e, cur, load)))
+        : h('p', { class: 'hint' }, 'Nothing logged yet.'));
+  }
+
+  load();
+})();
+
+/* Admin/accountant: hand an employee cash, and approve or reject what they say they bought with it (kohal,
+   2026-10-21: "cash given by admin -> purchase recorded by employee and approved by admin"). Unlike the
+   other Pending-approvals blocks, this one stays visible even with nothing pending - "+ Give cash" is
+   always the point of it, not just the queue. Hidden only on an actual permission error (not admin or
+   accountant), same as the fetch itself would 403. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-cash-purchases-manage');
+  if (!section) return;
+  const head = document.getElementById('me-cash-purchases-manage-head');
+  const list = document.getElementById('me-cash-purchases-pending-list');
+  const { h, clear, api, toast, confirm, field, selectField, searchField, money, closeOnBack } = window.LD;
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+
+  let giveBtn = null;
+
+  function openGiveSheet(data) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const workerSel = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Choose an employee' });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const modeSel = selectField([{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
+      '', { title: 'How was it paid', placeholder: 'Mode of payment' });
+    const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Give cash');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (ev) => { if (ev.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      if (!workerSel.value) { errEl.textContent = 'Choose an employee'; return; }
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api(`/api/cash-purchases/${workerSel.value}/give`, {
+          method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value, note: noteInput.value },
+        });
+        finish();
+        toast('Cash given');
+        load();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, 'Give cash'),
+      field('worker_id', 'Employee', workerSel),
+      field('amount', 'Amount', amountInput),
+      field('payment_mode', 'Mode of payment', modeSel),
+      field('note', 'Note', noteInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+    workerSel.focus?.();
+  }
+
+  async function act(r, action) {
+    if (action === 'reject') {
+      const sure = await confirm('Reject this purchase? Nothing was deducted from their balance yet, so there is nothing to undo.', { ok: 'Reject', danger: true, title: 'Reject purchase' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/cash-purchases/${r.id}/${action}`, { method: 'POST' });
+      toast(action === 'approve' ? 'Approved' : 'Rejected');
+      load();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  function row(r, cur) {
+    const sub = [fmtDate(r.entry_date), r.quantity != null ? `${r.quantity} ${r.unit || ''}`.trim() : null,
+      r.supplier || null, r.created_by_name ? `Logged by ${r.created_by_name}` : null, r.note || null].filter(Boolean).join(' · ');
+    return h('div', { class: 'card me-row approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, `${r.worker_name} · ${r.material_name}`),
+        h('span', { class: 'hint' }, `${money(r.amount, cur)} · ${sub}`),
+        r.bill_url ? h('a', { href: r.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill') : null),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')));
+  }
+
+  async function load() {
+    let data;
+    try { data = await api('/api/cash-purchases/pending'); }
+    catch (err) { section.hidden = true; return; }
+    section.hidden = false;
+    if (!giveBtn) {
+      giveBtn = h('button', { class: 'btn small', type: 'button', style: 'margin-left: auto' }, '+ Give cash');
+      head.append(giveBtn);
+    }
+    giveBtn.onclick = () => openGiveSheet(data);
+    clear(list);
+    data.pending.forEach((r) => list.append(row(r, data.currency)));
+  }
+
+  load();
+})();
+
 /* Admin only: site categories people typed in that aren't on the list yet. Each waits here until the
    admin approves it (it joins the list) or points it at an existing category (every survey and client
    using the typed name moves over). Hidden when nothing is waiting. */

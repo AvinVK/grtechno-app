@@ -605,6 +605,131 @@ class FoodingEntry(db.Model):
         }
 
 
+class CashAccount(db.Model):
+    """A running tally of cash an employee has been handed to buy something with - fuel, a small stock
+    top-up, whatever comes up (kohal, 2026-10-21: "many a times, admin gives money to employees to purchase
+    a stock or fuel etc, we need to track that"). One per Worker, created the first time money is given to
+    them - same shape as FoodingAccount, but deliberately without its settle()/anchor_date/DAILY_AMOUNT
+    machinery: nothing here is ever deducted automatically, only when the employee logs what they actually
+    bought *and* the admin approves it (kohal: "cash given by admin -> purchase recorded by employee and
+    approved by admin ... -> once approved by admin then balance gets deducted") - closer to
+    MaterialMovement's pending/approved lifecycle than to fooding's instant deduction.
+
+    given_total only ever grows (a top-up adds to it, same answer kohal gave for fooding's own allotted_total
+    - a later top-up tops up, it doesn't replace what's already there). spent_total only grows too, by an
+    *approved* CashPurchase's own amount - never a pending or rejected one. remaining can go negative (an
+    employee who spent more than they were given is owed the difference back) - unlike fooding's remaining,
+    which floors at zero, there's no daily drip to worry about overshooting here."""
+
+    __tablename__ = "cash_accounts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    given_total = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    spent_total = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    worker = db.relationship("Worker", back_populates="cash_account")
+    topups = db.relationship(
+        "CashTopup", back_populates="account", cascade="all, delete-orphan",
+        order_by="CashTopup.entry_date.desc(), CashTopup.id.desc()",
+    )
+    purchases = db.relationship(
+        "CashPurchase", back_populates="account", cascade="all, delete-orphan",
+        order_by="CashPurchase.entry_date.desc(), CashPurchase.id.desc()",
+    )
+
+    @property
+    def remaining(self) -> Decimal:
+        return self.given_total - self.spent_total
+
+    def to_dict(self) -> dict:
+        return {
+            "worker_id": self.worker_id, "worker_name": self.worker.name,
+            "given_total": float(self.given_total), "spent_total": float(self.spent_total),
+            "remaining": float(self.remaining),
+        }
+
+
+class CashTopup(db.Model):
+    """One "admin gave this employee cash" record - the human-readable ledger behind CashAccount.given_total,
+    same relationship FoodingEntry has to FoodingAccount.allotted_total. Always applied immediately (the
+    admin handing over cash is itself the fact, nothing to approve), unlike CashPurchase below."""
+
+    __tablename__ = "cash_topups"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    payment_mode = db.Column(db.String(20), nullable=False)           # Cash | Online/UPI
+    note = db.Column(db.String(200), nullable=False, default="", server_default="")
+    entry_date = db.Column(db.Date, nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    account = db.relationship("CashAccount", back_populates="topups")
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "amount": float(self.amount), "payment_mode": self.payment_mode,
+            "note": self.note, "entry_date": self.entry_date.isoformat(),
+            "created_by_name": self.created_by.name if self.created_by else None,
+        }
+
+
+class CashPurchase(db.Model):
+    """What an employee actually bought with cash they were given - waits on the admin (or accountant) to
+    approve before it counts against the balance (kohal, 2026-10-21: "purchase recorded by employee and
+    approved by admin ... once approved by admin then balance gets deducted"), same pending/approved/
+    rejected shape as MaterialMovement, right down to banning self-approval (and self-rejection, same as
+    material requests - deciding your own entry either way is still deciding it). A rejected one never
+    touches spent_total - it was never real spending, same as a rejected material request never drew down
+    stock.
+
+    material_name is free text, not a Material FK - this has nothing to do with Inventory's own stock
+    (fuel isn't a stock item, and a one-off purchase for a project doesn't belong on the material catalog
+    just because this form happens to ask the same questions a stock-in does). quantity/unit are optional
+    for the same reason - not everything bought has a clean count (a toll receipt, say)."""
+
+    __tablename__ = "cash_purchases"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("cash_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    entry_date = db.Column(db.Date, nullable=False)
+    material_name = db.Column(db.String(120), nullable=False)
+    quantity = db.Column(db.Numeric(12, 2), nullable=True)
+    unit = db.Column(db.String(20), nullable=False, default="", server_default="")
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    supplier = db.Column(db.String(120), nullable=False, default="", server_default="")
+    note = db.Column(db.String(500), nullable=False, default="", server_default="")
+    bill_filename = db.Column(db.String(80), nullable=True)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")
+    approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+
+    account = db.relationship("CashAccount", back_populates="purchases")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_code])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "worker_id": self.account.worker_id, "worker_name": self.account.worker.name,
+            "entry_date": self.entry_date.isoformat(), "material_name": self.material_name,
+            "quantity": float(self.quantity) if self.quantity is not None else None, "unit": self.unit,
+            "amount": float(self.amount), "supplier": self.supplier, "note": self.note,
+            "bill_url": f"/uploads/cash_purchases/{self.bill_filename}" if self.bill_filename else None,
+            "created_by_name": self.created_by.name if self.created_by else None,
+            "created_at": _iso(self.created_at),
+            "status": self.status,
+            "approved_by_name": self.approved_by.name if self.approved_by else None,
+            "approved_at": _iso(self.approved_at),
+        }
+
+
 class Material(db.Model):
     """One kind of stock the business buys and uses on projects (cement, pipes, valves...), admin only for
     now. Stock on hand and its cost are kept right here, moved only through MaterialMovement entries below -
@@ -1163,6 +1288,11 @@ class Worker(db.Model):
     # Owned by this row (cascades with it), unlike commissions above which just references it.
     fooding_account = db.relationship(
         "FoodingAccount", back_populates="worker", uselist=False, cascade="all, delete-orphan",
+    )
+    # One cash-purchase wallet per worker (kohal, 2026-10-21) - see CashAccount's own docstring. Owned by
+    # this row too, same reasoning as fooding_account above.
+    cash_account = db.relationship(
+        "CashAccount", back_populates="worker", uselist=False, cascade="all, delete-orphan",
     )
 
     @property

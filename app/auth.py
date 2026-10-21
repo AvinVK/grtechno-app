@@ -245,6 +245,14 @@ def can_manage_fooding(user) -> bool:
     return user.is_admin or user.role_key == "accounts"
 
 
+def can_manage_cash_purchases(user) -> bool:
+    """Who may hand an employee cash to buy something with, and who may approve or reject what they say
+    they bought with it (kohal, 2026-10-21: "cash given by admin -> purchase recorded by employee and
+    approved by admin") - same admin-or-accountant pair as fooding, both sides of the same money-handling
+    job."""
+    return user.is_admin or user.role_key == "accounts"
+
+
 def can_draft_work_plan(user) -> bool:
     """Who may draft tomorrow's work assignments (kohal, 2026-10-19: "Next day work scheduling by project
     manager or by accountant or admin") - a project manager (any of PROJECT_MANAGER_ROLE_KEYS), the
