@@ -294,9 +294,14 @@ window.LD = (() => {
     // too, though, which would otherwise stomp the pick right back to '' a tick later - this flag tells
     // that one "already handled, don't reset".
     let justPicked = false;
+    // Capped, not the full list, so a huge catalog never renders thousands of rows at once - but 8 was
+    // low enough that opening an empty field to browse (not search) a list of 20-40 people routinely cut
+    // most of them off (kohal, 2026-10-21: "i dont see all employees here"); the dropdown already scrolls
+    // (max-height on .name-suggest-list), so a much higher cap costs nothing and covers every real list
+    // in this app in practice.
     const showMatches = () => {
       const q = input.value.trim().toLowerCase();
-      const matches = (q ? list.filter((i) => i.label.toLowerCase().includes(q)) : list).slice(0, 8);
+      const matches = (q ? list.filter((i) => i.label.toLowerCase().includes(q)) : list).slice(0, 50);
       clear(dropdown);
       if (!matches.length) { dropdown.hidden = true; return; }
       matches.forEach((i) => dropdown.append(h('li', {
