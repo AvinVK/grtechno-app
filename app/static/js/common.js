@@ -32,7 +32,14 @@ window.LD = (() => {
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     if (res.status === 401) {
-      window.location.href = '/login';
+      // Back to wherever this was, hash included, once signed in again (kohal, 2026-10-21: "after login
+      // and when the application is switched, the app should open to the page which was open") - the
+      // session quietly expiring while the phone had this backgrounded is the common case, not someone
+      // choosing to sign out, so losing their place would be jarring. A hash fragment never reaches the
+      // server on its own (auth.py's own load_user has no access to it for a fresh page load), but it's
+      // still sitting right here in the browser at this exact moment, before any navigation happens.
+      const next = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+      window.location.href = `/login?next=${next}`;
       throw new Error('Not signed in');
     }
     const data = res.status === 204 ? {} : await res.json().catch(() => ({}));

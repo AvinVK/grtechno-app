@@ -42,6 +42,15 @@ def _landing_url(user) -> str:
     own Leads tab links to) - this only decides where login/set-pin send someone, not what "/" renders for
     a leads-having role navigating there on their own afterwards."""
     return url_for("me.page") if user.is_admin else url_for("attendance.page")
+
+
+def _safe_next(value):
+    """A login redirect target is attacker-controllable input (it rides along in the URL) - only ever a
+    same-origin relative path, never an absolute URL or a protocol-relative //host one, so it can't be used
+    to bounce someone off-site."""
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return None
+    return value
 LOCKED_MESSAGE = "Too many wrong tries. Wait 5 minutes and try again."
 _DUMMY_HASH = generate_password_hash("not-a-real-password")
 
@@ -418,15 +427,25 @@ def load_user():
         return None
     if request.path.startswith("/api/"):
         return jsonify(error="Not signed in"), 401
-    return redirect(url_for("auth.login"))
+    # Back to whatever page this was once signed in again (kohal, 2026-10-21: "after login and when the
+    # application is switched, the app should open to the page which was open") - typically the session
+    # having quietly expired while the phone had the app backgrounded, not a deliberate sign-out, so
+    # landing on the admin/attendance default instead of back here would be jarring. Query string only; a
+    # hash fragment never reaches the server to begin with, so a client-side reload (common.js's own 401
+    # handling in api()) is what actually preserves one of those - this covers a fresh top-level GET.
+    next_path = request.path
+    if request.query_string:
+        next_path += "?" + request.query_string.decode()
+    return redirect(url_for("auth.login", next=next_path))
 
 
 # ---------- pages ----------
 
 @bp.route("/login", methods=["GET", "POST"])
 def login():
+    next_url = _safe_next(request.values.get("next"))
     if g.user:
-        return redirect(_landing_url(g.user))
+        return redirect(next_url or _landing_url(g.user))
     error = None
     if request.method == "POST":
         check_csrf()
@@ -446,11 +465,11 @@ def login():
                 session.clear()
                 session["uid"] = user.code
                 session.permanent = True
-                return redirect(_landing_url(user))
+                return redirect(next_url or _landing_url(user))
             else:
                 _register_failure(user)
                 error = "Wrong userid or PIN."
-    return render_template("login.html", error=error, userid=request.form.get("userid", ""))
+    return render_template("login.html", error=error, userid=request.form.get("userid", ""), next=next_url)
 
 
 @bp.route("/set-pin", methods=["GET", "POST"])

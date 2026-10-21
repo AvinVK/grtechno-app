@@ -57,6 +57,48 @@ def test_login_lands_the_admin_on_me_and_everyone_else_on_attendance(app, anon, 
     assert ok2.status_code == 302 and ok2.headers["Location"].endswith("/attendance")
 
 
+# ---------- returning to where you were (kohal, 2026-10-21) ----------
+#
+# "after login and when the application is switched, the app should open to the page which was open" -
+# the session quietly expiring while the phone had the app backgrounded is the common case this covers,
+# not a deliberate sign-out (see auth.logout, unaffected - that one's a real "leave" with nothing to
+# return to).
+
+def test_visiting_a_protected_page_signed_out_preserves_where_to_return_to(anon):
+    res = anon.get("/projects")
+    assert res.status_code == 302
+    assert res.headers["Location"] == "/login?next=/projects"
+
+
+def test_login_page_carries_next_through_as_a_hidden_field(anon):
+    html = anon.get("/login?next=/projects").get_data(as_text=True)
+    assert 'name="next" value="/projects"' in html
+
+
+def test_logging_in_with_a_next_returns_there_instead_of_the_usual_landing_page(anon):
+    admin = make_user("Next Admin", is_admin=True, pin="193857")
+    res = anon.post("/login", data={"csrf": csrf(anon), "userid": admin.userid, "pin": "193857", "next": "/projects"})
+    assert res.status_code == 302 and res.headers["Location"] == "/projects"
+
+
+def test_an_absolute_url_as_next_is_ignored(anon):
+    admin = make_user("Safe Admin", is_admin=True, pin="193857")
+    res = anon.post("/login", data={
+        "csrf": csrf(anon), "userid": admin.userid, "pin": "193857", "next": "https://evil.example/phish",
+    })
+    assert res.status_code == 302 and res.headers["Location"].endswith("/me")
+
+
+def test_a_protocol_relative_next_is_ignored(anon):
+    """//evil.example looks relative (no scheme) but a browser treats it as "same scheme, different host" -
+    still off-site, so it's refused the same as a full https:// one."""
+    admin = make_user("Safer Admin", is_admin=True, pin="193857")
+    res = anon.post("/login", data={
+        "csrf": csrf(anon), "userid": admin.userid, "pin": "193857", "next": "//evil.example/phish",
+    })
+    assert res.status_code == 302 and res.headers["Location"].endswith("/me")
+
+
 def test_login_needs_csrf(anon, user):
     assert anon.post("/login", data={"userid": user.userid, "pin": PIN}).status_code == 400
 

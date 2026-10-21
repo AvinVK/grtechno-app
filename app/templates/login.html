@@ -13,6 +13,7 @@
       {% for category, message in messages %}<p class="notice {{ category }}" role="status">{{ message }}</p>{% endfor %}
     {% endwith %}
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
     <div class="field">
       <label for="userid">Userid</label>
       <input id="userid" name="userid" value="{{ userid }}" autocomplete="username" autocapitalize="none"
