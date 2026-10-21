@@ -33,6 +33,15 @@ PIN_LENGTH = 6
 CODE_ALPHABET = "23456789"   # digits only (no 0/1, read aloud or misread for O/I) - one keyboard to type
                               # on a phone, instead of switching between letters and numbers typing it in
 PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "deploy.deploy", "static"}
+
+
+def _landing_url(user) -> str:
+    """Where someone lands right after signing in (kohal, 2026-10-21: "make admin landing page as me tab
+    and other landing pages as attendnace tab") - the admin's own Me hub, everyone else's Attendance. The
+    Leads tab itself still goes through views.index as always (it's still "/", same URL the bottom nav's
+    own Leads tab links to) - this only decides where login/set-pin send someone, not what "/" renders for
+    a leads-having role navigating there on their own afterwards."""
+    return url_for("me.page") if user.is_admin else url_for("attendance.page")
 LOCKED_MESSAGE = "Too many wrong tries. Wait 5 minutes and try again."
 _DUMMY_HASH = generate_password_hash("not-a-real-password")
 
@@ -417,7 +426,7 @@ def load_user():
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     if g.user:
-        return redirect(url_for("views.index"))
+        return redirect(_landing_url(g.user))
     error = None
     if request.method == "POST":
         check_csrf()
@@ -437,7 +446,7 @@ def login():
                 session.clear()
                 session["uid"] = user.code
                 session.permanent = True
-                return redirect(url_for("views.index"))
+                return redirect(_landing_url(user))
             else:
                 _register_failure(user)
                 error = "Wrong userid or PIN."
@@ -447,7 +456,7 @@ def login():
 @bp.route("/set-pin", methods=["GET", "POST"])
 def set_pin():
     if g.user:
-        return redirect(url_for("views.index"))
+        return redirect(_landing_url(g.user))
     error = None
     userid = request.form.get("userid", "") if request.method == "POST" else request.args.get("userid", "")
     if request.method == "POST":

@@ -44,6 +44,19 @@ def test_wrong_and_right_pin(app, user, anon):
     assert me == {"userid": user.userid, "name": "Tester", "is_admin": False, "modules": ["leads", "attendance"]}
 
 
+def test_login_lands_the_admin_on_me_and_everyone_else_on_attendance(app, anon, user):
+    """kohal, 2026-10-21: "make admin landing page as me tab and other landing pages as attendnace tab" -
+    the Leads tab itself is unaffected, still "/" (views.index), same as always - this is only about where
+    signing in itself sends someone."""
+    admin = make_user("Landing Admin", is_admin=True, pin="193857")
+    ok = login(anon, admin.userid, "193857")
+    assert ok.status_code == 302 and ok.headers["Location"].endswith("/me")
+
+    other = app.test_client()   # a second, still-anonymous client - `anon` is now the admin's own session
+    ok2 = login(other, user.userid, PIN)
+    assert ok2.status_code == 302 and ok2.headers["Location"].endswith("/attendance")
+
+
 def test_login_needs_csrf(anon, user):
     assert anon.post("/login", data={"userid": user.userid, "pin": PIN}).status_code == 400
 
