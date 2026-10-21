@@ -717,6 +717,11 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 }
 .amount-sheet h2 { margin: 0; font: 600 19px/1.2 var(--font-display); }
 .amount-sheet .confirm-actions { margin-top: 4px; }
+.amount-sheet-form { display: grid; gap: 12px; }
+
+/* Two short fields that don't need a full row each (a cash purchase's own Quantity/Unit, Cost/Date). */
+.field-row { display: flex; gap: 10px; }
+.field-row .field { flex: 1; min-width: 0; }
 
 .drawer-foot {
   position: sticky;

@@ -382,7 +382,7 @@
   const section = document.getElementById('me-cash-purchases');
   if (!section) return;
   const body = document.getElementById('me-cash-purchases-body');
-  const { h, clear, api, toast, field, dateField, showFieldErrors, money } = window.LD;
+  const { h, clear, api, toast, field, dateField, showFieldErrors, money, closeOnBack } = window.LD;
 
   function todayIso() {
     const d = new Date();
@@ -431,7 +431,14 @@
       h('span', { class: 'row-value' }, money(e.amount, cur)));
   }
 
+  // A bottom sheet, not a centred dialog (kohal, 2026-10-21: "the user is able to fill the form of add
+  // expsnse but dont see the send for approval or cancel button... can u have clean the form, its taking
+  // tooo much space anyways") - a centred confirm-card has no cap on its own height, so on a short screen
+  // or with the keyboard up its own buttons can land off-screen with nothing to scroll them into view.
+  // Same amount-sheet/sheet-overlay pattern as the admin's own Give cash sheet (app/static/js/
+  // purchase_approvals.js's openGiveSheet) - scrolls internally, capped at 90vh, buttons always reachable.
   function openLogSheet() {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const dateInput = dateField(todayIso());
     const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
@@ -440,9 +447,13 @@
     const supplierInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
     const noteInput = h('textarea', { rows: 2, maxlength: 500 });
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Log purchase');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (ev) => { if (ev.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
 
-    const form = h('form', { novalidate: true, class: 'project-form',
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form',
       onsubmit: async (ev) => {
         ev.preventDefault();
         errorBox.hidden = true;
@@ -456,7 +467,7 @@
             },
           });
           toast('Purchase logged');
-          overlay.remove();
+          finish();
           load();
         } catch (err) {
           errorBox.textContent = err.message;
@@ -466,19 +477,18 @@
         }
       } },
       errorBox,
-      field('entry_date', 'Date', dateInput),
       field('material_name', 'What did you buy', nameInput, { wide: true }),
-      field('quantity', 'Quantity', qtyInput),
-      field('unit', 'Unit', unitInput),
-      field('amount', 'Cost', amountInput),
+      h('div', { class: 'field-row' },
+        field('quantity', 'Quantity', qtyInput),
+        field('unit', 'Unit', unitInput)),
+      h('div', { class: 'field-row' },
+        field('amount', 'Cost', amountInput),
+        field('entry_date', 'Date', dateInput)),
       field('supplier', 'Supplier', supplierInput, { wide: true }),
       field('note', 'Note', noteInput, { wide: true }),
-      h('div', { class: 'confirm-actions' },
-        h('button', { class: 'btn', type: 'button', onclick: () => overlay.remove() }, 'Cancel'),
-        saveBtn));
-    const card = h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Log purchase' },
-      h('h2', {}, 'Log purchase'), form);
-    const overlay = h('div', { class: 'confirm-overlay', onclick: (ev) => { if (ev.target === overlay) overlay.remove(); } }, card);
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Log purchase' },
+      h('h2', {}, 'Log purchase'), form));
     document.body.append(overlay);
     nameInput.focus?.();
   }
