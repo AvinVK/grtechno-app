@@ -912,9 +912,17 @@
     const wages = data.wage_expenses || [];
     const reload = async () => renderExpense(await api(`/api/projects/${P.id}`));
 
+    // kohal, 2026-10-21: "in expense tab of project, there should be total material cost, total daily
+    // wages cost should be shown" - same quick-glance summary the Payment tab opens with.
+    const expOverview = h('div', { class: 'pay-overview' },
+      h('dl', { class: 'pay-overview-grid' },
+        h('dt', {}, 'Total material cost'), h('dd', {}, money(data.total_material_cost, cur)),
+        h('dt', {}, 'Total daily wages'), h('dd', {}, money(data.total_wage_expense, cur))));
+
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'expense'),
+      expOverview,
       h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
           h('h3', {}, 'Daily wages'),
