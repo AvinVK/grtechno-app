@@ -5,17 +5,21 @@ fooding (see app/fooding.py's own docstring): who may give or approve money isn'
 (auth.can_manage_cash_purchases), and anyone with a Worker record can be on the receiving end, cutting
 across every role rather than belonging to one.
 
-Three steps, each its own API surface, no page of its own - everything here feeds a block on the Me hub
+Four steps, each its own API surface, no page of its own - everything here feeds a block on the Me hub
 (kohal: "need this in me tab as cash purchase block of employees"), not a standalone route like /fooding:
+  0. The employee asks for cash up front (kohal, 2026-10-21: "employee requests for cash, admin sees the
+     request -> allocates money") - request_cash() below, optional: the admin can always just give() cash
+     unprompted too, same as before this step existed.
   1. The admin/accountant gives cash (give() below) - applied immediately, same as fooding's own allot(),
-     since the admin handing over the money *is* the fact, nothing to wait on.
+     since the admin handing over the money *is* the fact, nothing to wait on. Closes out a pending request
+     as fulfilled when one prompted it.
   2. The employee logs what they actually bought with it (add_purchase()) - date, what, how much, how many,
      who from, a note, and (after the fact, its own upload endpoint) a bill - sitting pending until step 3.
   3. The admin/accountant approves or rejects it (approve()/reject()) - only once approved does the
      purchase's own amount count against the balance (CashAccount.spent_total), same request/approve shape
      as a material request (app/inventory.py), self-approval (and self-rejection) banned the same way.
 
-See CashAccount/CashTopup/CashPurchase in app/models.py for the full data-model story."""
+See CashAccount/CashRequest/CashTopup/CashPurchase in app/models.py for the full data-model story."""
 
 from decimal import Decimal, InvalidOperation
 
@@ -23,7 +27,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .auth import can_manage_cash_purchases
 from .extensions import db
-from .models import CashAccount, CashPurchase, CashTopup, Worker, settings_for_client, utcnow
+from .models import CashAccount, CashPurchase, CashRequest, CashTopup, Worker, settings_for_client, utcnow
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -85,6 +89,24 @@ def _amount_and_mode(payload):
     return amount, mode, errors
 
 
+def _request_amount_and_note(payload):
+    """amount (a positive Decimal) and note from the request - for the employee's own ask (request_cash
+    below), same validation as _amount_and_mode's own amount but with no payment_mode (nothing's actually
+    been paid yet)."""
+    errors = {}
+    try:
+        amount = Decimal(str(payload.get("amount")))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = None
+    if amount is None or not amount.is_finite() or amount <= 0:
+        errors["amount"] = "Enter an amount greater than 0"
+        amount = None
+    elif amount is not None:
+        amount = amount.quantize(Decimal("0.01"))
+    note = str(payload.get("note") or "").strip()[:500]
+    return amount, note, errors
+
+
 def _purchase_or_404(purchase_id):
     purchase = db.session.get(CashPurchase, purchase_id)
     if purchase is None:
@@ -108,8 +130,36 @@ def my_cash_purchases():
     return jsonify(
         account=account.to_dict() if account else None,
         entries=[p.to_dict() for p in account.purchases] if account else [],
+        requests=[r.to_dict() for r in worker.cash_requests],
         currency=settings_for_client()["currency"],
     )
+
+
+def _own_pending_request(worker):
+    return CashRequest.query.filter_by(worker_id=worker.id, status="pending").first()
+
+
+@bp.post("/api/cash-purchases/requests")
+def request_cash():
+    """The employee's own ask for cash (kohal, 2026-10-21: "add cash request for employees so that admin
+    sees the request and then alocates... employee requests for cash, admin sees the request -> allocates
+    money") - purely a prompt for the admin/accountant to see on Purchase approval's own Cash requests
+    subtab; nothing is actually given until they act on it through give() below. One pending request at a
+    time per worker, same reasoning as a pending purchase - a second ask on top of an unanswered one would
+    just be noise."""
+    worker = own_worker()
+    if worker is None:
+        abort(404)
+    if _own_pending_request(worker) is not None:
+        abort(409, "You already have a request waiting on the admin.")
+    payload = _payload()
+    amount, note, errors = _request_amount_and_note(payload)
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    req = CashRequest(worker=worker, amount=amount, note=note, status="pending")
+    db.session.add(req)
+    db.session.commit()
+    return jsonify(request=req.to_dict()), 201
 
 
 def _purchase_fields(payload):
@@ -248,7 +298,11 @@ def give(worker_id):
     the balance, it doesn't replace it) - creates the account on the very first top-up. Anyone with a
     Worker record can receive cash this way; there's no opt-in checkbox the way fooding has, since this
     isn't a standing wallet everyone either is or isn't on - it's just "did the admin ever hand this
-    specific person money"."""
+    specific person money".
+
+    An optional request_id (kohal, 2026-10-21: "clicking on [a cash request] should open allocate form") -
+    the same form, just pre-filled from that request and closing it out as fulfilled once the cash is
+    actually given, rather than leaving it to sit there answered but still "pending"."""
     _manage_only()
     worker = db.session.get(Worker, worker_id)
     if worker is None:
@@ -256,14 +310,61 @@ def give(worker_id):
     payload = _payload()
     amount, mode, errors = _amount_and_mode(payload)
     note = str(payload.get("note") or "").strip()[:200]
+    cash_request = None
+    request_id = payload.get("request_id")
+    if request_id not in (None, ""):
+        cash_request = db.session.get(CashRequest, request_id)
+        if cash_request is None:
+            errors.setdefault("request_id", "That request no longer exists")
+        elif cash_request.worker_id != worker_id:
+            errors.setdefault("request_id", "That request belongs to a different employee")
+        elif cash_request.status != "pending":
+            errors.setdefault("request_id", "That request has already been dealt with")
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     account = account_for(worker, create=True)
     account.given_total += amount
     db.session.add(CashTopup(account=account, amount=amount, payment_mode=mode, note=note,
                               entry_date=today_local(), created_by_code=g.user.code))
+    if cash_request is not None:
+        cash_request.status = "fulfilled"
+        cash_request.resolved_at = utcnow()
+        cash_request.resolved_by_code = g.user.code
     db.session.commit()
     return jsonify(account=account.to_dict())
+
+
+@bp.get("/api/cash-purchases/requests")
+def pending_requests():
+    """Every employee's unanswered ask for cash (kohal, 2026-10-21: "a cash requests subtab which will show
+    user has requested for 5k") - the list behind Purchase approval's own Cash requests subtab; tapping one
+    opens the same Allocate form as "+ Allocate cash" (see accounts() above), pre-filled from the request
+    and passing its id along so give() can close it out as fulfilled."""
+    _manage_only()
+    rows = CashRequest.query.filter_by(status="pending").order_by(CashRequest.created_at).all()
+    return jsonify(
+        requests=[r.to_dict() for r in rows],
+        workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
+        payment_modes=list(PAYMENT_MODES),
+        currency=settings_for_client()["currency"],
+    )
+
+
+@bp.post("/api/cash-purchases/requests/<int:request_id>/reject")
+def reject_request(request_id):
+    """Turn down a request without giving anything - the request's own counterpart to give() closing one
+    out as fulfilled, for when the admin/accountant doesn't want to allocate against it at all."""
+    _manage_only()
+    req = db.session.get(CashRequest, request_id)
+    if req is None:
+        abort(404)
+    if req.status != "pending":
+        abort(409, "This request has already been dealt with.")
+    req.status = "rejected"
+    req.resolved_at = utcnow()
+    req.resolved_by_code = g.user.code
+    db.session.commit()
+    return jsonify(request=req.to_dict())
 
 
 @bp.get("/api/cash-purchases/pending")

@@ -395,3 +395,128 @@ def test_worker_history_for_a_worker_never_given_cash_shows_no_account(accounts_
 
 def test_worker_history_for_an_unknown_worker_is_a_404(accounts_client):
     assert accounts_client.get("/api/cash-purchases/999999").status_code == 404
+
+
+# ---------- cash requests (kohal, 2026-10-21): the employee's own ask, before anything is given ----------
+
+def test_requesting_cash_needs_a_worker_row(client):
+    assert client.post("/api/cash-purchases/requests", json={"amount": "500"}).status_code == 404
+
+
+def test_only_admin_or_accountant_can_see_pending_requests(client, accounts_client, admin_client):
+    assert client.get("/api/cash-purchases/requests").status_code == 403
+    assert accounts_client.get("/api/cash-purchases/requests").status_code == 200
+    assert admin_client.get("/api/cash-purchases/requests").status_code == 200
+
+
+def test_requesting_cash_creates_a_pending_request(app):
+    who, wid = worker_user(app)
+    res = who.post("/api/cash-purchases/requests", json={"amount": "5000", "note": "Fuel for the week"})
+    assert res.status_code == 201
+    req = res.get_json()["request"]
+    assert req["worker_id"] == wid and req["amount"] == 5000.0 and req["status"] == "pending"
+    assert req["note"] == "Fuel for the week"
+
+
+def test_request_amount_must_be_a_positive_number(app):
+    who, wid = worker_user(app)
+    assert who.post("/api/cash-purchases/requests", json={"amount": "0"}).status_code == 422
+    assert who.post("/api/cash-purchases/requests", json={"amount": "not-a-number"}).status_code == 422
+
+
+def test_cannot_have_two_pending_requests_at_once(app):
+    who, wid = worker_user(app)
+    who.post("/api/cash-purchases/requests", json={"amount": "2000"})
+    res = who.post("/api/cash-purchases/requests", json={"amount": "3000"})
+    assert res.status_code == 409
+
+
+def test_a_new_request_is_fine_once_the_old_one_is_resolved(app, accounts_client):
+    who, wid = worker_user(app)
+    first = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    accounts_client.post(f"/api/cash-purchases/requests/{first['id']}/reject", json={})
+    second = who.post("/api/cash-purchases/requests", json={"amount": "3000"})
+    assert second.status_code == 201
+
+
+def test_own_requests_show_up_in_my_cash_purchases(app, accounts_client):
+    who, wid = worker_user(app)
+    who.post("/api/cash-purchases/requests", json={"amount": "2000"})
+    data = who.get("/api/cash-purchases/me").get_json()
+    assert len(data["requests"]) == 1 and data["requests"][0]["amount"] == 2000.0
+
+
+def test_pending_requests_list_includes_workers_and_payment_modes(app, accounts_client):
+    who, wid = worker_user(app)
+    who.post("/api/cash-purchases/requests", json={"amount": "2000"})
+    data = accounts_client.get("/api/cash-purchases/requests").get_json()
+    assert len(data["requests"]) == 1 and data["requests"][0]["worker_id"] == wid
+    assert any(w["id"] == wid for w in data["workers"]) and data["payment_modes"]
+
+
+def test_rejecting_a_request_gives_nothing_and_closes_it(app, accounts_client):
+    who, wid = worker_user(app)
+    req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    res = accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    assert res.status_code == 200 and res.get_json()["request"]["status"] == "rejected"
+    assert accounts_client.get("/api/cash-purchases/requests").get_json()["requests"] == []
+    assert who.get("/api/cash-purchases/me").get_json()["account"] is None
+
+
+def test_cannot_reject_an_already_resolved_request(app, accounts_client):
+    who, wid = worker_user(app)
+    req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    res = accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    assert res.status_code == 409
+
+
+def test_rejecting_an_unknown_request_is_a_404(accounts_client):
+    assert accounts_client.post("/api/cash-purchases/requests/999999/reject", json={}).status_code == 404
+
+
+def test_only_admin_or_accountant_can_reject_a_request(client, app):
+    who, wid = worker_user(app)
+    req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    assert client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={}).status_code == 403
+
+
+def test_giving_cash_against_a_request_fulfils_it(app, accounts_client):
+    who, wid = worker_user(app)
+    req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    res = accounts_client.post(f"/api/cash-purchases/{wid}/give",
+                                json={"amount": "2000", "payment_mode": "Cash", "request_id": req["id"]})
+    assert res.status_code == 200 and res.get_json()["account"]["given_total"] == 2000.0
+    resolved = who.get("/api/cash-purchases/me").get_json()["requests"][0]
+    assert resolved["status"] == "fulfilled" and resolved["resolved_by_name"]
+
+
+def test_giving_cash_with_an_already_resolved_request_id_is_rejected(app, accounts_client):
+    who, wid = worker_user(app)
+    req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    res = accounts_client.post(f"/api/cash-purchases/{wid}/give",
+                                json={"amount": "2000", "payment_mode": "Cash", "request_id": req["id"]})
+    assert res.status_code == 422
+
+
+def test_giving_cash_with_a_request_for_a_different_worker_is_rejected(app, accounts_client):
+    who, wid = worker_user(app, name="Requester")
+    req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
+    other_id = add_worker("Someone Else")
+    res = accounts_client.post(f"/api/cash-purchases/{other_id}/give",
+                                json={"amount": "2000", "payment_mode": "Cash", "request_id": req["id"]})
+    assert res.status_code == 422
+
+
+def test_giving_cash_without_a_request_id_still_works_as_before(accounts_client):
+    wid = add_worker()
+    res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1000", "payment_mode": "Cash"})
+    assert res.status_code == 200
+
+
+def test_requests_count_toward_the_purchase_approval_tiles_pending_sum(app, admin_client):
+    who, wid = worker_user(app)
+    who.post("/api/cash-purchases/requests", json={"amount": "2000"})
+    html = admin_client.get("/me").get_data(as_text=True)
+    assert "1 pending" in html

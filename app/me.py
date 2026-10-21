@@ -26,6 +26,7 @@ from .models import (
     AnnouncementRecipient,
     Attendance,
     CashPurchase,
+    CashRequest,
     Client,
     Lead,
     LeadSurvey,
@@ -104,7 +105,9 @@ def _extra_tiles():
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{n} on fooding" if n else None})
     if can_manage_cash_purchases(g.user):
-        n = CashPurchase.query.filter_by(status="pending").count()
+        # Both kinds of thing waiting on the admin here - a cash request and a purchase to approve - count
+        # toward the same "n pending" (kohal, 2026-10-21 added cash requests alongside purchase approvals).
+        n = CashPurchase.query.filter_by(status="pending").count() + CashRequest.query.filter_by(status="pending").count()
         tiles.append({"href": "/purchase-approvals", "icon": "cash", "name": "Purchase approval",
                        "sum": f"{n} pending" if n else None})
     if tiles:

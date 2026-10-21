@@ -371,11 +371,19 @@
   load();
 })();
 
-/* The signed-in person's own cash-purchase balance and log (kohal, 2026-10-21: "need this in me tab as
-   cash purchase block of employees") - hidden entirely until the admin/accountant has given them cash at
-   least once (see app/cash_purchases.py's my_cash_purchases). Logging a purchase is a two-step affair,
-   same as a material's own stock-in: the entry first (date, what, how much, cost, supplier, note), the
-   bill (optional) attached after the fact from the entry's own row, not part of this form. */
+/* The signed-in person's own cash-purchase block (kohal, 2026-10-21: "need this in me tab as cash purchase
+   block of employees"; then: "add cash request for employees so that admin sees the request and then
+   alocates... also have a block for emplyees in me tab named cash purchase whcih will have 2 subtabs,
+   request cash and log purchase") - hidden entirely for anyone with no Worker record at all (see
+   app/cash_purchases.py's my_cash_purchases), but visible to any worker from day one now, not just once
+   the admin has given them cash - Request cash is exactly how that first ask happens. Two subtabs:
+   - Request cash: ask the admin for money (amount + an optional note on what it's for), one unanswered
+     request at a time; past ones show whether they were fulfilled or turned down.
+   - Log purchase: the existing balance + "what did I buy with it" log, same as before this split - empty
+     until cash has actually been given.
+   Logging a purchase is a two-step affair, same as a material's own stock-in: the entry first (date, what,
+   how much, cost, supplier, note), the bill (optional) attached after the fact from the entry's own row,
+   not part of this form. */
 (() => {
   'use strict';
 
@@ -383,6 +391,8 @@
   if (!section) return;
   const body = document.getElementById('me-cash-purchases-body');
   const { h, clear, api, toast, field, dateField, showFieldErrors, money, closeOnBack } = window.LD;
+
+  let activeTab = null; // 'request' | 'log' - chosen on first load, see load() below
 
   function todayIso() {
     const d = new Date();
@@ -493,21 +503,103 @@
     nameInput.focus?.();
   }
 
-  async function load() {
-    let data;
-    try { data = await api('/api/cash-purchases/me'); }
-    catch (err) { section.hidden = true; return; }
-    section.hidden = !data.account;
-    if (!data.account) return;
-    const cur = data.currency;
+  // A bottom sheet too, same reasoning and same amount-sheet pattern as openLogSheet above.
+  function openRequestSheet() {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const noteInput = h('textarea', { rows: 2, maxlength: 500 });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Request cash');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (ev) => { if (ev.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form',
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        try {
+          await api('/api/cash-purchases/requests', { method: 'POST', body: { amount: amountInput.value, note: noteInput.value } });
+          toast('Request sent');
+          finish();
+          load();
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      field('amount', 'How much do you need', amountInput, { wide: true }),
+      field('note', 'What for (optional)', noteInput, { wide: true }),
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Request cash' },
+      h('h2', {}, 'Request cash'), form));
+    document.body.append(overlay);
+    amountInput.focus?.();
+  }
+
+  const REQ_STATUS_LABEL = { pending: 'Pending', fulfilled: 'Fulfilled', rejected: 'Rejected' };
+  const REQ_STATUS_CLASS = { pending: 'chip-today', fulfilled: 'chip-active', rejected: 'chip-off' };
+
+  function requestRow(r, cur) {
+    return h('li', { class: 'p-row' },
+      h('span', { class: `chip ${REQ_STATUS_CLASS[r.status]}` }, REQ_STATUS_LABEL[r.status]),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, money(r.amount, cur)),
+        h('span', { class: 'row-sub' }, [fmtDate(r.created_at.slice(0, 10)), r.note || null].filter(Boolean).join(' · '))));
+  }
+
+  function pillTabs(active) {
+    return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Cash purchase section' },
+      h('button', { type: 'button', class: 'filter-chip', 'aria-pressed': String(active === 'request'),
+        onclick: () => { activeTab = 'request'; load(); } }, 'Request cash'),
+      h('button', { type: 'button', class: 'filter-chip', 'aria-pressed': String(active === 'log'),
+        onclick: () => { activeTab = 'log'; load(); } }, 'Log purchase'));
+  }
+
+  function renderRequestTab(data, cur) {
+    const pendingReq = data.requests.find((r) => r.status === 'pending');
+    const past = data.requests.filter((r) => r.status !== 'pending');
+    return h('div', {},
+      h('div', { class: 'p-section-head' },
+        h('p', { class: 'hint' }, pendingReq
+          ? `Waiting on the admin: ${money(pendingReq.amount, cur)} requested ${fmtDate(pendingReq.created_at.slice(0, 10))}.`
+          : 'Need cash for something? Ask the admin.'),
+        pendingReq ? null : h('button', { class: 'btn small', type: 'button', onclick: openRequestSheet }, '+ Request cash')),
+      past.length
+        ? h('ul', { class: 'card-group' }, past.map((r) => requestRow(r, cur)))
+        : h('p', { class: 'hint' }, 'No past requests.'));
+  }
+
+  function renderLogTab(data, cur) {
     const a = data.account;
-    clear(body).append(
+    if (!a) {
+      return h('p', { class: 'hint' }, 'No cash has been given to you yet - use Request cash to ask the admin.');
+    }
+    return h('div', {},
       h('div', { class: 'p-section-head' },
         h('p', { class: 'wk-legend' }, `Given ${money(a.given_total, cur)} · Spent ${money(a.spent_total, cur)} · Remaining ${money(a.remaining, cur)}`),
         h('button', { class: 'btn small', type: 'button', onclick: openLogSheet }, '+ Log purchase')),
       data.entries.length
         ? h('ul', { class: 'card-group' }, data.entries.map((e) => entryRow(e, cur, load)))
         : h('p', { class: 'hint' }, 'Nothing logged yet.'));
+  }
+
+  async function load() {
+    let data;
+    try { data = await api('/api/cash-purchases/me'); }
+    catch (err) { section.hidden = true; return; }
+    section.hidden = false;
+    if (activeTab === null) activeTab = data.account ? 'log' : 'request';
+    const cur = data.currency;
+    clear(body).append(
+      pillTabs(activeTab),
+      activeTab === 'request' ? renderRequestTab(data, cur) : renderLogTab(data, cur));
   }
 
   load();

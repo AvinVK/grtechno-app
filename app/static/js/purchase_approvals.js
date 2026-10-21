@@ -3,14 +3,20 @@
    alocate cash (same as fooding types)"; then: "allocate cash should be a button and then this form should
    open. and the subtab should be allocated cash and balance and their it should show employees to whom
    cash is allocated and how much they have balance rn. clicking on one employee should show the history of
-   cash expense and whether approved or rejected") - admin/accountant only, its own page off a Me-hub tile.
-   Two subtabs, same pill shape as Inventory's own Materials/Material requests/Restock bar:
+   cash expense and whether approved or rejected"; then: "add cash request for employees so that admin sees
+   the request and then alocates... for admin in purchase approval, there should be a cash requests shubtab
+   which will show user has requested for 5k and then after clicking on that, it should open allocate
+   form") - admin/accountant only, its own page off a Me-hub tile. Three subtabs, same pill shape as
+   Inventory's own Materials/Material requests/Restock bar:
    - Approvals (default): every pending purchase, approve or reject it.
+   - Cash requests: every employee's unanswered ask for cash, tapping one opens the same Allocate form as
+     "+ Allocate cash" below, pre-filled - giving the cash closes the request out as fulfilled (see
+     app/cash_purchases.py's give()); a reject link turns it down without giving anything.
    - Allocated cash & balance: every employee cash has actually been given to and what they have left,
      "+ Allocate cash" opening a sheet (same idea as Fooding's own allot) rather than a form on the page
      itself, tapping a row opening that one employee's own purchase history.
-   The employee's own balance and purchase log stays on the Me hub itself (see app/static/js/me.js) - this
-   page is the management side only, see app/cash_purchases.py. */
+   The employee's own balance, requests and purchase log stay on the Me hub itself (see
+   app/static/js/me.js) - this page is the management side only, see app/cash_purchases.py. */
 (() => {
   'use strict';
 
@@ -25,6 +31,7 @@
   function tabs(active) {
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Purchase approval section' },
       h('a', { class: 'filter-chip', href: '#approvals', 'aria-current': active === 'approvals' ? 'page' : null }, 'Approvals'),
+      h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null }, 'Cash requests'),
       h('a', { class: 'filter-chip', href: '#balances', 'aria-current': active === 'balances' ? 'page' : null }, 'Allocated cash & balance'));
   }
 
@@ -69,12 +76,53 @@
         : h('p', { class: 'empty-state' }, 'Nothing waiting on approval right now.')));
   }
 
+  /* ---------- Cash requests: an employee's own unanswered ask, tap to open the Allocate form ---------- */
+
+  async function rejectRequest(r, reload) {
+    const sure = await confirm(`Turn down ${r.worker_name}'s request for ${r.amount}? Nothing will be given.`,
+      { ok: 'Reject', danger: true, title: 'Reject request' });
+    if (!sure) return;
+    try {
+      await api(`/api/cash-purchases/requests/${r.id}/reject`, { method: 'POST' });
+      toast('Request rejected');
+      reload();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  function requestRow(r, data, cur, reload) {
+    return h('li', {}, h('div', { class: 'card me-row approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, `${r.worker_name} · ${money(r.amount, cur)}`),
+        h('span', { class: 'hint' }, [fmtDate(r.created_at.slice(0, 10)), r.note || null].filter(Boolean).join(' · '))),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button',
+          onclick: () => openGiveSheet(data, reload, { worker_id: r.worker_id, amount: r.amount, request_id: r.id }) }, 'Allocate'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => rejectRequest(r, reload) }, 'Reject'))));
+  }
+
+  async function showRequests() {
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/cash-purchases/requests'); }
+    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    clear(view).append(h('div', {},
+      tabs('requests'),
+      h('div', { class: 'list-head' }, h('h2', {}, `${data.requests.length} waiting`)),
+      data.requests.length
+        ? h('ul', { class: 'card-group' }, data.requests.map((r) => requestRow(r, data, data.currency, showRequests)))
+        : h('p', { class: 'empty-state' }, 'Nobody has asked for cash right now.')));
+  }
+
   /* ---------- Allocated cash & balance: who's been given cash, and what's left ---------- */
 
-  function openGiveSheet(data, onDone) {
+  // `prefill` (worker_id, amount, request_id) comes from tapping a Cash requests row (kohal, 2026-10-21:
+  // "clicking on that, it should open allocate form") - still just this same form, pre-filled rather than
+  // blank, and request_id rides along so give() can close that request out as fulfilled.
+  function openGiveSheet(data, onDone, prefill) {
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-    const workerSel = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Choose an employee' });
-    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const workerSel = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), prefill?.worker_id ?? '', { placeholder: 'Choose an employee' });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: prefill?.amount ?? '' });
     const modeSel = selectField([{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
       '', { title: 'How was it paid', placeholder: 'Mode of payment' });
     const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
@@ -90,7 +138,10 @@
       errEl.textContent = '';
       try {
         await api(`/api/cash-purchases/${workerSel.value}/give`, {
-          method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value, note: noteInput.value },
+          method: 'POST', body: {
+            amount: amountInput.value, payment_mode: modeSel.value, note: noteInput.value,
+            request_id: prefill?.request_id ?? null,
+          },
         });
         finish();
         toast('Cash given');
@@ -177,6 +228,7 @@
     let m = /^#balances\/person\/(\d+)$/.exec(hash);
     if (m) return showPersonHistory(Number(m[1]));
     if (hash === '#balances') return showBalances();
+    if (hash === '#requests') return showRequests();
     return showApprovals();
   }
 

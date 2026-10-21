@@ -690,6 +690,41 @@ class CashAccount(db.Model):
         }
 
 
+class CashRequest(db.Model):
+    """An employee asking for cash, before any has ever been given or on top of what they already have
+    (kohal, 2026-10-21: "add cash request for employees so that admin sees the request and then alocates...
+    the flow is employee requests for cash, admin sees the request -> allocates money -> employees logs
+    expense -> admin approves"). Purely the ask - giving the money still only ever happens through
+    CashTopup/give() below, same action as if the admin had decided to hand it over unprompted; a request
+    just closes itself out as "fulfilled" the moment give() is called with this request's id (kohal: "after
+    clicking on that, it should open allocate form"), or the admin can turn it down outright instead
+    (rejected), leaving nothing given. One pending request per worker at a time - a second ask on top of an
+    unanswered one would just be noise, same reasoning as a pending purchase."""
+
+    __tablename__ = "cash_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    note = db.Column(db.String(500), nullable=False, default="", server_default="")
+    status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+
+    worker = db.relationship("Worker", back_populates="cash_requests")
+    resolved_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "worker_id": self.worker_id, "worker_name": self.worker.name,
+            "amount": float(self.amount), "note": self.note, "status": self.status,
+            "created_at": _iso(self.created_at),
+            "resolved_by_name": self.resolved_by.name if self.resolved_by else None,
+            "resolved_at": _iso(self.resolved_at),
+        }
+
+
 class CashTopup(db.Model):
     """One "admin gave this employee cash" record - the human-readable ledger behind CashAccount.given_total,
     same relationship FoodingEntry has to FoodingAccount.allotted_total. Always applied immediately (the
@@ -1331,6 +1366,12 @@ class Worker(db.Model):
     # this row too, same reasoning as fooding_account above.
     cash_account = db.relationship(
         "CashAccount", back_populates="worker", uselist=False, cascade="all, delete-orphan",
+    )
+    # An employee's own asks for cash (kohal, 2026-10-21) - see CashRequest's own docstring. Owned by this
+    # row too, same reasoning as cash_account above.
+    cash_requests = db.relationship(
+        "CashRequest", back_populates="worker", cascade="all, delete-orphan",
+        order_by="CashRequest.created_at.desc()",
     )
 
     @property
