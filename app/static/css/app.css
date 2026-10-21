@@ -1041,6 +1041,11 @@ a.p-client-name { color: var(--accent-dark); }
 .pay-overview-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 0; font-size: 14px; }
 .pay-overview-grid dt { color: var(--muted); }
 .pay-overview-grid dd { margin: 0; text-align: right; font-weight: 600; font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+/* A just-finished 15-day pay cycle's own flag, above the current one's day list (Wages, kohal, 2026-10-21:
+   "once 15 days are over, it should show a flag saying 15 days cycle total is this much"). */
+.pay-overview.is-flag { background: var(--ok-tint); }
+.pay-overview.is-flag .pay-overview-grid dt { color: var(--ok-ink); opacity: 0.8; }
+.pay-overview.is-flag .pay-overview-grid dd { color: var(--ok-ink); }
 
 /* How each step was actually paid, read straight off what's saved - a receipt, not another editable row. */
 .pay-receipts { display: grid; gap: 10px; margin-bottom: 14px; }

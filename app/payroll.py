@@ -91,6 +91,20 @@ def _sundays_not_present(start: date, end: date, present: set) -> int:
     return count
 
 
+def _absent_days(start: date, end: date, present: set) -> int:
+    """Every non-Sunday day in [start, end] not in `present` - how many days someone simply didn't show up
+    (kohal, 2026-10-21: "once 15 days are over, it should show a flag saying 15 days cycle total is this
+    much, u were absent this much"). A Sunday is never "absent" here, same reasoning _sundays_not_present
+    already pays it regardless - there's nothing to be absent from."""
+    count = 0
+    d = start
+    while d <= end:
+        if d.weekday() != 6 and d not in present:
+            count += 1
+        d += timedelta(days=1)
+    return count
+
+
 def _payroll_start(w):
     """The earliest day this worker's payroll ever counts from - their own first_seen, floored at
     PAYROLL_START (kohal, 2026-10-21: "payroll calc should start from oct 1st"), or None if they have no
@@ -129,6 +143,7 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     they hadn't started yet, or there's no attendance data reaching this far."""
     wage = float(w.wage_amount)
     days = 0
+    absent = 0
     payroll_start = _payroll_start(w)
     effective_start = max(slot_start, payroll_start) if payroll_start else None
     effective_end = min(slot_end, data_until_end) if data_until_end else None
@@ -139,12 +154,13 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
             present |= {a.work_date for a in Attendance.query.filter_by(user_code=w.user_code, status="approved")
                         .filter(Attendance.work_date >= effective_start, Attendance.work_date <= effective_end)}
         days = len(present) + _sundays_not_present(effective_start, effective_end, present)
+        absent = _absent_days(effective_start, effective_end, present)
     earned = round(wage * days, 2)
     paid = float(sum((p.amount for p in w.payments if p.period_start == slot_start and p.paid_date is not None),
                       start=Decimal("0")))
     return {
         "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
-        "months": None, "days": days,
+        "months": None, "days": days, "absent": absent,
         "period_start": slot_start.isoformat(), "period_end": slot_end.isoformat(), "period_label": label,
         "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2), "last_paid": _last_paid(w),
     }
