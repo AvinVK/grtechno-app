@@ -543,7 +543,7 @@
     amountInput.focus?.();
   }
 
-  const REQ_STATUS_LABEL = { pending: 'Pending', fulfilled: 'Fulfilled', rejected: 'Rejected' };
+  const REQ_STATUS_LABEL = { pending: 'Awaiting approval', fulfilled: 'Fulfilled', rejected: 'Rejected' };
   const REQ_STATUS_CLASS = { pending: 'chip-today', fulfilled: 'chip-active', rejected: 'chip-off' };
 
   function requestRow(r, cur) {
@@ -565,15 +565,19 @@
   function renderRequestTab(data, cur) {
     const pendingReq = data.requests.find((r) => r.status === 'pending');
     const past = data.requests.filter((r) => r.status !== 'pending');
+    // A pending request gets the same card the resolved ones below get, not a line of plain text (kohal,
+    // 2026-10-21: "this waiting for approval should not just be text, it should be a block like fulfilled,
+    // but it should say awaiting approval") - reuses requestRow, same as history.
+    const head = pendingReq
+      ? h('ul', { class: 'card-group' }, [requestRow(pendingReq, cur)])
+      : h('div', { class: 'p-section-head' },
+          h('p', { class: 'hint' }, 'Need cash for something? Ask the admin.'),
+          h('button', { class: 'btn small', type: 'button', onclick: openRequestSheet }, '+ Request cash'));
     return h('div', {},
-      h('div', { class: 'p-section-head' },
-        h('p', { class: 'hint' }, pendingReq
-          ? `Waiting on the admin: ${money(pendingReq.amount, cur)} requested ${fmtDate(pendingReq.created_at.slice(0, 10))}.`
-          : 'Need cash for something? Ask the admin.'),
-        pendingReq ? null : h('button', { class: 'btn small', type: 'button', onclick: openRequestSheet }, '+ Request cash')),
+      head,
       past.length
         ? h('ul', { class: 'card-group' }, past.map((r) => requestRow(r, cur)))
-        : h('p', { class: 'hint' }, 'No past requests.'));
+        : (pendingReq ? null : h('p', { class: 'hint' }, 'No past requests.')));
   }
 
   function renderLogTab(data, cur) {
