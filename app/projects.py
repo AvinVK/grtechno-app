@@ -11,7 +11,7 @@ from werkzeug.exceptions import abort
 
 from . import inventory as inv
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
-from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
+from .constants import COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
 from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
@@ -365,6 +365,8 @@ def _detail(project):
         "wage_expenses": wage_expenses,
         "total_wage_expense": total_wage_expense,
         "stages": project.stage_rows,
+        "current_stage_key": project.current_stage_key,
+        "pause_reasons": PAUSE_REASONS,
         # For the commission form's worker picker - only someone in that role earns it (kohal, 2026-10-18).
         "commission_workers": [{"id": w.id, "name": w.name}
                                 for w in Worker.query.filter_by(role_key=COMMISSION_ROLE_KEY).order_by(Worker.name)],
@@ -567,6 +569,15 @@ def delete_document(project_id, doc_type):
 
 
 # ---------- Progress tab: the fixed installation stage checklist (kohal, 2026-10-22) ----------
+#
+# One stage is ever workable at a time (Project.current_stage_key: the first not-done, in PROJECT_STAGES
+# order) - the same one-stage-at-a-time model as a lead's own Lead.stage ("only when mark done of current
+# stage then only goto next stage"). Every mutating action below checks against it: a not-yet-reached stage
+# has nothing to edit, and a finished one is locked history unless reopened by un-marking it done first.
+
+ONLY_CURRENT_STAGE_MSG = "Only the stage currently in progress can be changed."
+PAUSE_REASON_KEYS = {key for key, _label in PAUSE_REASONS}
+
 
 def _stage_or_404(project, stage_key):
     if stage_key not in PROJECT_STAGE_KEYS:
@@ -582,6 +593,15 @@ def _stage_or_create(project, stage_key):
         db.session.add(stage)
         project.stages.append(stage)
     return stage
+
+
+def _is_last_done_stage(project, stage_key):
+    """True if stage_key is done and no stage after it (in PROJECT_STAGES order) is also done - the one
+    completed stage un-marking done is allowed to reopen, so "done" always stays an unbroken prefix."""
+    order = [key for key, _label, _note in PROJECT_STAGES]
+    by_key = {s.stage_key: s for s in project.stages}
+    after = order[order.index(stage_key) + 1:]
+    return not any(by_key.get(k) and by_key[k].done for k in after)
 
 
 @bp.patch("/api/projects/<int:project_id>/stages/<stage_key>")
@@ -600,19 +620,87 @@ def update_stage(project_id, stage_key):
 
     f = Fields(payload)
     f.integer("days", 0, 365)
+    f.text("remarks", 2000)
     if "done" in payload and not isinstance(payload["done"], bool):
         f.errors["done"] = "Say whether this stage is done or not"
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
     stage = _stage_or_create(project, stage_key)
-    if "days" in f.data:
+    if "days" in f.data and f.data["days"] != stage.days:
+        if stage_key != project.current_stage_key:
+            abort(422, ONLY_CURRENT_STAGE_MSG)
         stage.days = f.data["days"]
+    if "remarks" in f.data and f.data["remarks"] != stage.remarks:
+        if stage_key != project.current_stage_key:
+            abort(422, ONLY_CURRENT_STAGE_MSG)
+        stage.remarks = f.data["remarks"]
     if "done" in payload:
         done = payload["done"]
-        if done != stage.done:
-            stage.done = done
-            stage.completed_at = utcnow() if done else None
+        if done and not stage.done:
+            if stage_key != project.current_stage_key:
+                abort(422, ONLY_CURRENT_STAGE_MSG)
+            if stage.paused:
+                abort(422, "Resume this stage before marking it done.")
+            stage.done = True
+            stage.completed_at = utcnow()
+        elif not done and stage.done:
+            if not _is_last_done_stage(project, stage_key):
+                abort(422, "Only the most recently completed stage can be reopened.")
+            stage.done = False
+            stage.completed_at = None
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.post("/api/projects/<int:project_id>/stages/<stage_key>/pause")
+def pause_stage(project_id, stage_key):
+    """Record why work on the current stage has stalled (kohal, 2026-10-22: "add pause button after each
+    stage. if paused then whats the reason? payment not recieved, manpower shortage, material shortage") -
+    current state only, not a log of every past pause (see ProjectStage.pause_reason). Admin only, and only
+    on the stage actually in progress - nothing to pause on a stage that hasn't started or is already done."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can pause a project's progress.")
+    project = _project_or_404(project_id)
+    if stage_key not in PROJECT_STAGE_KEYS:
+        abort(404)
+    if stage_key != project.current_stage_key:
+        abort(422, ONLY_CURRENT_STAGE_MSG)
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+
+    f = Fields(payload)
+    f.choice("reason", PAUSE_REASON_KEYS)
+    f.text("note", 500)
+    if "reason" not in f.data:
+        f.errors.setdefault("reason", "Choose a reason")
+    if f.data.get("reason") == "other" and not f.data.get("note"):
+        f.errors["note"] = "Say what the reason is"
+    if f.errors:
+        return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+
+    stage = _stage_or_create(project, stage_key)
+    stage.paused = True
+    stage.pause_reason = f.data["reason"]
+    stage.pause_note = f.data.get("note", "")
+    stage.paused_at = utcnow()
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.post("/api/projects/<int:project_id>/stages/<stage_key>/resume")
+def resume_stage(project_id, stage_key):
+    if not g.user.is_admin:
+        abort(403, "Only the admin can resume a project's progress.")
+    project = _project_or_404(project_id)
+    stage = _stage_or_404(project, stage_key)
+    if stage is None or not stage.paused:
+        abort(422, "This stage isn't paused.")
+    stage.paused = False
+    stage.pause_reason = None
+    stage.pause_note = ""
+    stage.paused_at = None
     db.session.commit()
     return jsonify(_detail(project))
 
@@ -624,6 +712,8 @@ def upload_stage_photos(project_id, stage_key):
     project = _project_or_404(project_id)
     if stage_key not in PROJECT_STAGE_KEYS:
         abort(404)
+    if stage_key != project.current_stage_key:
+        abort(422, ONLY_CURRENT_STAGE_MSG)
     files = request.files.getlist("photos")
     if not files:
         abort(422, "Choose at least one photo")
@@ -643,6 +733,10 @@ def delete_stage_photo(project_id, stage_key, photo_id):
     if not g.user.is_admin:
         abort(403, "Only the admin can remove a project's progress photos.")
     project = _project_or_404(project_id)
+    if stage_key not in PROJECT_STAGE_KEYS:
+        abort(404)
+    if stage_key != project.current_stage_key:
+        abort(422, ONLY_CURRENT_STAGE_MSG)
     stage = _stage_or_404(project, stage_key)
     photo = next((p for p in (stage.photos if stage else []) if p.id == photo_id), None)
     if photo is None:

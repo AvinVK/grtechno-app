@@ -43,6 +43,16 @@ PROJECT_STAGES = [
     ("handover", "Handover", ""),
 ]
 
+# Why the current stage has stopped (kohal, 2026-10-22: "add pause button after each stage. if paused then
+# whats the reason? payment not recieved, manpower shortage, material shortage") - "other" (with its own
+# free-text note) is on top of the three given, so a stall with no better fit still records something.
+PAUSE_REASONS = [
+    ("payment_not_received", "Payment not received"),
+    ("manpower_shortage", "Manpower shortage"),
+    ("material_shortage", "Material shortage"),
+    ("other", "Other"),
+]
+
 # Fallbacks for the two single-value rows in the settings table. The dropdown lists live in the
 # services and lead_sources tables and are maintained directly in the database.
 DEFAULT_SETTINGS = {

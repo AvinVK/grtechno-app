@@ -83,14 +83,44 @@ def test_a_clients_own_project_shows_the_same_stage_progress_the_admin_set(app, 
         mine = make_client("Kalyani Cold Storage")
         pid = make_project_for(mine, title="Fire NOC work")
         who = client_user(app, mine)
-    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"days": 5})
-    admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": True})
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"days": 5, "done": True})
+    admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": 3})
 
     data = who.get(f"/api/my-projects/{pid}").get_json()
     stages = {s["key"]: s for s in data["stages"]}
     assert len(data["stages"]) == 9
     assert stages["commencement"]["days"] == 5
-    assert stages["handover"]["done"] is True and stages["handover"]["completed_at"] is not None
+    assert stages["commencement"]["done"] is True and stages["commencement"]["completed_at"] is not None
+    assert stages["riser_installation"]["days"] == 3
+
+
+def test_a_clients_own_project_shows_which_stage_is_current_and_why_its_paused(app, admin_client):
+    """kohal, 2026-10-22: "add pause button after each stage... follow the same template as lead" - a
+    client sees the same one-stage-at-a-time picture, including why work has stalled."""
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine, title="Fire NOC work")
+        who = client_user(app, mine)
+    assert who.get(f"/api/my-projects/{pid}").get_json()["current_stage_key"] == "commencement"
+
+    admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "material_shortage"})
+    data = who.get(f"/api/my-projects/{pid}").get_json()
+    stages = {s["key"]: s for s in data["stages"]}
+    assert stages["commencement"]["paused"] is True
+    assert stages["commencement"]["pause_reason"] == "material_shortage"
+
+
+def test_a_clients_own_project_shows_the_admins_note_on_the_current_stage(app, admin_client):
+    """kohal, 2026-10-22: "add note at each step"."""
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine, title="Fire NOC work")
+        who = client_user(app, mine)
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"remarks": "Waiting on building diagram"})
+
+    data = who.get(f"/api/my-projects/{pid}").get_json()
+    stages = {s["key"]: s for s in data["stages"]}
+    assert stages["commencement"]["remarks"] == "Waiting on building diagram"
 
 
 def test_a_client_never_reaches_the_normal_projects_api(app):

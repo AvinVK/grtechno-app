@@ -538,27 +538,173 @@ def test_unknown_stage_key_is_rejected(admin_client):
 
 def test_setting_a_stages_planned_days(admin_client):
     pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Days"}).get_json()["project"]["id"]
-    res = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": 4})
+    res = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"days": 4})
     assert res.status_code == 200
     stages = {s["key"]: s for s in res.get_json()["stages"]}
-    assert stages["riser_installation"]["days"] == 4
+    assert stages["commencement"]["days"] == 4
 
-    cleared = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": None})
+    cleared = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"days": None})
     stages2 = {s["key"]: s for s in cleared.get_json()["stages"]}
-    assert stages2["riser_installation"]["days"] is None
+    assert stages2["commencement"]["days"] is None
 
-    assert admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": 400}).status_code == 422
+    assert admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"days": 400}).status_code == 422
 
 
 def test_marking_a_stage_done_sets_and_clears_completed_at(admin_client):
     pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Done"}).get_json()["project"]["id"]
-    done = admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": True})
+    done = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})
     stages = {s["key"]: s for s in done.get_json()["stages"]}
-    assert stages["handover"]["done"] is True and stages["handover"]["completed_at"] is not None
+    assert stages["commencement"]["done"] is True and stages["commencement"]["completed_at"] is not None
 
-    undone = admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": False})
+    undone = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": False})
     stages2 = {s["key"]: s for s in undone.get_json()["stages"]}
-    assert stages2["handover"]["done"] is False and stages2["handover"]["completed_at"] is None
+    assert stages2["commencement"]["done"] is False and stages2["commencement"]["completed_at"] is None
+
+
+# ---------- one stage at a time, like a lead's own Lead.stage (kohal, 2026-10-22: "follow the same
+# template as lead, only when mark done of current stage then only goto next stage") ----------
+
+def test_the_current_stage_is_the_first_not_done_one_and_moves_forward_as_stages_complete(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Order"}).get_json()["project"]["id"]
+    detail = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert detail["current_stage_key"] == "commencement"
+
+    after = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True}).get_json()
+    assert after["current_stage_key"] == "riser_installation"
+
+
+def test_a_later_stage_cannot_be_marked_done_before_the_current_one(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Out Of Order"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": True})
+    assert res.status_code == 422
+    stages = {s["key"]: s for s in admin_client.get(f"/api/projects/{pid}").get_json()["stages"]}
+    assert stages["handover"]["done"] is False
+
+
+def test_a_future_stages_days_cannot_be_set_before_its_turn(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Future Days"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": 3})
+    assert res.status_code == 422
+
+
+# ---------- a free note on the current stage (kohal, 2026-10-22: "add note at each step") ----------
+
+def test_setting_a_note_on_the_current_stage(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Note"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"remarks": "Client site visit done"})
+    assert res.status_code == 200
+    stages = {s["key"]: s for s in res.get_json()["stages"]}
+    assert stages["commencement"]["remarks"] == "Client site visit done"
+
+    cleared = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"remarks": ""})
+    stages2 = {s["key"]: s for s in cleared.get_json()["stages"]}
+    assert stages2["commencement"]["remarks"] == ""
+
+
+def test_a_future_stages_note_cannot_be_set_before_its_turn(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Future Note"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"remarks": "Too soon"})
+    assert res.status_code == 422
+
+
+def test_a_finished_stages_note_stays_visible(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Finished Note"}).get_json()["project"]["id"]
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"remarks": "All good"})
+    done = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})
+    stages = {s["key"]: s for s in done.get_json()["stages"]}
+    assert stages["commencement"]["remarks"] == "All good"
+
+
+def test_only_the_most_recently_completed_stage_can_be_reopened(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Reopen Order"}).get_json()["project"]["id"]
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})
+    admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"done": True})
+
+    # commencement is done but no longer the most recent completion (riser_installation is) - reopening
+    # it now would leave a gap, so it's refused; the actual most recent one can still be undone.
+    blocked = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": False})
+    assert blocked.status_code == 422
+    ok = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"done": False})
+    assert ok.status_code == 200
+    assert ok.get_json()["current_stage_key"] == "riser_installation"
+
+
+def test_marking_all_nine_stages_done_leaves_no_current_stage(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "All Done"}).get_json()["project"]["id"]
+    last = None
+    for key in STAGE_KEYS:
+        last = admin_client.patch(f"/api/projects/{pid}/stages/{key}", json={"done": True}).get_json()
+    assert last["current_stage_key"] is None
+
+
+# ---------- pausing the current stage with a reason ----------
+# (kohal, 2026-10-22: "add pause button after each stage. if paused then whats the reason? payment not
+# recieved, manpower shortage, material shortage")
+
+def test_only_the_admin_can_pause_or_resume_a_stage(client, admin_client, accounts_client, manager_client):
+    pid = make_project(client, admin_client)
+    for who in (accounts_client, manager_client):
+        assert who.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "manpower_shortage"}).status_code == 403
+    admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "manpower_shortage"})
+    for who in (accounts_client, manager_client):
+        assert who.post(f"/api/projects/{pid}/stages/commencement/resume").status_code == 403
+
+
+def test_only_the_current_stage_can_be_paused(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Pause Order"}).get_json()["project"]["id"]
+    res = admin_client.post(f"/api/projects/{pid}/stages/riser_installation/pause", json={"reason": "material_shortage"})
+    assert res.status_code == 422
+
+
+def test_pausing_needs_a_known_reason(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Bad Reason"}).get_json()["project"]["id"]
+    assert admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={}).status_code == 422
+    assert admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "not_a_reason"}).status_code == 422
+
+
+def test_pausing_for_other_needs_a_note(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Other Reason"}).get_json()["project"]["id"]
+    blocked = admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "other"})
+    assert blocked.status_code == 422
+    ok = admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "other", "note": "Site access blocked"})
+    assert ok.status_code == 200
+    stages = {s["key"]: s for s in ok.get_json()["stages"]}
+    assert stages["commencement"]["pause_note"] == "Site access blocked"
+
+
+def test_pause_and_resume_round_trip(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Pause Lifecycle"}).get_json()["project"]["id"]
+    paused = admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "payment_not_received"})
+    stages = {s["key"]: s for s in paused.get_json()["stages"]}
+    assert stages["commencement"]["paused"] is True
+    assert stages["commencement"]["pause_reason"] == "payment_not_received"
+    assert stages["commencement"]["paused_at"] is not None
+
+    resumed = admin_client.post(f"/api/projects/{pid}/stages/commencement/resume")
+    assert resumed.status_code == 200
+    stages2 = {s["key"]: s for s in resumed.get_json()["stages"]}
+    assert stages2["commencement"]["paused"] is False
+    assert stages2["commencement"]["pause_reason"] is None
+    assert stages2["commencement"]["paused_at"] is None
+
+    assert admin_client.post(f"/api/projects/{pid}/stages/commencement/resume").status_code == 422
+
+
+def test_a_paused_stage_cannot_be_marked_done(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Paused Done"}).get_json()["project"]["id"]
+    admin_client.post(f"/api/projects/{pid}/stages/commencement/pause", json={"reason": "manpower_shortage"})
+    blocked = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})
+    assert blocked.status_code == 422
+    admin_client.post(f"/api/projects/{pid}/stages/commencement/resume")
+    assert admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True}).status_code == 200
+
+
+def test_photo_upload_is_blocked_on_a_non_current_stage(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Future Photo"}).get_json()["project"]["id"]
+    res = admin_client.post(f"/api/projects/{pid}/stages/riser_installation/photos",
+                             data={"photos": (io.BytesIO(b"fake"), "p.jpg", "image/jpeg")},
+                             content_type="multipart/form-data")
+    assert res.status_code == 422
 
 
 def test_only_the_admin_can_upload_or_remove_a_stage_photo(client, admin_client, accounts_client, manager_client):

@@ -1146,11 +1146,110 @@
   // app/client_portal.py/app/static/js/client_portal.js, not reached through this tab bar at all.
   //
   // The fixed installation checklist (app/constants.py's PROJECT_STAGES, merged per-project server-side
-  // by Project.stage_rows) - admin sets a planned day count and marks each stage done by hand, usually
-  // alongside the work photos (kohal, 2026-10-22: "admin will set the days and mark done"). Every write
-  // comes back with the full project detail payload, same "re-render from what the server sent back"
-  // pattern as the rest of this page.
-  function stageRow(P, stage, onChanged) {
+  // by Project.stage_rows) - one stage worked on at a time, same wizard shape as a lead's own stage steps
+  // (app.js's finishedStepRow/currentStepCard/upcomingStepRow/leadProgress, reusing the same CSS classes
+  // here) - "only when mark done of current stage then only goto next stage" (kohal, 2026-10-22). Admin
+  // sets the planned day count, pauses with a reason when work stalls, adds photos, and marks it done -
+  // all only on the one stage currently in progress (data.current_stage_key); a finished stage collapses
+  // to a tap-to-expand summary, an upcoming one is a locked placeholder. Every write comes back with the
+  // full project detail payload, same "re-render from what the server sent back" pattern as the rest of
+  // this page.
+
+  function openPauseSheet(P, stage, reasons, onPaused) {
+    const overlay = h('div', { class: 'overlay' });
+    const finish = closeOnBack(() => { overlay.remove(); drawer.remove(); });
+    const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
+    closeX.onclick = () => finish();
+    overlay.onclick = () => finish();
+
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    let chosen = '';
+    const noteInput = h('textarea', { rows: 2, placeholder: 'What happened?' });
+    const noteField = h('div', { class: 'field', hidden: true }, h('label', {}, 'Details'), noteInput);
+    const options = h('div', { class: 'quick-dates' });
+    reasons.forEach(([key, label]) => {
+      const btn = h('button', { type: 'button', class: 'btn small' }, label);
+      btn.onclick = () => {
+        chosen = key;
+        [...options.children].forEach((b) => b.classList.remove('primary'));
+        btn.classList.add('primary');
+        noteField.hidden = key !== 'other';
+      };
+      options.append(btn);
+    });
+    const pauseBtn = h('button', { class: 'btn danger primary', type: 'button' }, 'Pause stage');
+    pauseBtn.onclick = async () => {
+      errorBox.hidden = true;
+      if (!chosen) { errorBox.textContent = 'Choose a reason'; errorBox.hidden = false; return; }
+      pauseBtn.disabled = true;
+      try {
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}/pause`,
+          { method: 'POST', body: { reason: chosen, note: noteInput.value } });
+        finish();
+        onPaused(updated);
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.hidden = false;
+        pauseBtn.disabled = false;
+      }
+    };
+
+    const drawer = h('div', { class: 'drawer' },
+      h('div', { class: 'drawer-head' },
+        h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
+        h('div', { class: 'drawer-head-row' },
+          h('div', { class: 'drawer-titles' }, h('h2', {}, 'Pause stage'), h('p', { class: 'drawer-sub' }, stage.label)),
+          closeX)),
+      h('div', { class: 'drawer-scroll' },
+        errorBox,
+        h('div', { class: 'field' }, h('label', {}, 'Reason'), options),
+        noteField),
+      h('div', { class: 'drawer-foot' }, pauseBtn));
+    document.body.append(overlay, drawer);
+  }
+
+  // The tap-to-expand sheet for an already-finished stage - read-only (days, when it was done, its
+  // photos), same idea as a lead's own finishedStepRow.
+  function openFinishedStageSheet(stage) {
+    const overlay = h('div', { class: 'overlay' });
+    const finish = closeOnBack(() => { overlay.remove(); drawer.remove(); });
+    const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
+    closeX.onclick = () => finish();
+    overlay.onclick = () => finish();
+    const photoGrid = stage.photos.length
+      ? h('div', { class: 'photo-grid' }, stage.photos.map((p) => h('div', { class: 'photo-thumb' },
+          h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Progress photo' })))))
+      : h('p', { class: 'hint' }, 'No photos were added.');
+    const drawer = h('div', { class: 'drawer' },
+      h('div', { class: 'drawer-head' },
+        h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
+        h('div', { class: 'drawer-head-row' },
+          h('div', { class: 'drawer-titles' }, h('h2', {}, stage.label),
+            h('p', { class: 'drawer-sub' }, `Done ${longDate(parseDay(stage.completed_at))}`)),
+          closeX)),
+      h('div', { class: 'drawer-scroll' },
+        stage.days != null ? h('p', { class: 'hint' }, `Planned: ${stage.days} day${stage.days === 1 ? '' : 's'}`) : null,
+        stage.remarks ? h('p', { class: 'hint' }, stage.remarks) : null,
+        photoGrid));
+    document.body.append(overlay, drawer);
+  }
+
+  function finishedStageRow(stage) {
+    return h('button', { type: 'button', class: 'step-row', onclick: () => openFinishedStageSheet(stage) },
+      h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓'),
+      h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, stage.label)),
+      h('span', { class: 'step-amount' }, shortDate(parseDay(stage.completed_at))));
+  }
+
+  function upcomingStageRow(stage, idx) {
+    return h('div', { class: 'upcoming-row' },
+      h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(idx + 1)),
+      h('span', { class: 'step-main' },
+        h('span', { class: 'step-title' }, stage.label),
+        stage.note ? h('span', { class: 'step-sub' }, stage.note) : null));
+  }
+
+  function currentStageCard(P, stage, idx, reasons, onChanged) {
     const daysInput = h('input', {
       type: 'number', inputmode: 'numeric', min: 0, max: 365, class: 'stage-days-input',
       value: stage.days ?? '', placeholder: 'Days', 'aria-label': `Planned days for ${stage.label}`,
@@ -1164,14 +1263,24 @@
       } catch (err) { toast(err.message, true); daysInput.value = stage.days ?? ''; }
     };
 
-    const doneBtn = h('button', { class: `btn small ${stage.done ? '' : 'primary'}`, type: 'button' },
-      stage.done ? 'Done ✓' : 'Mark done');
+    const doneBtn = h('button', { class: 'btn small primary', type: 'button', disabled: stage.paused }, 'Mark done');
     doneBtn.onclick = async () => {
       doneBtn.disabled = true;
       try {
-        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { done: !stage.done } });
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { done: true } });
         onChanged(updated);
-      } catch (err) { toast(err.message, true); doneBtn.disabled = false; }
+      } catch (err) { toast(err.message, true); doneBtn.disabled = stage.paused; }
+    };
+
+    const pauseBtn = h('button', { class: 'btn small', type: 'button' }, 'Pause');
+    pauseBtn.onclick = () => openPauseSheet(P, stage, reasons, onChanged);
+    const resumeBtn = h('button', { class: 'btn small', type: 'button' }, 'Resume');
+    resumeBtn.onclick = async () => {
+      resumeBtn.disabled = true;
+      try {
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}/resume`, { method: 'POST' });
+        onChanged(updated);
+      } catch (err) { toast(err.message, true); resumeBtn.disabled = false; }
     };
 
     const photoGrid = h('div', { class: 'photo-grid' });
@@ -1201,18 +1310,33 @@
     };
     const addPhotoBtn = h('label', { class: 'link-btn' }, 'Add photos', fileInput);
 
-    return h('li', { class: 'stage-row' },
-      h('div', { class: 'stage-row-head' },
-        h('span', { class: `doc-check ${stage.done ? 'is-done' : ''}`, 'aria-hidden': 'true' }, stage.done ? '✓' : ''),
-        h('div', { class: 'stage-row-main' },
-          h('span', { class: 'doc-label' }, stage.label),
-          stage.note ? h('span', { class: 'hint stage-row-note' }, stage.note) : null,
-          stage.done && stage.completed_at ? h('span', { class: 'hint stage-row-note' }, `Done ${longDate(parseDay(stage.completed_at))}`) : null),
-        doneBtn),
+    // A free note on this stage (kohal, 2026-10-22: "add note at each step") - saved on blur, same
+    // "edit in place, save straight away" pattern as the days input just above.
+    const remarksInput = h('textarea', { rows: 2, class: 'stage-remarks-input', placeholder: 'Add a note…', 'aria-label': `Note for ${stage.label}` });
+    remarksInput.value = stage.remarks || '';
+    remarksInput.onchange = async () => {
+      const value = remarksInput.value.trim();
+      if (value === (stage.remarks || '')) return;
+      try {
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { remarks: value } });
+        onChanged(updated);
+      } catch (err) { toast(err.message, true); remarksInput.value = stage.remarks || ''; }
+    };
+
+    const pauseLabel = stage.pause_reason ? (reasons.find(([k]) => k === stage.pause_reason) || [, stage.pause_reason])[1] : '';
+    return h('div', { class: 'current-card', id: `stage-current-${idx}` },
+      h('div', { class: 'current-card-head' },
+        h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(idx + 1)),
+        h('h3', {}, stage.label)),
+      stage.note ? h('p', { class: 'hint' }, stage.note) : null,
+      stage.paused ? h('p', { class: 'stage-paused-note' },
+        `Paused · ${pauseLabel}`, stage.pause_note ? ` — ${stage.pause_note}` : '') : null,
       h('div', { class: 'stage-row-controls' },
         h('label', { class: 'stage-days-field' }, 'Planned days', daysInput),
         addPhotoBtn),
-      photoGrid);
+      h('div', { class: 'field stage-remarks-field' }, h('label', {}, 'Note'), remarksInput),
+      photoGrid,
+      h('div', { class: 'current-card-actions' }, stage.paused ? resumeBtn : pauseBtn, doneBtn));
   }
 
   function renderProgress(data) {
@@ -1220,10 +1344,24 @@
     const c = data.client;
     if (!data.dashboard.can_see_progress) { window.location.hash = `#p${P.id}`; return; }
     const onChanged = (updated) => renderProgress(updated);
+    const stages = data.stages;
+    const currentIdx = stages.findIndex((s) => s.key === data.current_stage_key);
+
+    const bar = h('div', { class: 'lead-progress' },
+      stages.map((s, i) => h('i', { class: s.done ? 'done' : (i === currentIdx ? 'current' : null) })));
+    const stepText = currentIdx === -1 ? 'All stages complete' : `Step ${currentIdx + 1} of ${stages.length} · ${stages[currentIdx].label}`;
+
+    const body = stages.map((stage, idx) => {
+      if (stage.done) return finishedStageRow(stage);
+      if (idx === currentIdx) return currentStageCard(P, stage, idx, data.pause_reasons, onChanged);
+      return upcomingStageRow(stage, idx);
+    });
+
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'progress', data.dashboard.can_see_progress),
-      h('ul', { class: 'stage-list' }, data.stages.map((stage) => stageRow(P, stage, onChanged)))));
+      bar, h('p', { class: 'lead-step-text' }, stepText),
+      ...body));
     window.scrollTo(0, 0);
   }
 

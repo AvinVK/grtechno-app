@@ -17,6 +17,7 @@ of the whole page."""
 from flask import Blueprint, abort, g, jsonify, render_template
 
 from .auth import visible_projects
+from .constants import PAUSE_REASONS
 from .models import Project
 
 bp = Blueprint("client_portal", __name__)
@@ -57,5 +58,10 @@ def list_my_projects():
 def my_project_detail(project_id):
     project = _own_project_or_404(project_id)
     # The same fixed checklist the admin's own Progress tab shows (app/projects.py), read-only here - see
-    # Project.stage_rows (kohal, 2026-10-22: "stages of project... work pics at each phase").
-    return jsonify(project=_project_summary(project), stages=project.stage_rows)
+    # Project.stage_rows (kohal, 2026-10-22: "stages of project... work pics at each phase"). pause_reasons
+    # is just the key -> label lookup for whatever reason is already on a paused stage - a client never
+    # picks one themselves.
+    return jsonify(
+        project=_project_summary(project), stages=project.stage_rows,
+        current_stage_key=project.current_stage_key, pause_reasons=PAUSE_REASONS,
+    )

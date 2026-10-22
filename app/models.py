@@ -416,6 +416,18 @@ class Project(db.Model):
         return f"PRJ-{self.id:04d}"
 
     @property
+    def current_stage_key(self):
+        """The first of the fixed stages (constants.PROJECT_STAGES) not yet marked done - the only one
+        that can be worked on right now (kohal, 2026-10-22: "only when mark done of current stage then
+        only goto next stage" - the same one-stage-at-a-time model as a lead's own Lead.stage/STAGE_ORDER).
+        None once every stage is done."""
+        done_keys = {s.stage_key for s in self.stages if s.done}
+        for key, _label, _note in PROJECT_STAGES:
+            if key not in done_keys:
+                return key
+        return None
+
+    @property
     def stage_rows(self) -> list:
         """The fixed installation checklist (constants.PROJECT_STAGES), merged with whatever's actually
         been set for this project - a ProjectStage row only exists once the admin has touched it (set a
@@ -431,6 +443,11 @@ class Project(db.Model):
                 "days": s.days if s else None,
                 "done": s.done if s else False,
                 "completed_at": _iso(s.completed_at) if s else None,
+                "paused": s.paused if s else False,
+                "pause_reason": s.pause_reason if s else None,
+                "pause_note": s.pause_note if s else "",
+                "paused_at": _iso(s.paused_at) if s else None,
+                "remarks": s.remarks if s else "",
                 "photos": [p.to_dict() for p in s.photos] if s else [],
             })
         return rows
@@ -608,6 +625,16 @@ class ProjectStage(db.Model):
     days = db.Column(db.Integer, nullable=True)
     done = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     completed_at = db.Column(db.DateTime, nullable=True)
+    # Why work on this stage has stalled (kohal, 2026-10-22: "add pause button after each stage. if paused
+    # then whats the reason?") - current state only, not a log of every past pause; see constants.PAUSE_REASONS.
+    paused = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    pause_reason = db.Column(db.String(30), nullable=True)
+    pause_note = db.Column(db.Text, nullable=False, default="", server_default="")
+    paused_at = db.Column(db.DateTime, nullable=True)
+    # A free note from the admin on this stage (kohal, 2026-10-22: "add note at each step") - distinct from
+    # pause_note above (that one only ever exists alongside a pause) and from PROJECT_STAGES' own fixed
+    # per-stage hint text (constants.py's "note" item, the same for every project).
+    remarks = db.Column(db.Text, nullable=False, default="", server_default="")
 
     project = db.relationship("Project", back_populates="stages")
     photos = db.relationship(

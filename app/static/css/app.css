@@ -706,17 +706,20 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .doc-label { flex: 1; min-width: 0; font-weight: 600; }
 .doc-row .link-btn { font-size: 13px; }
 
-/* The Progress tab's fixed installation checklist (kohal, 2026-10-22) - one card per stage, re-using
-   .doc-check for the done marker and .photo-grid/.photo-thumb for the work photos. */
-.stage-list { display: grid; gap: 12px; list-style: none; margin: 12px 0 0; padding: 0; }
-.stage-row { padding: 14px; border: 1px solid var(--line); border-radius: var(--r-card); background: #fff; }
-.stage-row-head { display: flex; align-items: flex-start; gap: 10px; }
-.stage-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.stage-row-note { margin: 0; }
+/* The Progress tab's fixed installation checklist (kohal, 2026-10-22) - one stage worked on at a time,
+   re-using the lead stage stepper's own .step-row/.current-card/.upcoming-row/.lead-progress (see
+   app/static/js/projects.js's currentStageCard/finishedStageRow/upcomingStageRow) plus .photo-grid/
+   .photo-thumb for the work photos. */
 .stage-row-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .stage-days-field { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .stage-days-input { width: 64px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r-control); font: inherit; }
-.stage-row .photo-grid { margin-top: 12px; margin-bottom: 0; }
+.current-card .photo-grid { margin-top: 12px; margin-bottom: 0; }
+.stage-remarks-field { margin-top: 12px; }
+.current-card-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+/* "Paused - <reason>" (kohal, 2026-10-22: "add pause button after each stage. if paused then whats the
+   reason?") - same amber tone as the on-hold project status, so a stalled stage reads as a caution at a
+   glance, not a plain fact. */
+.stage-paused-note { margin: 10px 0 0; padding: 8px 10px; border-radius: var(--r-control); background: var(--amber-tint); color: var(--amber); font-size: 13px; font-weight: 600; }
 /* The one-field amount box (Negotiated amount): a bottom sheet, so the soft keyboard pushes it up rather
    than cutting its buttons off the bottom of a centred dialog. */
 .amount-sheet {
