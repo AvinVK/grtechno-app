@@ -40,8 +40,14 @@ def _landing_url(user) -> str:
     and other landing pages as attendnace tab") - the admin's own Me hub, everyone else's Attendance. The
     Leads tab itself still goes through views.index as always (it's still "/", same URL the bottom nav's
     own Leads tab links to) - this only decides where login/set-pin send someone, not what "/" renders for
-    a leads-having role navigating there on their own afterwards."""
-    return url_for("me.page") if user.is_admin else url_for("attendance.page")
+    a leads-having role navigating there on their own afterwards.
+
+    A client (kohal, 2026-10-22) has no Attendance to check into at all - their own portal instead."""
+    if user.is_admin:
+        return url_for("me.page")
+    if user.role_key == "client":
+        return url_for("client_portal.my_projects")
+    return url_for("attendance.page")
 
 
 def _safe_next(value):
@@ -151,8 +157,11 @@ def sync_worker_for_user(user: User) -> None:
     Before creating a new row, checks for an already-existing Worker with the same name that has no User
     of its own yet (typically someone already tracked from the WhatsApp attendance import, now also given
     a login) and links to that one instead - otherwise the same real person ends up listed twice. Only
-    when the name matches exactly one such Worker; an ambiguous or absent match still gets a new row."""
-    if user.is_admin or not user.password_hash:
+    when the name matches exactly one such Worker; an ambiguous or absent match still gets a new row.
+
+    A client login never gets one at all (kohal, 2026-10-22) - a customer isn't an employee, and Worker
+    is Employee management's own table; one here would just be a fake "staff" row for every client."""
+    if user.is_admin or user.role_key == "client" or not user.password_hash:
         return
     worker = Worker.query.filter_by(user_code=user.code).first()
     if worker is None:
@@ -229,6 +238,11 @@ def visible_projects(user=None):
     if user.role_key == "sub_admin":
         states = user.state_names
         return query.filter(Project.site_state.in_(states)) if states else query.filter(sa_false())
+    if user.role_key == "client":
+        # Exactly the one customer this login was set up as (kohal, 2026-10-22: "client should only be
+        # able to see the projects they belong to") - never by ownership/management like the fallback
+        # below, a client never owns or manages anything here.
+        return query.filter(Project.client_id == user.client_id) if user.client_id else query.filter(sa_false())
     if user.role_key in SITE_SUPERVISOR_ROLE_KEYS:
         checked_in = (db.session.query(Attendance.project_id)
                       .filter(Attendance.user_code == user.code, Attendance.project_id.isnot(None)))
@@ -444,6 +458,10 @@ def load_user():
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     next_url = _safe_next(request.values.get("next"))
+    # Purely cosmetic - "Client sign in" copy and a toggle link, same userid+PIN underneath either way
+    # (kohal, 2026-10-22: "a new option while logging in asking if you are client") - a client is still
+    # just a User row like any other, nothing about the credential check itself differs.
+    client_mode = request.values.get("as") == "client"
     if g.user:
         return redirect(next_url or _landing_url(g.user))
     error = None
@@ -469,13 +487,15 @@ def login():
             else:
                 _register_failure(user)
                 error = "Wrong userid or PIN."
-    return render_template("login.html", error=error, userid=request.form.get("userid", ""), next=next_url)
+    return render_template("login.html", error=error, userid=request.form.get("userid", ""), next=next_url,
+                            client_mode=client_mode)
 
 
 @bp.route("/set-pin", methods=["GET", "POST"])
 def set_pin():
     if g.user:
         return redirect(_landing_url(g.user))
+    client_mode = request.values.get("as") == "client"
     error = None
     userid = request.form.get("userid", "") if request.method == "POST" else request.args.get("userid", "")
     if request.method == "POST":
@@ -499,8 +519,8 @@ def set_pin():
                 sync_worker_for_user(user)       # first time active (or reactivated after a reset) - see there
                 db.session.commit()
                 flash("PIN saved. Sign in with your userid and new PIN.", "ok")
-                return redirect(url_for("auth.login"))
-    return render_template("set_pin.html", error=error, userid=userid, pin_length=PIN_LENGTH)
+                return redirect(url_for("auth.login", **({"as": "client"} if client_mode else {})))
+    return render_template("set_pin.html", error=error, userid=userid, pin_length=PIN_LENGTH, client_mode=client_mode)
 
 
 @bp.post("/logout")

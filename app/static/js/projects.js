@@ -28,11 +28,13 @@
     LD.setAppbarBack?.(canOpenClients ? c.name : 'Projects', canOpenClients ? `/clients#c${c.id}` : '#');
   }
 
-  // The four sections of one project - a horizontally-scrolling chip row, same pattern as the stage
-  // filters elsewhere, so it never depends on a fixed item count fitting a phone's width.
-  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['expense', 'Expense'], ['details', 'More details'], ['attendance', 'Attendance']];
-  const projectTabs = (id, active) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
-    PROJECT_TABS.map(([slug, label]) => h('a', {
+  // The sections of one project - a horizontally-scrolling chip row, same pattern as the stage filters
+  // elsewhere, so it never depends on a fixed item count fitting a phone's width. Progress is admin-only
+  // here (kohal, 2026-10-22: "visible only to admin and client role") - a client's own read-only view of
+  // it is a completely separate page (app/client_portal.py), not reached through this tab bar at all.
+  const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['expense', 'Expense'], ['details', 'More details'], ['attendance', 'Attendance'], ['progress', 'Progress']];
+  const projectTabs = (id, active, showProgress) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
+    PROJECT_TABS.filter(([slug]) => slug !== 'progress' || showProgress).map(([slug, label]) => h('a', {
       class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
       'aria-current': active === slug ? 'page' : null,
     }, label)));
@@ -520,7 +522,7 @@
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
       h('p', { class: 'hint' }, P.title),
-      projectTabs(P.id, ''),
+      projectTabs(P.id, '', data.dashboard.can_see_progress),
       h('div', { class: 'client-stats' },
         timeTile(P, D),
         h('div', { class: 'stat' },
@@ -553,6 +555,7 @@
     else if (section === 'expense') renderExpense(data);
     else if (section === 'details') renderDetails(data);
     else if (section === 'attendance') renderAttendance(data);
+    else if (section === 'progress') renderProgress(data);
     else renderDashboard(data);
   }
 
@@ -887,7 +890,7 @@
 
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
-      projectTabs(P.id, 'payments'),
+      projectTabs(P.id, 'payments', data.dashboard.can_see_progress),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Payment timeline'),
         payOverview,
@@ -921,7 +924,7 @@
 
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
-      projectTabs(P.id, 'expense'),
+      projectTabs(P.id, 'expense', data.dashboard.can_see_progress),
       expOverview,
       h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
@@ -1111,7 +1114,7 @@
     const site = [P.site_address, P.site_city, P.site_district, P.site_state].filter(Boolean).join(', ');
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
-      projectTabs(P.id, 'details'),
+      projectTabs(P.id, 'details', data.dashboard.can_see_progress),
       h('section', { class: 'p-client' },
         h('div', {},
           h('span', { class: 'p-label' }, 'Client'),
@@ -1129,12 +1132,27 @@
     const c = data.client;
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
-      projectTabs(P.id, 'attendance'),
+      projectTabs(P.id, 'attendance', D.can_see_progress),
       h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
           h('h3', {}, 'Attendance on this site'),
           D.team.length ? h('span', { class: 'p-code' }, plural(D.team.length, 'person', 'people')) : null),
         teamList(D))));
+    window.scrollTo(0, 0);
+  }
+
+  // Admin-only here (kohal, 2026-10-22: "a new subtab in projects called progress... visible only to
+  // admin and client role") - a client's own read-only mirror of this is entirely separate, see
+  // app/client_portal.py/app/static/js/client_portal.js, not reached through this tab bar at all. No
+  // content yet (kohal: "i will tell u this later, fow now let it be blank") - just the tab shell.
+  function renderProgress(data) {
+    const P = data.project;
+    const c = data.client;
+    if (!data.dashboard.can_see_progress) { window.location.hash = `#p${P.id}`; return; }
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, 'progress', data.dashboard.can_see_progress),
+      h('p', { class: 'empty-state' }, 'Nothing here yet.')));
     window.scrollTo(0, 0);
   }
 
@@ -1151,7 +1169,7 @@
     const materials = data.materials || [];
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
-      projectTabs(P.id, 'materials'),
+      projectTabs(P.id, 'materials', data.dashboard.can_see_progress),
       h('section', { class: 'p-section', id: 'material-requests-box' }, h('p', { class: 'loading' }, 'Loading requests…')),
       h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
@@ -1331,7 +1349,7 @@
   }
 
   function route() {
-    const m = /^#p(\d+)(\/(payments|materials|expense|details|attendance))?$/.exec(window.location.hash);
+    const m = /^#p(\d+)(\/(payments|materials|expense|details|attendance|progress))?$/.exec(window.location.hash);
     if (m) return showDetail(Number(m[1]), m[3] || '');
     const add = /^#new(?:\/c(\d+))?$/.exec(window.location.hash);
     if (add) return showNew(add[1] ? Number(add[1]) : null);

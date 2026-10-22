@@ -57,6 +57,36 @@ def test_login_lands_the_admin_on_me_and_everyone_else_on_attendance(app, anon, 
     assert ok2.status_code == 302 and ok2.headers["Location"].endswith("/attendance")
 
 
+# ---------- a client role lands on its own portal, not Attendance (kohal, 2026-10-22) ----------
+
+def test_login_lands_a_client_on_their_own_portal(app, anon):
+    from app.models import Client
+    with app.app_context():
+        c = Client(name="Kalyani Cold Storage")
+        db.session.add(c)
+        db.session.commit()
+        who = make_user("Kalyani Contact", pin="482917", role="client")
+        who.client_id = c.id
+        db.session.commit()
+        userid = who.userid
+    ok = login(anon, userid, "482917")
+    assert ok.status_code == 302 and ok.headers["Location"].endswith("/my-projects")
+
+
+def test_login_and_set_pin_show_client_mode_copy_when_asked(anon):
+    """kohal, 2026-10-22: "a new option while logging in asking if you are client" - cosmetic only, the
+    same userid+PIN (or userid+code+PIN) underneath either way."""
+    login_html = anon.get("/login?as=client").get_data(as_text=True)
+    assert "Client sign in" in login_html and 'name="as" value="client"' in login_html
+    assert "Staff sign in instead" in login_html
+
+    staff_html = anon.get("/login").get_data(as_text=True)
+    assert "Are you a client?" in staff_html
+
+    set_pin_html = anon.get("/set-pin?as=client").get_data(as_text=True)
+    assert "Set your client PIN" in set_pin_html
+
+
 # ---------- returning to where you were (kohal, 2026-10-21) ----------
 #
 # "after login and when the application is switched, the app should open to the page which was open" -

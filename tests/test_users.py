@@ -41,6 +41,39 @@ def test_admin_adds_a_user_and_sees_the_setup_code_once(admin_client, app):
     assert admin_client.post("/api/users", json={"name": "  ??  "}).status_code == 422
 
 
+# ---------- "client" is a special case - only given out from the Clients page (kohal, 2026-10-22) ----------
+
+def test_client_role_is_not_offered_on_the_add_user_picker(admin_client):
+    roles = {r["key"] for r in admin_client.get("/api/users").get_json()["roles"]}
+    assert "client" not in roles
+
+
+def test_cannot_create_a_client_via_add_user(admin_client):
+    res = admin_client.post("/api/users", json={"name": "Sneaky Client", "role": "client"})
+    assert res.status_code == 422
+
+
+def test_cannot_set_an_existing_users_role_to_client(admin_client, user):
+    res = admin_client.post(f"/api/users/{user.code}/role", json={"role": "client"})
+    assert res.status_code == 422
+
+
+def test_moving_a_client_off_the_client_role_clears_their_client_id(app, admin_client):
+    from app.models import Client
+    with app.app_context():
+        c = Client(name="Kalyani Cold Storage")
+        db.session.add(c)
+        db.session.commit()
+        cid = c.id
+    given = admin_client.post(f"/api/clients/{cid}/login").get_json()
+    code = given["user"]["code"]
+    res = admin_client.post(f"/api/users/{code}/role", json={"role": "sales_field"})
+    assert res.status_code == 200
+    with app.app_context():
+        moved = db.session.get(User, code)
+        assert moved.role_key == "sales_field" and moved.client_id is None
+
+
 # ---------- every non-admin user also shows up as an employee (Worker) ----------
 
 def test_a_new_user_is_not_an_employee_until_they_sign_in_for_the_first_time(admin_client, anon, app):

@@ -375,6 +375,10 @@ def _detail(project):
             "team": _team(project),
             "can_close": g.user.is_admin,
             "can_delete": g.user.is_admin,          # TEMPORARY - for the backfill, see delete_project
+            # The Progress tab is admin-only on this side (kohal, 2026-10-22: "visible only to admin and
+            # client role") - a client's own read-only view of it lives entirely separately, in
+            # app/client_portal.py, not through this page at all (a client never reaches /api/projects).
+            "can_see_progress": g.user.is_admin,
         },
     }
     if can_assign:

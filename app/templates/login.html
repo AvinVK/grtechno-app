@@ -8,12 +8,13 @@
 {{ login_hero() }}
 <main class="login">
   <form class="login-card" method="post" action="{{ url_for('auth.login') }}">
-    <h1>Sign in</h1>
+    <h1>{{ 'Client sign in' if client_mode else 'Sign in' }}</h1>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}<p class="notice {{ category }}" role="status">{{ message }}</p>{% endfor %}
     {% endwith %}
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
     {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    {% if client_mode %}<input type="hidden" name="as" value="client">{% endif %}
     <div class="field">
       <label for="userid">Userid</label>
       <input id="userid" name="userid" value="{{ userid }}" autocomplete="username" autocapitalize="none"
@@ -24,7 +25,11 @@
       {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
     {% endcall %}
     <button class="btn primary" type="submit">Sign in</button>
-    <p class="hint">First time, or forgot your PIN? <a href="{{ url_for('auth.set_pin') }}">Set a new PIN</a> with the setup code from your admin.</p>
+    <p class="hint">First time, or forgot your PIN? <a href="{{ url_for('auth.set_pin', as='client' if client_mode else none) }}">Set a new PIN</a> with the setup code from your admin.</p>
+    <p class="hint">
+      {% if client_mode %}<a href="{{ url_for('auth.login') }}">Staff sign in instead</a>
+      {% else %}Are you a client? <a href="{{ url_for('auth.login', as='client') }}">Sign in here</a>{% endif %}
+    </p>
   </form>
 </main>
 <script src="{{ asset('js/pin.js') }}"></script>

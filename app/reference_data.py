@@ -27,6 +27,12 @@ ROLES = [
     ("alarm_tech_cum_site_supervisor", "Alarm Tech cum site supervisor", False),
     ("company_director", "Company Director", True),
     ("office_assistant_consultant", "Office Assistant cum client consultant", True),
+    # A customer's own login (kohal, 2026-10-22: "a new role called client... client should only be able to
+    # see the projects they belong to") - deliberately no ROLE_MODULES entry below, since this role never
+    # opens any of the normal Services tiles at all; its entire experience is the dedicated client portal
+    # (app/client_portal.py), gated on role_key alone, not the Module system. sees_all is False - a client
+    # sees only the one customer record (User.client_id) the admin set them up as, nothing else.
+    ("client", "Client", False),
 ]
 
 # Which services each role can open. The admin can open everything, so it has no rows.

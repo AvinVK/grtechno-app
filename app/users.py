@@ -75,7 +75,9 @@ def _lead_counts() -> dict:
 def list_users():
     counts = _lead_counts()
     users = User.query.order_by(User.is_admin.desc(), User.created_at, User.code).all()
-    roles = Role.query.filter(Role.key != "admin").order_by(Role.name).all()
+    # Not "client" either (kohal, 2026-10-22) - that login always needs a Client record to belong to
+    # (User.client_id), which only the Clients page's own "Give login access" (app/clients.py) sets.
+    roles = Role.query.filter(Role.key.notin_(["admin", "client"])).order_by(Role.name).all()
     return jsonify(
         users=[_dict(u, counts.get(u.code, 0)) for u in users],
         roles=[{"key": r.key, "name": r.name} for r in roles],
@@ -93,6 +95,8 @@ def add_user():
     role = payload.get("role") or "sales_field"
     if role == "admin":
         abort(422, "There is only one admin.")
+    if role == "client":
+        abort(422, "Give a client access from their own page instead, under Clients.")
     states = _clean_states(payload.get("states")) if role == "sub_admin" else None
     try:
         user, setup_code = create_user(name, role=role)
@@ -123,10 +127,16 @@ def set_role(code):
     role = payload.get("role")
     if role == "admin" or not isinstance(role, str) or db.session.get(Role, role) is None:
         abort(422, "Choose a role from the list.")
+    if role == "client":
+        abort(422, "Give a client access from their own page instead, under Clients.")
     # Moving someone into Sub-admin is also asking which state(s) they cover - required right here, not
     # left for later, so nobody ends up a sub-admin who (for now) sees nothing.
     if role == "sub_admin":
         _set_states(user, _clean_states(payload.get("states")))
+    # Moving *off* client (set up from Clients, not here, but still changeable from this same picker once
+    # they're on it) leaves nothing pointing at a customer record that no longer describes what they are.
+    if user.role_key == "client":
+        user.client_id = None
     user.role_key = role
     sync_worker_for_user(user)
     db.session.commit()

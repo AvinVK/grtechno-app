@@ -161,11 +161,35 @@
     try {
       const data = await api(`/api/clients/${id}`);
       if (editing) renderForm(data.client, data.site_categories);
-      else renderSummary(data.client, data.projects, data.currency, data.brought_by, data.is_admin);
+      else renderSummary(data.client, data.projects, data.currency, data.brought_by, data.is_admin, data.login);
     } catch (err) {
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to clients')));
     }
     window.scrollTo(0, 0);
+  }
+
+  // Same one-time-reveal card as Users & roles' own showCode (app/static/js/users.js) - a client's setup
+  // code is exactly that same secret, just handed out from here instead since the admin picks *which*
+  // client it's for by being on that client's own page (kohal, 2026-10-22: "the admin would also have to
+  // choose which client it is").
+  function showLoginCode(resultBox, data, client) {
+    const u = data.user;
+    const message = `Leads\n\nUserid:\n${u.userid}\n\nSetup code:\n${data.setup_code}\n(works once, valid ${data.code_days} days)\n\nSet your PIN at: ${window.location.origin}/set-pin?as=client`;
+    clear(resultBox).append(h('section', { class: 'code-card' },
+      h('h3', {}, `Login for ${client.name}`),
+      h('dl', {},
+        h('dt', {}, 'Userid'), h('dd', { class: 'code-value' }, u.userid),
+        h('dt', {}, 'Setup code'), h('dd', { class: 'code-value' }, data.setup_code)),
+      h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days - share both with the client, they'll set their own PIN at /set-pin.`),
+      h('div', { class: 'code-actions' },
+        h('a', { class: 'btn primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Share on WhatsApp'),
+        h('button', { class: 'btn', type: 'button', onclick: async () => {
+          try { await navigator.clipboard.writeText(data.setup_code); toast('Copied'); }
+          catch (err) { toast('Could not copy. Select the code and copy it.', true); }
+        } }, 'Copy code')),
+      h('button', { class: 'link-btn code-done', type: 'button', onclick: () => { resultBox.hidden = true; clear(resultBox); } }, 'Done')));
+    resultBox.hidden = false;
+    resultBox.scrollIntoView({ block: 'nearest' });
   }
 
   // TEMPORARY (admin only): removes a duplicate client. The server refuses while the client has projects.
@@ -181,8 +205,22 @@
     }
   }
 
-  function renderSummary(client, projects, currency, broughtBy, isAdmin) {
+  function renderSummary(client, projects, currency, broughtBy, isAdmin, login) {
     LD.setAppbarBack?.('Clients', '#');
+    const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
+    const loginBtn = h('button', { class: 'btn small', type: 'button' }, login ? 'New setup code' : 'Give login access');
+    loginBtn.onclick = async () => {
+      loginBtn.disabled = true;
+      try {
+        const data = await api(`/api/clients/${client.id}/login`, { method: 'POST' });
+        toast(login ? 'New setup code issued' : 'Login created');
+        showLoginCode(resultBox, data, client);
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        loginBtn.disabled = false;
+      }
+    };
     const since = new Date(client.created_at);
     const sinceText = `Since ${since.getDate()} ${MONTHS[since.getMonth()]} ${since.getFullYear()}`;
 
@@ -218,6 +256,10 @@
           h('p', { class: 'hint client-brought' }, 'Brought by ',
             broughtBy ? [h('strong', {}, broughtBy.name), ` · ${broughtBy.how.toLowerCase()}`] : 'not recorded')),
         h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details')),
+      isAdmin ? h('div', { class: 'client-login-row' },
+        login ? h('p', { class: 'hint' }, `Client login: ${login.userid} (${login.status})`) : null,
+        loginBtn) : null,
+      resultBox,
       isAdmin ? h('p', { class: 'hint' }, h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteClient(client) }, 'Delete client (temporary)')) : null,
       h('div', { class: 'client-stats' },
         h('div', { class: 'stat' },

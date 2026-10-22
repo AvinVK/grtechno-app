@@ -8,9 +8,10 @@
 {{ login_hero() }}
 <main class="login">
   <form class="login-card" method="post" action="{{ url_for('auth.set_pin') }}">
-    <h1>Set your PIN</h1>
-    <p class="hint">Enter the setup code and userid your admin gave you, then choose a {{ pin_length }}-digit PIN.</p>
+    <h1>{{ 'Set your client PIN' if client_mode else 'Set your PIN' }}</h1>
+    <p class="hint">Enter the setup code and userid your {{ 'contractor' if client_mode else 'admin' }} gave you, then choose a {{ pin_length }}-digit PIN.</p>
     <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    {% if client_mode %}<input type="hidden" name="as" value="client">{% endif %}
     {% call code_field('code', 'Setup code', attrs='required' ~ (' autofocus' if userid else '')) %}
       <p class="hint">The first 4 are from your name; the last 4 are in your admin's message.</p>
     {% endcall %}
@@ -27,7 +28,7 @@
       {% if error %}<p class="err" id="setup-error" role="alert">{{ error }}</p>{% endif %}
     {% endcall %}
     <button class="btn primary" type="submit">Save PIN</button>
-    <p class="hint"><a href="{{ url_for('auth.login') }}">Back to sign in</a></p>
+    <p class="hint"><a href="{{ url_for('auth.login', as='client' if client_mode else none) }}">Back to sign in</a></p>
   </form>
 </main>
 <script src="{{ asset('js/pin.js') }}"></script>

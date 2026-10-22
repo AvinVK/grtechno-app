@@ -50,9 +50,21 @@ class User(db.Model):
     locked_until = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     role_key = db.Column(db.String(30), db.ForeignKey("roles.key"), nullable=True)
+    # Which customer this login belongs to - only meaningful for role_key "client" (kohal, 2026-10-22: "a
+    # new role called client but along with that the admin would also have to choose which client it is").
+    # Set once, when the admin gives a client login access (see app/clients.py's give_login) - nothing else
+    # in the app ever changes it, so a client's own visible_projects (app/auth.py) stays pinned to exactly
+    # the customer they were set up as, even if their name is later edited.
+    # use_alter: clients.owner_code already points back at users.code, so this FK would otherwise make a
+    # circular dependency between the two tables - SQLite can't order a DROP TABLE (or a from-scratch
+    # create_all, like the test suite's own setup) around that without it.
+    client_id = db.Column(db.Integer, db.ForeignKey(
+        "clients.id", ondelete="SET NULL", use_alter=True, name="fk_users_client_id_clients",
+    ), nullable=True, index=True)
 
     role = db.relationship("Role")
     states = db.relationship("UserState", cascade="all, delete-orphan", order_by="UserState.state")
+    client = db.relationship("Client", foreign_keys=[client_id], overlaps="logins")
 
     @property
     def sees_all(self) -> bool:
@@ -319,8 +331,13 @@ class Client(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
 
-    owner = db.relationship("User")
+    owner = db.relationship("User", foreign_keys=[owner_code])
     projects = db.relationship("Project", back_populates="client", order_by="Project.id.desc()")
+    # Every login given to this client (kohal, 2026-10-22) - almost always zero or one, but nothing stops
+    # a second if one's ever reissued under a new code rather than reusing the old one. overlaps: both
+    # this and User.client read/write the same users.client_id column from opposite ends - expected here,
+    # not a sign either one should be viewonly.
+    logins = db.relationship("User", foreign_keys="User.client_id", overlaps="client")
 
     @property
     def total_estimated_value(self):

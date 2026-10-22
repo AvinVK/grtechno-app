@@ -492,6 +492,16 @@ def test_brought_by_falls_back_to_whoever_entered_the_lead(client, admin_client,
     assert admin_client.get(f"/api/clients/{cid}").get_json()["brought_by"]["name"] == user.name
 
 
+def test_the_progress_tab_flag_is_admin_only(client, admin_client, accounts_client):
+    """kohal, 2026-10-22: "a new subtab in projects called progress... visible only to admin and client
+    role" - on this side (the admin-facing project detail page), that just means the flag the frontend
+    uses to show/hide the tab chip (app/static/js/projects.js), nothing else sees it true. A client's own
+    matching view is entirely separate - see tests/test_client_portal.py."""
+    pid = make_project(client, admin_client)
+    assert admin_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["can_see_progress"] is True
+    assert accounts_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["can_see_progress"] is False
+
+
 def test_only_the_admin_can_close_a_project(client, admin_client, accounts_client, manager_client, manager):
     pid = make_project(client, admin_client)
     admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "manager_code": manager.code})

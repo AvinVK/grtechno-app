@@ -6,7 +6,7 @@ from flask import Blueprint, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
 from . import categories
-from .auth import visible_clients, visible_projects
+from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code, visible_clients, visible_projects
 from .extensions import db
 from .models import Client, Lead, Project, settings_for_client
 from .projects import brought_by
@@ -88,11 +88,41 @@ def get_client(client_id):
     settings = settings_for_client()
     # Who brought the client in: whoever brought their first project from a lead, else whoever added them.
     first_from_lead = min((p for p in client.projects if p.lead is not None), key=lambda p: p.id, default=None)
+    login = client.logins[0] if client.logins else None
     return jsonify(
         client=client.to_dict(), projects=_project_rows(client), is_admin=g.user.is_admin,
         site_categories=settings["site_categories"], currency=settings["currency"],
         brought_by=brought_by(first_from_lead.lead if first_from_lead else None, client.owner),
+        # Whether this client already has their own sign-in (kohal, 2026-10-22: "clients should be able to
+        # login") - give_login below either creates one or, once this is set, re-issues a fresh setup code
+        # on the same login rather than creating a second.
+        login={"userid": login.userid, "status": login.status} if login else None,
     )
+
+
+@bp.post("/api/clients/<int:client_id>/login")
+def give_login(client_id):
+    """Set this client up with their own sign-in, or re-issue a fresh setup code if they already have one
+    (same "New setup code" idea as Users & roles' own reset) - admin only. The one place a User gets linked
+    to a Client (User.client_id) - see auth.visible_projects' own "client" branch for what that then
+    scopes them to see."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can give a client login access.")
+    client = _client_or_404(client_id)
+    existing = client.logins[0] if client.logins else None
+    if existing is not None:
+        setup_code = issue_setup_code(existing)
+        user = existing
+    else:
+        try:
+            user, setup_code = create_user(client.contact_name or client.name, role="client")
+        except ValueError as err:
+            return jsonify(error=str(err)), 422
+        user.client_id = client.id
+        db.session.add(user)
+    db.session.commit()
+    return jsonify(user={"code": user.code, "userid": user.userid, "name": user.name},
+                    setup_code=setup_code, code_days=SETUP_CODE_DAYS), 201
 
 
 @bp.patch("/api/clients/<int:client_id>")
