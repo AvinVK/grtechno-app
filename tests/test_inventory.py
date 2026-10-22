@@ -601,8 +601,11 @@ def test_approving_a_request_needs_who_took_it_and_how(app, admin_client, accoun
 def test_approving_a_request_records_who_transported_it(app, admin_client, accounts_client):
     mat_id, pid, movement_id = pending_request(admin_client, app)
     wid = add_worker(accounts_client, "Ramesh Storekeeper")
+    # transported_at now also sets the movement's own entry_date (see approve_material_request) - today,
+    # not some earlier arbitrary date, so it doesn't predate pending_request()'s own stock-in (also today).
     res = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
-        "quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle", "transported_at": "2026-10-17T10:30:00",
+        "quantity": 5, "given_by_worker_id": wid, "transport_mode": "Own vehicle",
+        "transported_at": f"{date.today().isoformat()}T10:30:00",
     })
     assert res.status_code == 200
     mv = res.get_json()["movement"]
@@ -641,6 +644,34 @@ def test_cannot_approve_more_than_requested_or_more_than_stock(app, admin_client
     mat_id2, pid2, movement_id2 = pending_request(admin_client, app, qty=7, stock=5, material_name="Sand")
     over_stock = accounts_client.post(f"/api/inventory/material-requests/{movement_id2}/approve", json={"quantity": 7})
     assert over_stock.status_code == 422 and "quantity" in over_stock.get_json()["fields"]
+
+
+def test_approving_sees_stock_that_arrived_after_the_request_was_made(app, admin_client, accounts_client):
+    """kohal, 2026-10-22, reported against a real case: "10 piece of welding rod is requested, and
+    inventory has 6 rods... now when i do the stockin of 10 rods in inventory, and after that try to
+    approves the request, it still shows not enough in stock" - all same-day, which is the scenario that
+    actually breaks: the request's own row is older (a lower id) than the stock-in that arrived to cover
+    it, and the old replay order (entry_date, id) let that id alone put the request first regardless of
+    which one was *actually* approved first. See _recompute_material's own docstring for the full story."""
+    material = add_material(admin_client, "Welding Rod")
+    mid = material["id"]
+    admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 6, "rate": 10})
+    pid = add_project(admin_client)
+    pm = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    req = pm.post(f"/api/projects/{pid}/material-requests", json={"material_id": mid, "quantity": 10})
+    assert req.status_code == 201, req.get_json()
+    movement_id = req.get_json()["request"]["id"]
+
+    # More stock arrives *after* the request already existed - same day, a higher id than the request's.
+    restock = admin_client.post(f"/api/inventory/materials/{mid}/stock-in", json={"quantity": 10, "rate": 10})
+    assert restock.status_code == 201 and restock.get_json()["material"]["stock_qty"] == 16
+
+    wid = add_worker(accounts_client)
+    approve = accounts_client.post(f"/api/inventory/material-requests/{movement_id}/approve", json={
+        "quantity": 10, "given_by_worker_id": wid, "transport_mode": "Own vehicle",
+    })
+    assert approve.status_code == 200, approve.get_json()
+    assert approve.get_json()["material"]["stock_qty"] == 6
 
 
 def test_rejecting_a_material_request(app, admin_client, accounts_client):

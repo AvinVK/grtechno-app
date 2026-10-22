@@ -235,9 +235,17 @@ def _recompute_material(material):
     for this material in date order - a pending or rejected one (see MaterialMovement.status) never
     happened as far as stock is concerned, so it's skipped here, not just hidden in the UI. Needed after
     editing, deleting or approving any one entry - avg_rate is a running weighted average, so touching one
-    entry can change every average calculated after it, not just that row."""
+    entry can change every average calculated after it, not just that row.
+
+    approved_at (then id) breaks a same-day tie, not id alone (kohal, 2026-10-22: "10 rods requested, 6 in
+    stock... stock in 10 more... approve still shows not enough in stock") - a request can sit pending for
+    a while with today's date already on it (id assigned back when it was first made), so once entry_date
+    alone can't tell it apart from a stock-in recorded later that same day, id would otherwise replay the
+    request first just because it's the older row, even though the stock-in it's waiting on was actually
+    approved earlier today. approved_at is always set the moment a movement actually becomes approved (see
+    _status_fields/approve_movement) - the one thing that actually reflects real approval order."""
     movements = (MaterialMovement.query.filter_by(material_id=material.id, status="approved")
-                 .order_by(MaterialMovement.entry_date, MaterialMovement.id).all())
+                 .order_by(MaterialMovement.entry_date, MaterialMovement.approved_at, MaterialMovement.id).all())
     stock_qty = Decimal("0")
     avg_rate = Decimal("0")
     for mv in movements:
@@ -693,6 +701,17 @@ def approve_material_request(movement_id):
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
     movement.quantity = qty
+    # _recompute_material replays every approved movement for this material in (entry_date, id) order to
+    # work out whether stock ever went negative - but entry_date on a pending request is still whatever
+    # date it was first *asked for* (request_material, app/projects.py, sets it to that day), never moved
+    # to reflect when it's actually approved and handed over. Left alone, an old request approved today
+    # replays *before* a stock-in recorded with a later entry_date in the meantime, even though the stock
+    # from that stock-in is sitting right there - producing a false "not enough in stock" the moment it's
+    # approved (kohal, 2026-10-22: "10 rods requested, 6 in stock... stock in 10 more... approve still
+    # shows not enough in stock"). transported_at (already validated above, assigned to the row below) is
+    # exactly "when this actually left the store" - entry_date needs to track it for the replay to reason
+    # about this correctly.
+    movement.entry_date = f.data["transported_at"].date()
     if is_return:
         # _recompute_material only re-stamps rate/amount for an issue ('out') during its replay - an 'in'
         # row's amount is never touched there, so approving a smaller quantity than claimed has to be
