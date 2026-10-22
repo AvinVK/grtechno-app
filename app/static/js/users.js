@@ -132,8 +132,11 @@
     }
 
     function roleControl(u) {
+      // u.role can be "client" even though "client" isn't one of the pickable `roles` (that one only
+      // ever comes from the Clients page) - without a placeholder the button shows blank instead of
+      // the role it's actually on (kohal, 2026-10-22: "i dont see a 'client' role in user and roles").
       const select = selectField(roles.map((r) => ({ value: r.key, label: r.name })), u.role,
-        { title: `Role for ${u.name}` });
+        { title: `Role for ${u.name}`, placeholder: u.role_name });
       select.classList.add('role-select');
       select.setAttribute('aria-label', `Role for ${u.name}`);
       select.addEventListener('change', async () => {
