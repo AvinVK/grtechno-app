@@ -26,6 +26,23 @@ PROJECT_DOCUMENT_TYPES = [
 # every project company-wide the way the plain project_manager role does (see auth.visible_projects).
 CHANDRAPUR_DISTRICT = "Chandrapur"
 
+# The fixed installation checklist every project's Progress tab shows, in this order - same 9 stages for
+# every project, not configurable per project (kohal, 2026-10-22). The admin sets a planned day count per
+# stage and marks it done by hand (usually alongside the work photos); the day count is just a target shown
+# to the client, nothing auto-advances from it. (key, label, note) - note is an optional one-line hint,
+# shown under the label when present.
+PROJECT_STAGES = [
+    ("commencement", "Commencement", "Provision, estimate, building diagram"),
+    ("riser_installation", "Riser installation", ""),
+    ("sprinkler_installation", "Sprinkler pipeline installation", ""),
+    ("alarm_cabling", "Alarm cabling", ""),
+    ("fire_equipment_installation", "Fire equipment installation", ""),
+    ("pump_installation", "Pump installation", ""),
+    ("testing_commissioning", "Testing and commissioning", ""),
+    ("portable_device_installation", "Portable device installation", "Fire extinguishers, fire buckets, etc."),
+    ("handover", "Handover", ""),
+]
+
 # Fallbacks for the two single-value rows in the settings table. The dropdown lists live in the
 # services and lead_sources tables and are maintained directly in the database.
 DEFAULT_SETTINGS = {

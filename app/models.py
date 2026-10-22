@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from .constants import DEFAULT_SETTINGS, PROJECT_DOCUMENT_TYPES
+from .constants import DEFAULT_SETTINGS, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
 from .crypto import EncryptedText
 from .extensions import db
 
@@ -409,10 +409,31 @@ class Project(db.Model):
         order_by="ProjectExpense.entry_date.desc(), ProjectExpense.id.desc()",
     )
     documents = db.relationship("ProjectDocument", back_populates="project", cascade="all, delete-orphan")
+    stages = db.relationship("ProjectStage", back_populates="project", cascade="all, delete-orphan")
 
     @property
     def code(self) -> str:
         return f"PRJ-{self.id:04d}"
+
+    @property
+    def stage_rows(self) -> list:
+        """The fixed installation checklist (constants.PROJECT_STAGES), merged with whatever's actually
+        been set for this project - a ProjectStage row only exists once the admin has touched it (set a
+        day count and/or marked it done), same lazy pattern as missing_documents/ProjectDocument above.
+        Used by both the admin's Progress tab (app/projects.py) and the client portal's read-only mirror
+        of it (app/client_portal.py), kohal 2026-10-22."""
+        by_key = {s.stage_key: s for s in self.stages}
+        rows = []
+        for key, label, note in PROJECT_STAGES:
+            s = by_key.get(key)
+            rows.append({
+                "key": key, "label": label, "note": note,
+                "days": s.days if s else None,
+                "done": s.done if s else False,
+                "completed_at": _iso(s.completed_at) if s else None,
+                "photos": [p.to_dict() for p in s.photos] if s else [],
+            })
+        return rows
 
     @property
     def net_amount(self):
@@ -569,6 +590,47 @@ class ProjectDocument(db.Model):
             "uploaded_by_name": self.uploaded_by.name if self.uploaded_by else None,
             "created_at": _iso(self.created_at),
         }
+
+
+class ProjectStage(db.Model):
+    """One of a project's fixed installation stages (see constants.PROJECT_STAGES) - a row only exists
+    once the admin has set something on it (a day count and/or marked it done), same lazy pattern as
+    ProjectDocument above; Project.stage_rows fills in the rest of the fixed list as untouched. kohal,
+    2026-10-22: "admin will set the days and mark done" - days is a planned target shown to the client, not
+    something that auto-advances done on its own."""
+
+    __tablename__ = "project_stages"
+    __table_args__ = (db.UniqueConstraint("project_id", "stage_key", name="uq_project_stages_project_stage"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_key = db.Column(db.String(40), nullable=False)
+    days = db.Column(db.Integer, nullable=True)
+    done = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    project = db.relationship("Project", back_populates="stages")
+    photos = db.relationship(
+        "ProjectStagePhoto", back_populates="stage", cascade="all, delete-orphan",
+        order_by="ProjectStagePhoto.created_at",
+    )
+
+
+class ProjectStagePhoto(db.Model):
+    """One work photo for a project stage - see app/uploads.py. filename is the random name it's stored
+    under, never the original."""
+
+    __tablename__ = "project_stage_photos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    stage_id = db.Column(db.Integer, db.ForeignKey("project_stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename = db.Column(db.String(80), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    stage = db.relationship("ProjectStage", back_populates="photos")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "url": f"/uploads/project_stages/{self.filename}"}
 
 
 class FoodingAccount(db.Model):

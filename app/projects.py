@@ -11,13 +11,13 @@ from werkzeug.exceptions import abort
 
 from . import inventory as inv
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
-from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES, PROJECT_DOCUMENT_TYPES
+from .constants import COMMISSION_ROLE_KEY, PAYMENT_MODES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
 from .extensions import db
-from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
+from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local, today_local
-from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
+from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors, parse_money
 
 bp = Blueprint("projects", __name__)
@@ -25,6 +25,7 @@ api_errors(bp)
 
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
 PROJECT_DOCUMENT_LABELS = dict(PROJECT_DOCUMENT_TYPES)
+PROJECT_STAGE_KEYS = {key for key, _label, _note in PROJECT_STAGES}
 
 
 def _join_and(items: list) -> str:
@@ -363,6 +364,7 @@ def _detail(project):
         "total_expense": total_expense,
         "wage_expenses": wage_expenses,
         "total_wage_expense": total_wage_expense,
+        "stages": project.stage_rows,
         # For the commission form's worker picker - only someone in that role earns it (kohal, 2026-10-18).
         "commission_workers": [{"id": w.id, "name": w.name}
                                 for w in Worker.query.filter_by(role_key=COMMISSION_ROLE_KEY).order_by(Worker.name)],
@@ -561,6 +563,93 @@ def delete_document(project_id, doc_type):
         delete_upload("project_documents", existing.filename)
         db.session.delete(existing)
         db.session.commit()
+    return jsonify(_detail(project))
+
+
+# ---------- Progress tab: the fixed installation stage checklist (kohal, 2026-10-22) ----------
+
+def _stage_or_404(project, stage_key):
+    if stage_key not in PROJECT_STAGE_KEYS:
+        abort(404)
+    stage = next((s for s in project.stages if s.stage_key == stage_key), None)
+    return stage
+
+
+def _stage_or_create(project, stage_key):
+    stage = _stage_or_404(project, stage_key)
+    if stage is None:
+        stage = ProjectStage(project_id=project.id, stage_key=stage_key)
+        db.session.add(stage)
+        project.stages.append(stage)
+    return stage
+
+
+@bp.patch("/api/projects/<int:project_id>/stages/<stage_key>")
+def update_stage(project_id, stage_key):
+    """Admin sets the planned day count and/or marks a stage done by hand (kohal, 2026-10-22: "admin will
+    set the days and mark done") - not auto-advanced from the day count, which is just a target shown to
+    the client. A row is created the first time either is touched (see _stage_or_create)."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can update a project's progress.")
+    project = _project_or_404(project_id)
+    if stage_key not in PROJECT_STAGE_KEYS:
+        abort(404)
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+
+    f = Fields(payload)
+    f.integer("days", 0, 365)
+    if "done" in payload and not isinstance(payload["done"], bool):
+        f.errors["done"] = "Say whether this stage is done or not"
+    if f.errors:
+        return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+
+    stage = _stage_or_create(project, stage_key)
+    if "days" in f.data:
+        stage.days = f.data["days"]
+    if "done" in payload:
+        done = payload["done"]
+        if done != stage.done:
+            stage.done = done
+            stage.completed_at = utcnow() if done else None
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.post("/api/projects/<int:project_id>/stages/<stage_key>/photos")
+def upload_stage_photos(project_id, stage_key):
+    if not g.user.is_admin:
+        abort(403, "Only the admin can add a project's progress photos.")
+    project = _project_or_404(project_id)
+    if stage_key not in PROJECT_STAGE_KEYS:
+        abort(404)
+    files = request.files.getlist("photos")
+    if not files:
+        abort(422, "Choose at least one photo")
+    stage = _stage_or_create(project, stage_key)
+    for f in files:
+        try:
+            filename = save_upload(f, "project_stages", allowed=IMAGE_TYPES)
+        except UploadError as err:
+            abort(422, err.message)
+        stage.photos.append(ProjectStagePhoto(filename=filename))
+    db.session.commit()
+    return jsonify(_detail(project)), 201
+
+
+@bp.delete("/api/projects/<int:project_id>/stages/<stage_key>/photos/<int:photo_id>")
+def delete_stage_photo(project_id, stage_key, photo_id):
+    if not g.user.is_admin:
+        abort(403, "Only the admin can remove a project's progress photos.")
+    project = _project_or_404(project_id)
+    stage = _stage_or_404(project, stage_key)
+    photo = next((p for p in (stage.photos if stage else []) if p.id == photo_id), None)
+    if photo is None:
+        abort(404)
+    delete_upload("project_stages", photo.filename)
+    stage.photos.remove(photo)
+    db.session.commit()
     return jsonify(_detail(project))
 
 

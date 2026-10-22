@@ -705,6 +705,18 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .doc-check.is-done { border-color: var(--ok); background: var(--ok); color: #fff; }
 .doc-label { flex: 1; min-width: 0; font-weight: 600; }
 .doc-row .link-btn { font-size: 13px; }
+
+/* The Progress tab's fixed installation checklist (kohal, 2026-10-22) - one card per stage, re-using
+   .doc-check for the done marker and .photo-grid/.photo-thumb for the work photos. */
+.stage-list { display: grid; gap: 12px; list-style: none; margin: 12px 0 0; padding: 0; }
+.stage-row { padding: 14px; border: 1px solid var(--line); border-radius: var(--r-card); background: #fff; }
+.stage-row-head { display: flex; align-items: flex-start; gap: 10px; }
+.stage-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.stage-row-note { margin: 0; }
+.stage-row-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.stage-days-field { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.stage-days-input { width: 64px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r-control); font: inherit; }
+.stage-row .photo-grid { margin-top: 12px; margin-bottom: 0; }
 /* The one-field amount box (Negotiated amount): a bottom sheet, so the soft keyboard pushes it up rather
    than cutting its buttons off the bottom of a centred dialog. */
 .amount-sheet {

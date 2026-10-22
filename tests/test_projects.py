@@ -502,6 +502,100 @@ def test_the_progress_tab_flag_is_admin_only(client, admin_client, accounts_clie
     assert accounts_client.get(f"/api/projects/{pid}").get_json()["dashboard"]["can_see_progress"] is False
 
 
+# ---------- Progress tab: the fixed installation stage checklist ----------
+# (kohal, 2026-10-22: "stages of project, work pics at each phase... admin will set the days and mark done")
+
+STAGE_KEYS = [
+    "commencement", "riser_installation", "sprinkler_installation", "alarm_cabling",
+    "fire_equipment_installation", "pump_installation", "testing_commissioning",
+    "portable_device_installation", "handover",
+]
+
+
+def test_every_project_starts_with_the_same_nine_untouched_stages(client, admin_client):
+    pid = make_project(client, admin_client)
+    stages = admin_client.get(f"/api/projects/{pid}").get_json()["stages"]
+    assert [s["key"] for s in stages] == STAGE_KEYS
+    assert all(s["days"] is None and s["done"] is False and s["completed_at"] is None and s["photos"] == [] for s in stages)
+    assert stages[0]["note"] == "Provision, estimate, building diagram"
+
+
+def test_only_the_admin_can_update_a_stage(client, admin_client, accounts_client, manager_client):
+    pid = make_project(client, admin_client)
+    for who in (accounts_client, manager_client):
+        res = who.patch(f"/api/projects/{pid}/stages/commencement", json={"days": 5})
+        assert res.status_code == 403
+
+
+def test_unknown_stage_key_is_rejected(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Bad Stage Key"}).get_json()["project"]["id"]
+    assert admin_client.patch(f"/api/projects/{pid}/stages/not_a_real_stage", json={"days": 5}).status_code == 404
+    res = admin_client.post(f"/api/projects/{pid}/stages/not_a_real_stage/photos",
+                             data={"photos": (io.BytesIO(b"fake"), "p.jpg", "image/jpeg")},
+                             content_type="multipart/form-data")
+    assert res.status_code == 404
+
+
+def test_setting_a_stages_planned_days(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Days"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": 4})
+    assert res.status_code == 200
+    stages = {s["key"]: s for s in res.get_json()["stages"]}
+    assert stages["riser_installation"]["days"] == 4
+
+    cleared = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": None})
+    stages2 = {s["key"]: s for s in cleared.get_json()["stages"]}
+    assert stages2["riser_installation"]["days"] is None
+
+    assert admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"days": 400}).status_code == 422
+
+
+def test_marking_a_stage_done_sets_and_clears_completed_at(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Done"}).get_json()["project"]["id"]
+    done = admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": True})
+    stages = {s["key"]: s for s in done.get_json()["stages"]}
+    assert stages["handover"]["done"] is True and stages["handover"]["completed_at"] is not None
+
+    undone = admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": False})
+    stages2 = {s["key"]: s for s in undone.get_json()["stages"]}
+    assert stages2["handover"]["done"] is False and stages2["handover"]["completed_at"] is None
+
+
+def test_only_the_admin_can_upload_or_remove_a_stage_photo(client, admin_client, accounts_client, manager_client):
+    pid = make_project(client, admin_client)
+    for who in (accounts_client, manager_client):
+        res = who.post(f"/api/projects/{pid}/stages/commencement/photos",
+                        data={"photos": (io.BytesIO(b"fake"), "p.jpg", "image/jpeg")},
+                        content_type="multipart/form-data")
+        assert res.status_code == 403
+    admin_client.post(f"/api/projects/{pid}/stages/commencement/photos",
+                       data={"photos": (io.BytesIO(b"fake"), "p.jpg", "image/jpeg")},
+                       content_type="multipart/form-data")
+    assert accounts_client.delete(f"/api/projects/{pid}/stages/commencement/photos/1").status_code == 403
+
+
+def test_stage_photo_upload_and_removal(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Photos"}).get_json()["project"]["id"]
+    uploaded = admin_client.post(f"/api/projects/{pid}/stages/commencement/photos",
+                                  data={"photos": (io.BytesIO(b"fake"), "p.jpg", "image/jpeg")},
+                                  content_type="multipart/form-data")
+    assert uploaded.status_code == 201
+    stages = {s["key"]: s for s in uploaded.get_json()["stages"]}
+    photos = stages["commencement"]["photos"]
+    assert len(photos) == 1 and photos[0]["url"]
+    photo_id = photos[0]["id"]
+
+    removed = admin_client.delete(f"/api/projects/{pid}/stages/commencement/photos/{photo_id}")
+    assert removed.status_code == 200
+    stages2 = {s["key"]: s for s in removed.get_json()["stages"]}
+    assert stages2["commencement"]["photos"] == []
+
+
+def test_uploading_a_stage_photo_requires_at_least_one_file(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "No Photo"}).get_json()["project"]["id"]
+    assert admin_client.post(f"/api/projects/{pid}/stages/commencement/photos", data={}).status_code == 422
+
+
 def test_only_the_admin_can_close_a_project(client, admin_client, accounts_client, manager_client, manager):
     pid = make_project(client, admin_client)
     admin_client.patch(f"/api/projects/{pid}", json={"title": "Sprinklers", "manager_code": manager.code})

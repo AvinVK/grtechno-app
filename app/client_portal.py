@@ -8,11 +8,11 @@ at all. Deliberately not the Module system (app/modules.py) - a client role has 
 never will, since nothing here is a Services tile; this blueprint is gated on role_key == "client" alone,
 its own separate surface from app/projects.py's admin-facing one.
 
-Progress itself has no content yet (kohal: "i will tell u this later, fow now let it be blank") - this
-just builds the shell (the client's own project list, the project header, an empty Progress panel) so the
-real content can slot in later without reworking the surrounding page. The admin's own matching "Progress"
-subtab lives in app/projects.py/app/static/js/projects.js instead, inside the normal project detail page -
-this blueprint is the client-only mirror of just that one tab, not a copy of the whole page."""
+Progress itself (kohal, 2026-10-22: "stages of project, work pics at each phase") is the fixed installation
+checklist from constants.PROJECT_STAGES/Project.stage_rows, read-only here - the admin's own matching
+"Progress" subtab lives in app/projects.py/app/static/js/projects.js instead, inside the normal project
+detail page, where it's editable; this blueprint is the client-only mirror of just that one tab, not a copy
+of the whole page."""
 
 from flask import Blueprint, abort, g, jsonify, render_template
 
@@ -56,4 +56,6 @@ def list_my_projects():
 @bp.get("/api/my-projects/<int:project_id>")
 def my_project_detail(project_id):
     project = _own_project_or_404(project_id)
-    return jsonify(project=_project_summary(project))
+    # The same fixed checklist the admin's own Progress tab shows (app/projects.py), read-only here - see
+    # Project.stage_rows (kohal, 2026-10-22: "stages of project... work pics at each phase").
+    return jsonify(project=_project_summary(project), stages=project.stage_rows)

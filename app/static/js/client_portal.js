@@ -1,13 +1,18 @@
 /* The client portal (kohal, 2026-10-22: "client should only be able to see the projects they belong to...
    there should be a new subtab in projects called progress... client should be able to see only this
    subtab of his projects") - a customer's own cut-down view: a list of their own projects, each opening
-   straight to its Progress tab alone, nothing else. See app/client_portal.py. Progress itself is still
-   empty (kohal: "i will tell u this later, fow now let it be blank") - this is just the shell. */
+   straight to its Progress tab alone, nothing else. See app/client_portal.py. Progress is the fixed
+   installation checklist (kohal: "stages of project, work pics at each phase") - the same data as the
+   admin's own Progress tab (app/static/js/projects.js's stageRow), but read-only: no days input, no
+   mark-done button, no photo upload/remove. */
 (() => {
   'use strict';
 
   const { $, h, clear, api } = window.LD;
   const view = $('#view');
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const parseDay = (iso) => { const [y, m, d] = iso.slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d); };
+  const longDate = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 
   // Same status labels/tones as the admin's own project list (app/static/js/projects.js's STATUS) - a
   // client sees the identical word for the identical state, not a different vocabulary of its own.
@@ -44,6 +49,23 @@
         : h('p', { class: 'empty-state' }, 'No projects yet - once one starts, it shows up here.'));
   }
 
+  function stageRow(stage) {
+    const photoGrid = stage.photos.length
+      ? h('div', { class: 'photo-grid' }, stage.photos.map((p) => h('div', { class: 'photo-thumb' },
+          h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Progress photo' })))))
+      : null;
+    return h('li', { class: 'stage-row' },
+      h('div', { class: 'stage-row-head' },
+        h('span', { class: `doc-check ${stage.done ? 'is-done' : ''}`, 'aria-hidden': 'true' }, stage.done ? '✓' : ''),
+        h('div', { class: 'stage-row-main' },
+          h('span', { class: 'doc-label' }, stage.label),
+          stage.note ? h('span', { class: 'hint stage-row-note' }, stage.note) : null,
+          stage.done && stage.completed_at
+            ? h('span', { class: 'hint stage-row-note' }, `Done ${longDate(parseDay(stage.completed_at))}`)
+            : (stage.days != null ? h('span', { class: 'hint stage-row-note' }, `Planned: ${stage.days} day${stage.days === 1 ? '' : 's'}`) : null))),
+      photoGrid);
+  }
+
   async function showProject(id) {
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
@@ -56,7 +78,7 @@
       h('p', { class: 'hint' }, [p.title, p.site_name].filter(Boolean).join(' · ')),
       h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
         h('a', { class: 'filter-chip', href: `#p${p.id}`, 'aria-current': 'page' }, 'Progress')),
-      h('p', { class: 'empty-state' }, 'Nothing here yet.')));
+      h('ul', { class: 'stage-list' }, data.stages.map(stageRow))));
   }
 
   function route() {

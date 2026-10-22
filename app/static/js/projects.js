@@ -1143,16 +1143,87 @@
 
   // Admin-only here (kohal, 2026-10-22: "a new subtab in projects called progress... visible only to
   // admin and client role") - a client's own read-only mirror of this is entirely separate, see
-  // app/client_portal.py/app/static/js/client_portal.js, not reached through this tab bar at all. No
-  // content yet (kohal: "i will tell u this later, fow now let it be blank") - just the tab shell.
+  // app/client_portal.py/app/static/js/client_portal.js, not reached through this tab bar at all.
+  //
+  // The fixed installation checklist (app/constants.py's PROJECT_STAGES, merged per-project server-side
+  // by Project.stage_rows) - admin sets a planned day count and marks each stage done by hand, usually
+  // alongside the work photos (kohal, 2026-10-22: "admin will set the days and mark done"). Every write
+  // comes back with the full project detail payload, same "re-render from what the server sent back"
+  // pattern as the rest of this page.
+  function stageRow(P, stage, onChanged) {
+    const daysInput = h('input', {
+      type: 'number', inputmode: 'numeric', min: 0, max: 365, class: 'stage-days-input',
+      value: stage.days ?? '', placeholder: 'Days', 'aria-label': `Planned days for ${stage.label}`,
+    });
+    daysInput.onchange = async () => {
+      const raw = daysInput.value.trim();
+      if (raw !== '' && (!/^\d+$/.test(raw) || Number(raw) > 365)) { daysInput.value = stage.days ?? ''; return; }
+      try {
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { days: raw === '' ? null : Number(raw) } });
+        onChanged(updated);
+      } catch (err) { toast(err.message, true); daysInput.value = stage.days ?? ''; }
+    };
+
+    const doneBtn = h('button', { class: `btn small ${stage.done ? '' : 'primary'}`, type: 'button' },
+      stage.done ? 'Done ✓' : 'Mark done');
+    doneBtn.onclick = async () => {
+      doneBtn.disabled = true;
+      try {
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { done: !stage.done } });
+        onChanged(updated);
+      } catch (err) { toast(err.message, true); doneBtn.disabled = false; }
+    };
+
+    const photoGrid = h('div', { class: 'photo-grid' });
+    stage.photos.forEach((p) => photoGrid.append(h('div', { class: 'photo-thumb' },
+      h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Progress photo' })),
+      h('button', {
+        class: 'icon-x', type: 'button', 'aria-label': 'Remove photo',
+        onclick: async () => {
+          try {
+            const updated = await api(`/api/projects/${P.id}/stages/${stage.key}/photos/${p.id}`, { method: 'DELETE' });
+            onChanged(updated);
+          } catch (err) { toast(err.message, true); }
+        },
+      }, '×'))));
+
+    const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true, hidden: true });
+    fileInput.onchange = async () => {
+      if (!fileInput.files.length) return;
+      const fd = new FormData();
+      for (const f of fileInput.files) fd.append('photos', f);
+      try {
+        const res = await fetch(`/api/projects/${P.id}/stages/${stage.key}/photos`, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Could not upload photo');
+        onChanged(body);
+      } catch (err) { toast(err.message, true); }
+    };
+    const addPhotoBtn = h('label', { class: 'link-btn' }, 'Add photos', fileInput);
+
+    return h('li', { class: 'stage-row' },
+      h('div', { class: 'stage-row-head' },
+        h('span', { class: `doc-check ${stage.done ? 'is-done' : ''}`, 'aria-hidden': 'true' }, stage.done ? '✓' : ''),
+        h('div', { class: 'stage-row-main' },
+          h('span', { class: 'doc-label' }, stage.label),
+          stage.note ? h('span', { class: 'hint stage-row-note' }, stage.note) : null,
+          stage.done && stage.completed_at ? h('span', { class: 'hint stage-row-note' }, `Done ${longDate(parseDay(stage.completed_at))}`) : null),
+        doneBtn),
+      h('div', { class: 'stage-row-controls' },
+        h('label', { class: 'stage-days-field' }, 'Planned days', daysInput),
+        addPhotoBtn),
+      photoGrid);
+  }
+
   function renderProgress(data) {
     const P = data.project;
     const c = data.client;
     if (!data.dashboard.can_see_progress) { window.location.hash = `#p${P.id}`; return; }
+    const onChanged = (updated) => renderProgress(updated);
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'progress', data.dashboard.can_see_progress),
-      h('p', { class: 'empty-state' }, 'Nothing here yet.')));
+      h('ul', { class: 'stage-list' }, data.stages.map((stage) => stageRow(P, stage, onChanged)))));
     window.scrollTo(0, 0);
   }
 

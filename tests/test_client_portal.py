@@ -74,6 +74,25 @@ def test_a_clients_own_project_detail_shape(app):
     assert data["status"] == "planned" and data["code"] == f"PRJ-{pid:04d}"
 
 
+def test_a_clients_own_project_shows_the_same_stage_progress_the_admin_set(app, admin_client):
+    """kohal, 2026-10-22: "stages of project, work pics at each phase" - a client's own project detail now
+    carries the same fixed checklist as the admin's Progress tab (app/projects.py), read-only. Updated via
+    admin_client (the real write path) rather than poking the DB directly, so this also proves the two
+    sides of Project.stage_rows agree."""
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine, title="Fire NOC work")
+        who = client_user(app, mine)
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"days": 5})
+    admin_client.patch(f"/api/projects/{pid}/stages/handover", json={"done": True})
+
+    data = who.get(f"/api/my-projects/{pid}").get_json()
+    stages = {s["key"]: s for s in data["stages"]}
+    assert len(data["stages"]) == 9
+    assert stages["commencement"]["days"] == 5
+    assert stages["handover"]["done"] is True and stages["handover"]["completed_at"] is not None
+
+
 def test_a_client_never_reaches_the_normal_projects_api(app):
     """auth.visible_projects' own "client" branch is only ever exercised through this portal - the
     ordinary Projects module stays check_module-gated, which a client role has no access to at all."""
