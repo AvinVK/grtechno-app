@@ -615,6 +615,72 @@ def test_a_finished_stages_note_stays_visible(admin_client):
     assert stages["commencement"]["remarks"] == "All good"
 
 
+# ---------- an optional "pay before this stage can move on" gate (kohal, 2026-10-22: "give an option of
+# adding 'add sheduled payment' checkbox after every step. and only when that payment is marked as
+# recived it should move to next step, until then it should show please pay for the project to move to
+# next step") ----------
+
+def test_adding_a_scheduled_payment_to_the_current_stage(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Stage Payment"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/commencement",
+                              json={"payment_required": True, "payment_amount": 25000, "payment_due_date": "2026-11-01"})
+    assert res.status_code == 200
+    stages = {s["key"]: s for s in res.get_json()["stages"]}
+    stage = stages["commencement"]
+    assert stage["payment_required"] is True
+    assert stage["payment_amount"] == 25000.0
+    assert stage["payment_due_date"] == "2026-11-01"
+    assert stage["payment_received"] is False
+
+
+def test_a_stage_with_an_unpaid_scheduled_payment_cannot_be_marked_done(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Unpaid Gate"}).get_json()["project"]["id"]
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_required": True, "payment_amount": 5000})
+    blocked = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})
+    assert blocked.status_code == 422
+    assert "pay" in blocked.get_json()["error"].lower()
+    stages = {s["key"]: s for s in admin_client.get(f"/api/projects/{pid}").get_json()["stages"]}
+    assert stages["commencement"]["done"] is False
+
+
+def test_marking_the_payment_received_unblocks_the_stage(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Paid Gate"}).get_json()["project"]["id"]
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_required": True, "payment_amount": 5000})
+    received = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_received": True})
+    stages = {s["key"]: s for s in received.get_json()["stages"]}
+    assert stages["commencement"]["payment_received"] is True
+    assert stages["commencement"]["payment_received_at"] is not None
+
+    done = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})
+    assert done.status_code == 200
+    stages2 = {s["key"]: s for s in done.get_json()["stages"]}
+    assert stages2["commencement"]["done"] is True
+
+
+def test_removing_the_payment_requirement_clears_its_fields(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Unrequire Payment"}).get_json()["project"]["id"]
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_required": True, "payment_amount": 5000})
+    cleared = admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_required": False})
+    stages = {s["key"]: s for s in cleared.get_json()["stages"]}
+    stage = stages["commencement"]
+    assert stage["payment_required"] is False
+    assert stage["payment_amount"] is None and stage["payment_due_date"] is None and stage["payment_received"] is False
+
+    # Freed from the gate, the stage can now be marked done straight away.
+    assert admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True}).status_code == 200
+
+
+def test_a_stage_with_no_payment_required_is_unaffected(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "No Payment"}).get_json()["project"]["id"]
+    assert admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True}).status_code == 200
+
+
+def test_a_future_stages_payment_cannot_be_set_before_its_turn(admin_client):
+    pid = admin_client.post("/api/projects", json={"new_client_name": "Future Payment"}).get_json()["project"]["id"]
+    res = admin_client.patch(f"/api/projects/{pid}/stages/riser_installation", json={"payment_required": True})
+    assert res.status_code == 422
+
+
 def test_only_the_most_recently_completed_stage_can_be_reopened(admin_client):
     pid = admin_client.post("/api/projects", json={"new_client_name": "Reopen Order"}).get_json()["project"]["id"]
     admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"done": True})

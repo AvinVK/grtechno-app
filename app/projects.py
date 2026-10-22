@@ -604,11 +604,21 @@ def _is_last_done_stage(project, stage_key):
     return not any(by_key.get(k) and by_key[k].done for k in after)
 
 
+def _require_current_stage(project, stage_key):
+    if stage_key != project.current_stage_key:
+        abort(422, ONLY_CURRENT_STAGE_MSG)
+
+
 @bp.patch("/api/projects/<int:project_id>/stages/<stage_key>")
 def update_stage(project_id, stage_key):
     """Admin sets the planned day count and/or marks a stage done by hand (kohal, 2026-10-22: "admin will
     set the days and mark done") - not auto-advanced from the day count, which is just a target shown to
-    the client. A row is created the first time either is touched (see _stage_or_create)."""
+    the client. A row is created the first time either is touched (see _stage_or_create).
+
+    Also sets up and clears the optional "pay before this stage can move on" gate (kohal, 2026-10-22: "give
+    an option of adding 'add sheduled payment' checkbox after every step... only when that payment is
+    marked as recived it should move to next step, until then it should show please pay for the project to
+    move to next step")."""
     if not g.user.is_admin:
         abort(403, "Only the admin can update a project's progress.")
     project = _project_or_404(project_id)
@@ -621,27 +631,50 @@ def update_stage(project_id, stage_key):
     f = Fields(payload)
     f.integer("days", 0, 365)
     f.text("remarks", 2000)
+    f.money("payment_amount")
+    f.date("payment_due_date")
     if "done" in payload and not isinstance(payload["done"], bool):
         f.errors["done"] = "Say whether this stage is done or not"
+    if "payment_required" in payload and not isinstance(payload["payment_required"], bool):
+        f.errors["payment_required"] = "Say whether a payment is required"
+    if "payment_received" in payload and not isinstance(payload["payment_received"], bool):
+        f.errors["payment_received"] = "Say whether the payment was received"
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
 
     stage = _stage_or_create(project, stage_key)
     if "days" in f.data and f.data["days"] != stage.days:
-        if stage_key != project.current_stage_key:
-            abort(422, ONLY_CURRENT_STAGE_MSG)
+        _require_current_stage(project, stage_key)
         stage.days = f.data["days"]
     if "remarks" in f.data and f.data["remarks"] != stage.remarks:
-        if stage_key != project.current_stage_key:
-            abort(422, ONLY_CURRENT_STAGE_MSG)
+        _require_current_stage(project, stage_key)
         stage.remarks = f.data["remarks"]
+    if "payment_required" in payload and payload["payment_required"] != stage.payment_required:
+        _require_current_stage(project, stage_key)
+        stage.payment_required = payload["payment_required"]
+        if not stage.payment_required:
+            stage.payment_amount = None
+            stage.payment_due_date = None
+            stage.payment_received_at = None
+    if "payment_amount" in f.data and f.data["payment_amount"] != stage.payment_amount:
+        _require_current_stage(project, stage_key)
+        stage.payment_amount = f.data["payment_amount"]
+    if "payment_due_date" in f.data and f.data["payment_due_date"] != stage.payment_due_date:
+        _require_current_stage(project, stage_key)
+        stage.payment_due_date = f.data["payment_due_date"]
+    if "payment_received" in payload:
+        received = payload["payment_received"]
+        if received != (stage.payment_received_at is not None):
+            _require_current_stage(project, stage_key)
+            stage.payment_received_at = utcnow() if received else None
     if "done" in payload:
         done = payload["done"]
         if done and not stage.done:
-            if stage_key != project.current_stage_key:
-                abort(422, ONLY_CURRENT_STAGE_MSG)
+            _require_current_stage(project, stage_key)
             if stage.paused:
                 abort(422, "Resume this stage before marking it done.")
+            if stage.payment_required and stage.payment_received_at is None:
+                abort(422, "Please pay for the project to move to the next step.")
             stage.done = True
             stage.completed_at = utcnow()
         elif not done and stage.done:

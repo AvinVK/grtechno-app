@@ -9,7 +9,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api } = window.LD;
+  const { $, h, clear, api, money } = window.LD;
   const view = $('#view');
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -56,7 +56,7 @@
     return h('div', { class: 'step-row' },
       h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓'),
       h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, stage.label)),
-      h('span', { class: 'step-amount' }, shortDate(parseDay(stage.completed_at))));
+      h('span', { class: 'step-amount' }, shortDate(new Date(stage.completed_at))));
   }
 
   function upcomingStageRow(stage, idx) {
@@ -67,12 +67,25 @@
         stage.note ? h('span', { class: 'step-sub' }, stage.note) : null));
   }
 
-  function currentStageCard(stage, idx, reasons) {
+  function currentStageCard(stage, idx, reasons, currency) {
     const photoGrid = stage.photos.length
       ? h('div', { class: 'photo-grid' }, stage.photos.map((p) => h('div', { class: 'photo-thumb' },
           h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, h('img', { src: p.url, alt: 'Progress photo' })))))
       : null;
     const pauseLabel = stage.pause_reason ? (reasons.find(([k]) => k === stage.pause_reason) || [, stage.pause_reason])[1] : '';
+    // A scheduled payment the admin has attached to this stage (kohal, 2026-10-22: "give an option of
+    // adding 'add sheduled payment' checkbox after every step... until then it should show please pay for
+    // the project to move to next step") - read-only here, same message the admin sees either way.
+    const paymentDetail = stage.payment_required ? h('div', { class: 'stage-payment-detail' },
+      stage.payment_amount != null || stage.payment_due_date
+        ? h('p', { class: 'hint' }, [
+            stage.payment_amount != null ? money(stage.payment_amount, currency) : null,
+            stage.payment_due_date ? `due ${longDate(parseDay(stage.payment_due_date))}` : null,
+          ].filter(Boolean).join(' · '))
+        : null,
+      stage.payment_received
+        ? h('p', { class: 'stage-payment-received' }, `Payment received ${longDate(new Date(stage.payment_received_at))}`)
+        : h('p', { class: 'stage-paused-note' }, 'Please pay for the project to move to the next step.')) : null;
     return h('div', { class: 'current-card' },
       h('div', { class: 'current-card-head' },
         h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(idx + 1)),
@@ -82,6 +95,7 @@
         `Paused · ${pauseLabel}`, stage.pause_note ? ` — ${stage.pause_note}` : '') : null,
       stage.days != null ? h('p', { class: 'hint' }, `Planned: ${stage.days} day${stage.days === 1 ? '' : 's'}`) : null,
       stage.remarks ? h('p', { class: 'hint' }, stage.remarks) : null,
+      paymentDetail,
       photoGrid);
   }
 
@@ -98,7 +112,7 @@
     const stepText = currentIdx === -1 ? 'All stages complete' : `Step ${currentIdx + 1} of ${stages.length} · ${stages[currentIdx].label}`;
     const body = stages.map((stage, idx) => {
       if (stage.done) return finishedStageRow(stage);
-      if (idx === currentIdx) return currentStageCard(stage, idx, data.pause_reasons);
+      if (idx === currentIdx) return currentStageCard(stage, idx, data.pause_reasons, data.currency);
       return upcomingStageRow(stage, idx);
     });
 

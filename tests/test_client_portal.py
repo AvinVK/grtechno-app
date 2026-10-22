@@ -123,6 +123,28 @@ def test_a_clients_own_project_shows_the_admins_note_on_the_current_stage(app, a
     assert stages["commencement"]["remarks"] == "Waiting on building diagram"
 
 
+def test_a_clients_own_project_shows_the_scheduled_payment_and_whether_its_paid(app, admin_client):
+    """kohal, 2026-10-22: "give an option of adding 'add sheduled payment' checkbox after every step...
+    until then it should show please pay for the project to move to next step" - the client is exactly who
+    that message is for."""
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine, title="Fire NOC work")
+        who = client_user(app, mine)
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_required": True, "payment_amount": 15000})
+
+    unpaid = who.get(f"/api/my-projects/{pid}").get_json()
+    stages = {s["key"]: s for s in unpaid["stages"]}
+    assert stages["commencement"]["payment_required"] is True
+    assert stages["commencement"]["payment_amount"] == 15000.0
+    assert stages["commencement"]["payment_received"] is False
+
+    admin_client.patch(f"/api/projects/{pid}/stages/commencement", json={"payment_received": True})
+    paid = who.get(f"/api/my-projects/{pid}").get_json()
+    stages2 = {s["key"]: s for s in paid["stages"]}
+    assert stages2["commencement"]["payment_received"] is True
+
+
 def test_a_client_never_reaches_the_normal_projects_api(app):
     """auth.visible_projects' own "client" branch is only ever exercised through this portal - the
     ordinary Projects module stays check_module-gated, which a client role has no access to at all."""

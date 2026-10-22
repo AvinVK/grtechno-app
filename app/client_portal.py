@@ -18,7 +18,7 @@ from flask import Blueprint, abort, g, jsonify, render_template
 
 from .auth import visible_projects
 from .constants import PAUSE_REASONS
-from .models import Project
+from .models import Project, settings_for_client
 
 bp = Blueprint("client_portal", __name__)
 
@@ -64,4 +64,5 @@ def my_project_detail(project_id):
     return jsonify(
         project=_project_summary(project), stages=project.stage_rows,
         current_stage_key=project.current_stage_key, pause_reasons=PAUSE_REASONS,
+        currency=settings_for_client()["currency"],
     )

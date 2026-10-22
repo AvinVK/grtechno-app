@@ -1225,7 +1225,7 @@
         h('div', { class: 'sheet-handle', 'aria-hidden': 'true' }),
         h('div', { class: 'drawer-head-row' },
           h('div', { class: 'drawer-titles' }, h('h2', {}, stage.label),
-            h('p', { class: 'drawer-sub' }, `Done ${longDate(parseDay(stage.completed_at))}`)),
+            h('p', { class: 'drawer-sub' }, `Done ${longDate(new Date(stage.completed_at))}`)),
           closeX)),
       h('div', { class: 'drawer-scroll' },
         stage.days != null ? h('p', { class: 'hint' }, `Planned: ${stage.days} day${stage.days === 1 ? '' : 's'}`) : null,
@@ -1238,7 +1238,7 @@
     return h('button', { type: 'button', class: 'step-row', onclick: () => openFinishedStageSheet(stage) },
       h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓'),
       h('span', { class: 'step-main' }, h('span', { class: 'step-title' }, stage.label)),
-      h('span', { class: 'step-amount' }, shortDate(parseDay(stage.completed_at))));
+      h('span', { class: 'step-amount' }, shortDate(new Date(stage.completed_at))));
   }
 
   function upcomingStageRow(stage, idx) {
@@ -1249,7 +1249,7 @@
         stage.note ? h('span', { class: 'step-sub' }, stage.note) : null));
   }
 
-  function currentStageCard(P, stage, idx, reasons, onChanged) {
+  function currentStageCard(P, stage, idx, reasons, currency, onChanged) {
     const daysInput = h('input', {
       type: 'number', inputmode: 'numeric', min: 0, max: 365, class: 'stage-days-input',
       value: stage.days ?? '', placeholder: 'Days', 'aria-label': `Planned days for ${stage.label}`,
@@ -1263,13 +1263,14 @@
       } catch (err) { toast(err.message, true); daysInput.value = stage.days ?? ''; }
     };
 
-    const doneBtn = h('button', { class: 'btn small primary', type: 'button', disabled: stage.paused }, 'Mark done');
+    const doneBlocked = stage.paused || (stage.payment_required && !stage.payment_received);
+    const doneBtn = h('button', { class: 'btn small primary', type: 'button', disabled: doneBlocked }, 'Mark done');
     doneBtn.onclick = async () => {
       doneBtn.disabled = true;
       try {
         const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { done: true } });
         onChanged(updated);
-      } catch (err) { toast(err.message, true); doneBtn.disabled = stage.paused; }
+      } catch (err) { toast(err.message, true); doneBtn.disabled = doneBlocked; }
     };
 
     const pauseBtn = h('button', { class: 'btn small', type: 'button' }, 'Pause');
@@ -1323,6 +1324,62 @@
       } catch (err) { toast(err.message, true); remarksInput.value = stage.remarks || ''; }
     };
 
+    // An optional "pay before this stage can move on" gate (kohal, 2026-10-22: "give an option of adding
+    // 'add sheduled payment' checkbox after every step. and only when that payment is marked as recived
+    // it should move to next step, until then it should show please pay for the project to move to next
+    // step"). Checking the box turns the gate on straight away (amount/due date can follow); unchecking
+    // clears it and whatever's been set, same "edit in place, save straight away" pattern as everything
+    // else on this card.
+    const paymentCheckbox = h('input', { type: 'checkbox', id: `stage-payment-${idx}`, checked: stage.payment_required });
+    paymentCheckbox.onchange = async () => {
+      paymentCheckbox.disabled = true;
+      try {
+        const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { payment_required: paymentCheckbox.checked } });
+        onChanged(updated);
+      } catch (err) { toast(err.message, true); paymentCheckbox.checked = stage.payment_required; paymentCheckbox.disabled = false; }
+    };
+    const paymentToggle = h('label', { class: 'stage-payment-toggle' }, paymentCheckbox, 'Add scheduled payment');
+
+    let paymentDetail = null;
+    if (stage.payment_required) {
+      const amountInput = h('input', {
+        type: 'number', min: '0', step: 'any', inputmode: 'decimal', class: 'stage-payment-amount-input',
+        value: stage.payment_amount ?? '', placeholder: `Amount (${currency})`, disabled: stage.payment_received,
+        'aria-label': `Payment amount for ${stage.label}`,
+      });
+      amountInput.onchange = async () => {
+        try {
+          const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`,
+            { method: 'PATCH', body: { payment_amount: amountInput.value === '' ? null : amountInput.value } });
+          onChanged(updated);
+        } catch (err) { toast(err.message, true); amountInput.value = stage.payment_amount ?? ''; }
+      };
+      const dueInput = dateField(stage.payment_due_date || '', { placeholder: 'Due date' });
+      dueInput.disabled = stage.payment_received;
+      dueInput.setAttribute('aria-label', `Payment due date for ${stage.label}`);
+      dueInput.onchange = async () => {
+        try {
+          const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { payment_due_date: dueInput.value || null } });
+          onChanged(updated);
+        } catch (err) { toast(err.message, true); dueInput.value = stage.payment_due_date || ''; }
+      };
+      const receivedBtn = h('button', { class: 'btn small primary', type: 'button' }, 'Mark payment received');
+      receivedBtn.onclick = async () => {
+        receivedBtn.disabled = true;
+        try {
+          const updated = await api(`/api/projects/${P.id}/stages/${stage.key}`, { method: 'PATCH', body: { payment_received: true } });
+          onChanged(updated);
+        } catch (err) { toast(err.message, true); receivedBtn.disabled = false; }
+      };
+      paymentDetail = h('div', { class: 'stage-payment-detail' },
+        h('div', { class: 'stage-row-controls' },
+          h('label', { class: 'stage-days-field' }, 'Amount', amountInput),
+          h('label', { class: 'stage-days-field' }, 'Due', dueInput)),
+        stage.payment_received
+          ? h('p', { class: 'stage-payment-received' }, `Payment received ${longDate(new Date(stage.payment_received_at))}`)
+          : [h('p', { class: 'stage-paused-note' }, 'Please pay for the project to move to the next step.'), receivedBtn]);
+    }
+
     const pauseLabel = stage.pause_reason ? (reasons.find(([k]) => k === stage.pause_reason) || [, stage.pause_reason])[1] : '';
     return h('div', { class: 'current-card', id: `stage-current-${idx}` },
       h('div', { class: 'current-card-head' },
@@ -1336,6 +1393,7 @@
         addPhotoBtn),
       h('div', { class: 'field stage-remarks-field' }, h('label', {}, 'Note'), remarksInput),
       photoGrid,
+      h('div', { class: 'stage-payment-field' }, paymentToggle, paymentDetail),
       h('div', { class: 'current-card-actions' }, stage.paused ? resumeBtn : pauseBtn, doneBtn));
   }
 
@@ -1353,7 +1411,7 @@
 
     const body = stages.map((stage, idx) => {
       if (stage.done) return finishedStageRow(stage);
-      if (idx === currentIdx) return currentStageCard(P, stage, idx, data.pause_reasons, onChanged);
+      if (idx === currentIdx) return currentStageCard(P, stage, idx, data.pause_reasons, data.currency, onChanged);
       return upcomingStageRow(stage, idx);
     });
 

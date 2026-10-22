@@ -448,6 +448,11 @@ class Project(db.Model):
                 "pause_note": s.pause_note if s else "",
                 "paused_at": _iso(s.paused_at) if s else None,
                 "remarks": s.remarks if s else "",
+                "payment_required": s.payment_required if s else False,
+                "payment_amount": float(s.payment_amount) if s and s.payment_amount is not None else None,
+                "payment_due_date": s.payment_due_date.isoformat() if s and s.payment_due_date else None,
+                "payment_received": bool(s and s.payment_received_at),
+                "payment_received_at": _iso(s.payment_received_at) if s else None,
                 "photos": [p.to_dict() for p in s.photos] if s else [],
             })
         return rows
@@ -635,6 +640,16 @@ class ProjectStage(db.Model):
     # pause_note above (that one only ever exists alongside a pause) and from PROJECT_STAGES' own fixed
     # per-stage hint text (constants.py's "note" item, the same for every project).
     remarks = db.Column(db.Text, nullable=False, default="", server_default="")
+    # An optional "pay before this stage can be marked done" gate (kohal, 2026-10-22: "give an option of
+    # adding 'add sheduled payment' checkbox after every step... only when that payment is marked as
+    # recived it should move to next step"). Deliberately its own fields here, not a link into the
+    # project's existing payment schedule (ProjectPayment) - that schedule is fully replaced wholesale
+    # every time the Payment tab is saved (see update_project's `project.payments = [...]`), which would
+    # silently orphan an id-based link the next time anyone touched it.
+    payment_required = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    payment_amount = db.Column(db.Numeric(14, 2), nullable=True)
+    payment_due_date = db.Column(db.Date, nullable=True)
+    payment_received_at = db.Column(db.DateTime, nullable=True)
 
     project = db.relationship("Project", back_populates="stages")
     photos = db.relationship(
