@@ -51,6 +51,15 @@ def own_worker():
     return Worker.query.filter_by(user_code=g.user.code).first()
 
 
+def _can_request_cash(worker) -> bool:
+    """Daily-wage pay settles day by day already (kohal, 2026-10-21: "daily wages employee should not be
+    able to request for cash") - the request-ahead step is for everyone else, who don't have that same
+    daily cash-out to fall back on. Doesn't touch give() or the rest of the feature - the admin can still
+    hand a daily-wage worker cash unprompted, and they can still log what they bought with it, same as
+    before this restriction."""
+    return worker.employment_type != "daily_wages"
+
+
 def account_for(worker, *, create=False):
     """This worker's cash account, or None if nothing's ever been given to them and `create` wasn't asked
     for. No settling needed here (unlike fooding's own account_for) - nothing accrues on its own, so the
@@ -131,6 +140,7 @@ def my_cash_purchases():
         account=account.to_dict() if account else None,
         entries=[p.to_dict() for p in account.purchases] if account else [],
         requests=[r.to_dict() for r in worker.cash_requests],
+        can_request=_can_request_cash(worker),
         currency=settings_for_client()["currency"],
     )
 
@@ -150,6 +160,8 @@ def request_cash():
     worker = own_worker()
     if worker is None:
         abort(404)
+    if not _can_request_cash(worker):
+        abort(403, "Daily-wage pay settles day by day - cash requests aren't available for this role.")
     if _own_pending_request(worker) is not None:
         abort(409, "You already have a request waiting on the admin.")
     payload = _payload()

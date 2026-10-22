@@ -583,7 +583,9 @@
   function renderLogTab(data, cur) {
     const a = data.account;
     if (!a) {
-      return h('p', { class: 'hint' }, 'No cash has been given to you yet - use Request cash to ask the admin.');
+      return h('p', { class: 'hint' }, data.can_request
+        ? 'No cash has been given to you yet - use Request cash to ask the admin.'
+        : 'No cash has been given to you yet.');
     }
     return h('div', {},
       h('div', { class: 'p-section-head' },
@@ -599,11 +601,17 @@
     try { data = await api('/api/cash-purchases/me'); }
     catch (err) { section.hidden = true; return; }
     section.hidden = false;
-    if (activeTab === null) activeTab = data.account ? 'log' : 'request';
+    // Daily-wage pay settles day by day already - no Request cash tab to switch to at all (kohal,
+    // 2026-10-21: "daily wages employee should not be able to request for cash"), straight to Log
+    // purchase, the only thing left for them to do here.
+    if (!data.can_request) activeTab = 'log';
+    else if (activeTab === null) activeTab = data.account ? 'log' : 'request';
     const cur = data.currency;
-    clear(body).append(
-      pillTabs(activeTab),
-      activeTab === 'request' ? renderRequestTab(data, cur) : renderLogTab(data, cur));
+    // .append() itself (unlike h()) stringifies a bare null into the literal text "null" instead of
+    // skipping it - h('div', ...) here filters it the same way every other null child in this app does.
+    clear(body).append(h('div', {},
+      data.can_request ? pillTabs(activeTab) : null,
+      activeTab === 'request' ? renderRequestTab(data, cur) : renderLogTab(data, cur)));
   }
 
   load();

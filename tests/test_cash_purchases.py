@@ -16,10 +16,14 @@ def add_worker(name="Deepak Daily"):
     return worker.id
 
 
-def worker_user(app, name="Deepak Daily", pin="285193"):
-    """A signed-in User with a matching Worker, linked the way sync_worker_for_user would."""
+def worker_user(app, name="Deepak Daily", pin="285193", employment_type="contractor"):
+    """A signed-in User with a matching Worker, linked the way sync_worker_for_user would. Defaults to
+    contractor, not daily_wages, despite the name - most tests here are about the cash-purchase feature
+    itself, not employment type, and a daily-wage worker can't request cash at all any more (kohal,
+    2026-10-21: "daily wages employee should not be able to request for cash" - see
+    test_a_daily_wage_worker_cannot_request_cash, which overrides this specifically to prove that ban)."""
     user = make_user(name, pin=pin)
-    worker = Worker(name=name, category="manpower", employment_type="daily_wages", user_code=user.code)
+    worker = Worker(name=name, category="manpower", employment_type=employment_type, user_code=user.code)
     db.session.add(worker)
     db.session.commit()
     return signed_in(app, user), worker.id
@@ -416,6 +420,23 @@ def test_requesting_cash_creates_a_pending_request(app):
     req = res.get_json()["request"]
     assert req["worker_id"] == wid and req["amount"] == 5000.0 and req["status"] == "pending"
     assert req["note"] == "Fuel for the week"
+
+
+def test_a_daily_wage_worker_cannot_request_cash(app):
+    """kohal, 2026-10-21: "daily wages employee should not be able to request for cash" - their pay
+    settles day by day already. Doesn't touch the rest of the feature: the admin can still give them cash
+    unprompted, and they can still log what they bought with it (test_logging_a_purchase_creates_a_pending_
+    entry already covers that with the default worker_user, now a contractor - see worker_user itself)."""
+    who, wid = worker_user(app, employment_type="daily_wages")
+    res = who.post("/api/cash-purchases/requests", json={"amount": "2000"})
+    assert res.status_code == 403
+    assert who.get("/api/cash-purchases/me").get_json()["can_request"] is False
+
+
+def test_a_non_daily_wage_worker_can_request_cash(app):
+    who, wid = worker_user(app, employment_type="contractor")
+    assert who.get("/api/cash-purchases/me").get_json()["can_request"] is True
+    assert who.post("/api/cash-purchases/requests", json={"amount": "2000"}).status_code == 201
 
 
 def test_request_amount_must_be_a_positive_number(app):
