@@ -56,3 +56,15 @@ def test_a_client_with_no_contact_name_falls_back_to_the_client_name(admin_clien
     cid = make_client("Standalone Site", contact_name="")
     res = admin_client.post(f"/api/clients/{cid}/login")
     assert res.status_code == 201 and res.get_json()["user"]["name"] == "Standalone Site"
+
+
+# ---------- the Clients list flags who already has a login, without a tap into each one ----------
+
+def test_the_clients_list_flags_which_clients_already_have_a_login(admin_client):
+    with_login = make_client("Kailash Hospital")
+    without_login = make_client("Orchid Heights CHS")
+    admin_client.post(f"/api/clients/{with_login}/login")
+
+    clients = {c["id"]: c for c in admin_client.get("/api/clients").get_json()["clients"]}
+    assert clients[with_login]["has_login"] is True
+    assert clients[without_login]["has_login"] is False

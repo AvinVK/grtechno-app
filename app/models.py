@@ -354,6 +354,9 @@ class Client(db.Model):
             "project_count": len(self.projects), "services": services,
             "total_estimated_value": float(self.total_estimated_value) if self.total_estimated_value is not None else None,
             "created_at": _iso(self.created_at),
+            # So the Clients list can flag this without a tap into each client (kohal, 2026-10-22: "i wanna
+            # show an indicator that this client has been given access").
+            "has_login": bool(self.logins),
         }
 
 

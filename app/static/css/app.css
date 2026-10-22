@@ -1750,6 +1750,7 @@ details[open] > summary.area-title::before { transform: rotate(-135deg); margin-
 .client-tile[data-tone="2"] { background: var(--ok-tint); color: var(--ok-ink); }
 .client-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .client-row-name { font: 600 16px/1.25 var(--font-display); overflow-wrap: anywhere; }
+.client-login-tag { margin-left: 6px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--ok-tint); color: var(--ok-ink); font: 600 11px/1.4 var(--font-body); vertical-align: middle; }
 .client-row-count { color: var(--muted); font-size: 13px; }
 .client-row-value { flex: none; font: 500 15px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
 .row-chevron { flex: none; color: var(--muted); font-size: 20px; line-height: 1; }
