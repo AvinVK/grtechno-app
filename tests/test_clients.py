@@ -58,13 +58,23 @@ def test_a_client_with_no_contact_name_falls_back_to_the_client_name(admin_clien
     assert res.status_code == 201 and res.get_json()["user"]["name"] == "Standalone Site"
 
 
-# ---------- the Clients list flags who already has a login, without a tap into each one ----------
+# ---------- the Clients list flags who has actually logged in, without a tap into each one ----------
 
-def test_the_clients_list_flags_which_clients_already_have_a_login(admin_client):
-    with_login = make_client("Kailash Hospital")
-    without_login = make_client("Orchid Heights CHS")
-    admin_client.post(f"/api/clients/{with_login}/login")
+def test_the_clients_list_flags_who_has_actually_logged_in(app, admin_client):
+    """kohal, 2026-10-22: "change login to 'has logged in'" - a setup code sitting unused shouldn't count,
+    only a client who has actually set their PIN."""
+    logged_in = make_client("Kailash Hospital")
+    still_pending = make_client("Standalone Site")
+    not_given = make_client("Orchid Heights CHS")
+    code = admin_client.post(f"/api/clients/{logged_in}/login").get_json()["user"]["code"]
+    admin_client.post(f"/api/clients/{still_pending}/login")
+    with app.app_context():
+        from werkzeug.security import generate_password_hash
+        user = db.session.get(User, code)
+        user.password_hash = generate_password_hash("482917")
+        db.session.commit()
 
     clients = {c["id"]: c for c in admin_client.get("/api/clients").get_json()["clients"]}
-    assert clients[with_login]["has_login"] is True
-    assert clients[without_login]["has_login"] is False
+    assert clients[logged_in]["has_logged_in"] is True
+    assert clients[still_pending]["has_logged_in"] is False
+    assert clients[not_given]["has_logged_in"] is False

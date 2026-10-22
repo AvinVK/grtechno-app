@@ -43,7 +43,7 @@
     return h('li', {}, h('a', { class: 'client-row', href: `#c${c.id}` },
       h('span', { class: 'client-tile', 'data-tone': String(tileTone(c.id)), 'aria-hidden': 'true' }, (c.name[0] || '?').toUpperCase()),
       h('span', { class: 'client-row-main' },
-        h('span', { class: 'client-row-name' }, c.name, c.has_login ? h('span', { class: 'client-login-tag' }, 'Login') : null),
+        h('span', { class: 'client-row-name' }, c.name, c.has_logged_in ? h('span', { class: 'client-login-tag' }, 'Has logged in') : null),
         h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))),
       c.total_estimated_value != null ? h('span', { class: 'client-row-value' }, fmtShort(c.total_estimated_value, listCurrency)) : null,
       h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›')));

@@ -355,8 +355,9 @@ class Client(db.Model):
             "total_estimated_value": float(self.total_estimated_value) if self.total_estimated_value is not None else None,
             "created_at": _iso(self.created_at),
             # So the Clients list can flag this without a tap into each client (kohal, 2026-10-22: "i wanna
-            # show an indicator that this client has been given access").
-            "has_login": bool(self.logins),
+            # show an indicator that this client has been given access" - later changed to "has logged in",
+            # so a login that's still sitting on an unused setup code doesn't count yet).
+            "has_logged_in": any(u.status == "active" for u in self.logins),
         }
 
 
