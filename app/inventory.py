@@ -20,7 +20,7 @@ from .auth import can_approve_stock_in, visible_projects
 from .extensions import db
 from .modules import check_module
 from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client, utcnow
-from .timeutil import today_local
+from .timeutil import to_local, today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
 
@@ -710,8 +710,11 @@ def approve_material_request(movement_id):
     # approved (kohal, 2026-10-22: "10 rods requested, 6 in stock... stock in 10 more... approve still
     # shows not enough in stock"). transported_at (already validated above, assigned to the row below) is
     # exactly "when this actually left the store" - entry_date needs to track it for the replay to reason
-    # about this correctly.
-    movement.entry_date = f.data["transported_at"].date()
+    # about this correctly. transported_at is stored naive-UTC (utcnow()'s own convention) - entry_date
+    # has to go through to_local() first, same as today_local() everywhere else entry_date is set, or the
+    # UTC/local day boundary (here, IST is UTC+5:30) can put it a calendar day off from what was actually
+    # a same-day stock-in, reproducing the exact bug this line was meant to fix.
+    movement.entry_date = to_local(f.data["transported_at"]).date()
     if is_return:
         # _recompute_material only re-stamps rate/amount for an issue ('out') during its replay - an 'in'
         # row's amount is never touched there, so approving a smaller quantity than claimed has to be
