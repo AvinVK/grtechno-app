@@ -1177,7 +1177,10 @@ a.p-client-name { color: var(--accent-dark); }
 
 .client-projects { margin: 0; padding: 0; list-style: none; }
 .client-projects li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
-.client-projects a { color: var(--accent-dark); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+/* Plain ink, not accent red (kohal, 2026-10-22: "this red color for project name is too alarming, change
+   that and keep it uniform") - matches .client-project-title below, the non-clickable version of this same
+   row for a role that can't open Projects; a project title reads the same whether it's a link or not. */
+.client-projects a { color: inherit; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 
 /* ---------- Won-lead box ---------- */
 
