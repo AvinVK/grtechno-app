@@ -78,8 +78,23 @@
     try { data = await api('/api/clients'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     listCurrency = data.currency;
 
-    const filter = { q: '', service: '' };
+    const filter = { q: '', service: '', loggedIn: false };
     const allServices = [...new Set(data.clients.flatMap((c) => c.services))].sort();
+
+    // "Logged in clients" subtab (kohal, 2026-10-22: "in the client tab, have one subtab called logged in
+    // clients") - same filter-chip pattern as the Projects list's own status chips.
+    const tabs = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter clients' });
+    function renderTabs() {
+      clear(tabs);
+      const loggedInCount = data.clients.filter((c) => c.has_logged_in).length;
+      const options = [[false, 'All clients', data.clients.length], [true, 'Logged in clients', loggedInCount]];
+      for (const [value, label, n] of options) {
+        tabs.append(h('button', {
+          class: 'filter-chip', type: 'button', 'aria-pressed': String(filter.loggedIn === value),
+          onclick: () => { filter.loggedIn = value; renderTabs(); refresh(); },
+        }, label, h('span', { class: 'n' }, n)));
+      }
+    }
 
     const search = h('input', {
       type: 'search', placeholder: 'Search name, contact, phone, city', 'aria-label': 'Search clients',
@@ -98,7 +113,8 @@
       const q = filter.q.trim().toLowerCase();
       const textOk = !q || [c.name, c.contact_name, c.phone, c.email, c.city, c.district, c.state].some((v) => (v || '').toLowerCase().includes(q));
       const serviceOk = !filter.service || c.services.includes(filter.service);
-      return textOk && serviceOk;
+      const loggedInOk = !filter.loggedIn || c.has_logged_in;
+      return textOk && serviceOk && loggedInOk;
     }
 
     function refresh() {
@@ -123,7 +139,7 @@
         if (!byState[state][city][area]) byState[state][city][area] = [];
         byState[state][city][area].push(c);
       }
-      const expand = !!(filter.q.trim() || filter.service);       // don't leave a match hidden inside a closed box
+      const expand = !!(filter.q.trim() || filter.service || filter.loggedIn);  // don't leave a match hidden inside a closed box
       results.append(...Object.keys(byState).sort(sortUnknownLast).map((state) => {
         const districts = byState[state];
         const total = Object.values(districts).reduce((n, areas) => n + Object.values(areas).reduce((m, list) => m + list.length, 0), 0);
@@ -132,8 +148,10 @@
     }
 
     clear(view).append(h('div', {},
+      tabs,
       h('div', { class: 'filters' }, search, serviceSel),
       count, results));
+    renderTabs();
     refresh();
   }
 
