@@ -16,9 +16,11 @@
     {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
     {% if client_mode %}<input type="hidden" name="as" value="client">{% endif %}
     <div class="field">
-      <label for="userid">Userid</label>
+      <label for="userid">{{ 'Phone number' if client_mode else 'Userid' }}</label>
       <input id="userid" name="userid" value="{{ userid }}" autocomplete="username" autocapitalize="none"
-             spellcheck="false" placeholder="name-1234" {% if not userid %}autofocus{% endif %} required>
+             spellcheck="false" placeholder="{{ '9876543210' if client_mode else 'name-1234' }}"
+             inputmode="{{ 'numeric' if client_mode else 'text' }}"
+             {% if not userid %}autofocus{% endif %} required>
     </div>
     {% call pin_field('pin', 'PIN', 6, 'current-password', autosubmit=true,
                       attrs=('autofocus ' if userid else '') ~ 'required' ~ (' aria-invalid="true" aria-describedby="login-error"' if error else '')) %}

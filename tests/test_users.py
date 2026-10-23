@@ -61,7 +61,7 @@ def test_cannot_set_an_existing_users_role_to_client(admin_client, user):
 def test_moving_a_client_off_the_client_role_clears_their_client_id(app, admin_client):
     from app.models import Client
     with app.app_context():
-        c = Client(name="Kalyani Cold Storage")
+        c = Client(name="Kalyani Cold Storage", phone="9876543210")
         db.session.add(c)
         db.session.commit()
         cid = c.id
@@ -88,6 +88,19 @@ def test_a_new_user_is_not_an_employee_until_they_sign_in_for_the_first_time(adm
         worker = Worker.query.filter_by(user_code=code).first()
         assert worker is not None
         assert worker.name == "Priya Enquiry" and worker.role_key == "sales_office" and worker.category == "staff"
+
+
+def test_a_new_site_trade_user_defaults_to_daily_wage_and_fooding(admin_client, anon, app):
+    """kohal, 2026-10-23: "why cant he see fooding and workplan and his attendance history... whatever
+    things he shuld be able to see as daily wages" - welder/fitter/helper/alarm_technician are day labour
+    (reference_data.py), so a brand-new Worker row for one of them starts on the fooding wallet, matching
+    Employee management's own "automatically on for daily wages" default."""
+    res = admin_client.post("/api/users", json={"name": "Ramesh Welder", "role": "welder"})
+    body = res.get_json()
+    complete_setup(anon, body["user"]["userid"], body["setup_code"])
+    with app.app_context():
+        worker = Worker.query.filter_by(user_code=body["user"]["code"]).first()
+        assert worker.employment_type == "daily_wages" and worker.fooding_opt_in is True
 
 
 def test_the_admin_itself_gets_no_worker(admin_client, admin, app):

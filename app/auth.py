@@ -117,9 +117,12 @@ def issue_setup_code(user: User) -> str:
     return f"{raw[:4]}-{raw[4:]}"
 
 
-def create_user(name: str, is_admin: bool = False, code: str = None, role: str = None):
-    """Add a user (not yet committed). Returns (user, setup_code). Raises ValueError on a bad name, code or role.
-    The 4-digit code is chosen at random unless one is given. The role defaults to admin / field sales."""
+def create_user(name: str, is_admin: bool = False, code: str = None, role: str = None, userid: str = None):
+    """Add a user (not yet committed). Returns (user, setup_code). Raises ValueError on a bad name, code,
+    role or userid. The 4-digit code is chosen at random unless one is given. The role defaults to admin /
+    field sales. userid defaults to name-code; pass one explicitly to use something else instead (kohal,
+    2026-10-23: "the login of client should be mapped to its mobile number... so number will be the mapping
+    key" - see app/clients.py's give_login, which passes the client's own phone number here)."""
     role = role or ("admin" if is_admin else "sales_field")
     if db.session.get(Role, role) is None:
         raise ValueError("Choose a role from the list.")
@@ -139,7 +142,15 @@ def create_user(name: str, is_admin: bool = False, code: str = None, role: str =
                 break
         else:
             raise ValueError("No free user codes are left.")
-    user = User(code=code, userid=f"{slug}-{code}", name=name, is_admin=is_admin, role_key=role)
+    if userid is not None:
+        userid = userid.strip().lower()
+        if not userid:
+            raise ValueError("Enter a valid userid.")
+        if User.query.filter_by(userid=userid).first() is not None:
+            raise ValueError(f"{userid} is already used by another login.")
+    else:
+        userid = f"{slug}-{code}"
+    user = User(code=code, userid=userid, name=name, is_admin=is_admin, role_key=role)
     setup_code = issue_setup_code(user)
     db.session.add(user)
     return user, setup_code
@@ -171,6 +182,9 @@ def sync_worker_for_user(user: User) -> None:
         worker = candidates[0] if len(candidates) == 1 else None
         if worker is None:
             worker = Worker(category="staff", source="user_account")
+            if user.role_key in SITE_TRADE_ROLE_KEYS:
+                worker.employment_type = "daily_wages"
+                worker.fooding_opt_in = True
             db.session.add(worker)
         worker.user_code = user.code
     worker.name = user.name
@@ -180,12 +194,13 @@ def sync_worker_for_user(user: User) -> None:
 def find_user(userid_text: str):
     # Forgiving the same way the setup code is: a phone keyboard can slip in a stray space around the
     # dash, or autocorrect it to an en/em dash, without the person noticing - none of that should turn
-    # into "wrong userid or code".
+    # into "wrong userid or code". A plain lookup on the (unique) userid column, not the old "assume
+    # name-code and reverse-engineer the code" trick - that broke for a client's own phone-number userid,
+    # which has no dash at all (kohal, 2026-10-23).
     text = re.sub(r"\s+", "", userid_text or "").lower().replace("–", "-").replace("—", "-")
-    if "-" not in text:
+    if not text:
         return None
-    user = db.session.get(User, text.rsplit("-", 1)[1])
-    return user if user and user.userid == text else None
+    return User.query.filter_by(userid=text).first()
 
 
 def visible_leads():
@@ -215,6 +230,14 @@ SITE_SUPERVISOR_ROLE_KEYS = {"supervisor", "alarm_tech_cum_site_supervisor", "co
 # Chandrapur district specifically rather than every project company-wide (see visible_projects below) -
 # that was the one thing asked for by name, not folded into "sees everything" like the plain role is.
 PROJECT_MANAGER_ROLE_KEYS = {"project_manager", COMMISSION_ROLE_KEY}
+
+# "Site trades: they sign in only to check themselves in and out" (reference_data.py) - day labour, so a
+# brand-new Worker row for one of them starts on the fooding wallet and the Wages tile by default, same as
+# Employee management's own "automatically on for daily wages" default (kohal, 2026-10-23: "why cant he see
+# fooding and workplan and his attendance history... whatever things he shuld be able to see as daily
+# wages") - see sync_worker_for_user below. Workplan itself needs no change here: a worker's own assignment
+# alert (app/me.py's my_work_assignment) is already shown regardless of module access, by design.
+SITE_TRADE_ROLE_KEYS = {"welder", "fitter", "helper", "alarm_technician"}
 
 
 def visible_projects(user=None):

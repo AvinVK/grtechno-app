@@ -73,6 +73,27 @@ def test_login_lands_a_client_on_their_own_portal(app, anon):
     assert ok.status_code == 302 and ok.headers["Location"].endswith("/my-projects")
 
 
+def test_a_client_can_sign_in_with_their_own_phone_number_end_to_end(app, admin_client, anon):
+    """kohal, 2026-10-23: "the login of client should be mapped to its mobile number... so number will be
+    the mapping key" - the full real flow: admin gives login access, the client sets their PIN using their
+    phone number as the userid, then signs in with it."""
+    from app.models import Client
+    with app.app_context():
+        c = Client(name="Kalyani Cold Storage", phone="9876543210")
+        db.session.add(c)
+        db.session.commit()
+        cid = c.id
+    given = admin_client.post(f"/api/clients/{cid}/login").get_json()
+    userid = given["user"]["userid"]
+    assert userid == "9876543210"
+
+    done = set_pin(anon, userid, given["setup_code"], "482917")
+    assert done.status_code == 302
+
+    ok = login(app.test_client(), userid, "482917")
+    assert ok.status_code == 302 and ok.headers["Location"].endswith("/my-projects")
+
+
 def test_login_and_set_pin_show_client_mode_copy_when_asked(anon):
     """kohal, 2026-10-22: "a new option while logging in asking if you are client" - cosmetic only, the
     same userid+PIN (or userid+code+PIN) underneath either way."""
@@ -159,6 +180,22 @@ def test_userid_is_name_plus_unique_four_digit_code(app):
     assert re.fullmatch(r"\d{4}", a.code) and 1000 <= int(a.code) <= 9999
     assert a.code != b.code and a.userid != b.userid
     assert find_user(a.userid) is a and find_user("someoneelse-" + b.code) is None and find_user(b.userid.upper()) is b
+
+
+def test_create_user_can_take_an_explicit_userid(app):
+    """kohal, 2026-10-23: "so number will be the mapping key" - give_login (app/clients.py) uses this to
+    make a client's userid their own phone number instead of the usual name-code."""
+    user, _ = create_user("Kalyani Contact", role="client", userid="9876543210")
+    db.session.commit()
+    assert user.userid == "9876543210"
+    assert find_user("9876543210") is user              # find_user works with no dash at all now
+
+    try:
+        create_user("Someone Else", role="client", userid="9876543210")
+    except ValueError as err:
+        assert "already used" in str(err)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_userid_forgives_stray_whitespace_and_smart_dashes(app):

@@ -19,6 +19,18 @@ api_errors(bp)
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
 
 
+def _phone_userid(phone: str) -> str:
+    """The client's own mobile number, as a login id - strips everything but digits and drops a leading
+    country/trunk code (+91, 0...) if the client's phone field has one, down to the last 10 digits (kohal,
+    2026-10-23: "the login of client should be mapped to its mobile number... no client will be patient
+    enough to enter the code and set the pin. so number will be the mapping key"). Empty if what's left
+    isn't a plausible 10-digit mobile number."""
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return digits if len(digits) == 10 else ""
+
+
 @bp.before_request
 def _clients_service():
     check_module("clients")
@@ -105,7 +117,11 @@ def give_login(client_id):
     """Set this client up with their own sign-in, or re-issue a fresh setup code if they already have one
     (same "New setup code" idea as Users & roles' own reset) - admin only. The one place a User gets linked
     to a Client (User.client_id) - see auth.visible_projects' own "client" branch for what that then
-    scopes them to see."""
+    scopes them to see.
+
+    The userid is the client's own phone number, not a generated name-code (kohal, 2026-10-23: "no client
+    will be patient enough to enter the code and set the pin. so number will be the mapping key") - still
+    needs the one-time setup code + PIN below, just a memorable login id instead of a random one."""
     if not g.user.is_admin:
         abort(403, "Only the admin can give a client login access.")
     client = _client_or_404(client_id)
@@ -114,8 +130,11 @@ def give_login(client_id):
         setup_code = issue_setup_code(existing)
         user = existing
     else:
+        phone_userid = _phone_userid(client.phone)
+        if not phone_userid:
+            return jsonify(error="Add a valid 10-digit phone number for this client first."), 422
         try:
-            user, setup_code = create_user(client.contact_name or client.name, role="client")
+            user, setup_code = create_user(client.contact_name or client.name, role="client", userid=phone_userid)
         except ValueError as err:
             return jsonify(error=str(err)), 422
         user.client_id = client.id

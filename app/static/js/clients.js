@@ -191,12 +191,14 @@
   // client it's for by being on that client's own page (kohal, 2026-10-22: "the admin would also have to
   // choose which client it is").
   function showLoginCode(resultBox, data, client) {
+    // Userid is the client's own phone number now (kohal, 2026-10-23: "so number will be the mapping
+    // key") - they already know it, so this message only needs to carry the setup code.
     const u = data.user;
-    const message = `Leads\n\nUserid:\n${u.userid}\n\nSetup code:\n${data.setup_code}\n(works once, valid ${data.code_days} days)\n\nSet your PIN at: ${window.location.origin}/set-pin?as=client`;
+    const message = `Leads\n\nYour phone number:\n${u.userid}\n\nSetup code:\n${data.setup_code}\n(works once, valid ${data.code_days} days)\n\nSet your PIN at: ${window.location.origin}/set-pin?as=client`;
     clear(resultBox).append(h('section', { class: 'code-card' },
       h('h3', {}, `Login for ${client.name}`),
       h('dl', {},
-        h('dt', {}, 'Userid'), h('dd', { class: 'code-value' }, u.userid),
+        h('dt', {}, 'Phone number (login)'), h('dd', { class: 'code-value' }, u.userid),
         h('dt', {}, 'Setup code'), h('dd', { class: 'code-value' }, data.setup_code)),
       h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days - share both with the client, they'll set their own PIN at /set-pin.`),
       h('div', { class: 'code-actions' },

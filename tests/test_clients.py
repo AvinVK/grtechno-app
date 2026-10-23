@@ -6,8 +6,8 @@ from app.extensions import db
 from app.models import Client, User
 
 
-def make_client(name="Kalyani Cold Storage", contact_name="Mr. Kalyani"):
-    c = Client(name=name, contact_name=contact_name)
+def make_client(name="Kalyani Cold Storage", contact_name="Mr. Kalyani", phone="9876543210"):
+    c = Client(name=name, contact_name=contact_name, phone=phone)
     db.session.add(c)
     db.session.commit()
     return c.id
@@ -58,14 +58,46 @@ def test_a_client_with_no_contact_name_falls_back_to_the_client_name(admin_clien
     assert res.status_code == 201 and res.get_json()["user"]["name"] == "Standalone Site"
 
 
+# ---------- the login id is the client's own phone number, not a generated name-code ----------
+# (kohal, 2026-10-23: "the login of client should be mapped to its mobile number... no client will be
+# patient enough to enter the code and set the pin. so number will be the mapping key")
+
+def test_the_client_logs_in_with_their_own_phone_number(admin_client):
+    cid = make_client(phone="9876543210")
+    res = admin_client.post(f"/api/clients/{cid}/login")
+    assert res.status_code == 201 and res.get_json()["user"]["userid"] == "9876543210"
+
+
+def test_a_formatted_phone_number_is_normalised_to_just_the_digits(admin_client):
+    cid = make_client(phone="+91 98765-43210")
+    res = admin_client.post(f"/api/clients/{cid}/login")
+    assert res.status_code == 201 and res.get_json()["user"]["userid"] == "9876543210"
+
+
+def test_giving_login_access_is_refused_without_a_valid_phone_number(admin_client):
+    no_phone = make_client("No Phone Client", phone="")
+    too_short = make_client("Short Phone Client", phone="12345")
+    for cid in (no_phone, too_short):
+        res = admin_client.post(f"/api/clients/{cid}/login")
+        assert res.status_code == 422 and "phone" in res.get_json()["error"].lower()
+
+
+def test_two_clients_cannot_share_the_same_phone_login(admin_client):
+    first = make_client("First Client", phone="9876543210")
+    second = make_client("Second Client", phone="9876543210")
+    assert admin_client.post(f"/api/clients/{first}/login").status_code == 201
+    blocked = admin_client.post(f"/api/clients/{second}/login")
+    assert blocked.status_code == 422
+
+
 # ---------- the Clients list flags who has actually logged in, without a tap into each one ----------
 
 def test_the_clients_list_flags_who_has_actually_logged_in(app, admin_client):
     """kohal, 2026-10-22: "change login to 'has logged in'" - a setup code sitting unused shouldn't count,
     only a client who has actually set their PIN."""
-    logged_in = make_client("Kailash Hospital")
-    still_pending = make_client("Standalone Site")
-    not_given = make_client("Orchid Heights CHS")
+    logged_in = make_client("Kailash Hospital", phone="9876543210")
+    still_pending = make_client("Standalone Site", phone="9876543211")
+    not_given = make_client("Orchid Heights CHS", phone="9876543212")
     code = admin_client.post(f"/api/clients/{logged_in}/login").get_json()["user"]["code"]
     admin_client.post(f"/api/clients/{still_pending}/login")
     with app.app_context():
