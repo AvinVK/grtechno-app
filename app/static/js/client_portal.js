@@ -254,7 +254,13 @@
       if (idx === currentIdx) return currentStageCard(stage, idx, data.pause_reasons, data.currency);
       return upcomingStageRow(stage, idx);
     });
-    return [bar, h('p', { class: 'lead-step-text' }, stepText), ...body];
+    // The work order (BOQ) and purchase order sit above the stages (kohal, 2026-10-26: "show work order
+    // (BOQ) and purchase order in progress as well for client view") - only the ones that are on file.
+    const papers = data.attachment_types
+      .filter(([key]) => data.project.documents[key])
+      .map(([key, label]) => h('li', {}, h('a', { href: data.project.documents[key].url, target: '_blank', rel: 'noopener noreferrer' }, label)));
+    const paperBox = papers.length ? h('section', { class: 'p-section' }, h('h3', {}, 'Documents'), h('ul', {}, papers)) : null;
+    return [paperBox, bar, h('p', { class: 'lead-step-text' }, stepText), ...body];
   }
 
   const SECTIONS = { '': renderOverview, payments: renderPayments, details: renderDetails, progress: renderProgress };

@@ -1517,3 +1517,22 @@ def test_a_project_chandrapur_pm_creates_is_auto_assigned_to_them(app):
     pm, user = chandrapur_pm(app)
     res = pm.post("/api/projects", json={"new_client_name": "Auto Assign Test"})
     assert res.status_code == 201 and res.get_json()["project"]["manager_code"] == user.code
+
+
+# ---------- work order (BOQ) and purchase order: on file any time, never needed to close ----------
+# (kohal, 2026-10-26: "work order (BOQ) and purchase order upload option for existing projects")
+
+def test_work_order_and_purchase_order_can_be_added_without_blocking_the_close(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    for doc_type in ("work_order_boq", "purchase_order"):
+        res = admin_client.post(f"/api/projects/{pid}/documents/{doc_type}",
+                                 data={"file": (io.BytesIO(b"fake"), "wo.pdf", "application/pdf")},
+                                 content_type="multipart/form-data")
+        assert res.status_code == 201
+        assert res.get_json()["project"]["documents"][doc_type]["url"]
+    detail = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert [k for k, _ in detail["attachment_types"]] == ["work_order_boq", "purchase_order"]
+    # Still three required closing documents, none of which these two count towards.
+    with app.app_context():
+        assert set(db.session.get(Project, pid).missing_documents) == {"final_estimate", "completion_certificate", "final_invoice"}
+    assert admin_client.delete(f"/api/projects/{pid}/documents/purchase_order").status_code == 200

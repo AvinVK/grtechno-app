@@ -21,6 +21,14 @@ PROJECT_DOCUMENT_TYPES = [
     ("final_invoice", "Final invoice"),
 ]
 
+# Papers a project can have on file at any time, none of them needed to close it (kohal, 2026-10-26: "work
+# order (BOQ) and purchase order upload option for existing projects") - stored in the same project_documents
+# table as the closing documents above, but kept out of PROJECT_DOCUMENT_TYPES so they never block closing.
+PROJECT_ATTACHMENT_TYPES = [
+    ("work_order_boq", "Work order (BOQ)"),
+    ("purchase_order", "Purchase order"),
+]
+
 # This role also sees every project in this district specifically (kohal, 2026-10-18: "alocate chandrapur
 # region projects... to project manager chandrapur role"), on top of whatever it manages elsewhere - not
 # every project company-wide the way the plain project_manager role does (see auth.visible_projects).

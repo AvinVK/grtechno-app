@@ -2,6 +2,9 @@
 {% block title %}Your projects - Leads{% endblock %}
 {% block body_class %}page-plain{% endblock %}
 {% block page_title %}Your projects{% endblock %}
+{% block actions %}
+<form method="post" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button class="btn small" type="submit">Sign out</button></form>
+{% endblock %}
 {% block content %}
 <main id="view" class="view" tabindex="-1"><p class="loading">Loading…</p></main>
 <script src="{{ asset('js/client_portal.js') }}" defer></script>

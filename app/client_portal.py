@@ -14,10 +14,10 @@ checklist from constants.PROJECT_STAGES/Project.stage_rows, read-only here - the
 detail page, where it's editable; this blueprint is the client-only mirror of just that one tab, not a copy
 of the whole page."""
 
-from flask import Blueprint, abort, g, jsonify, render_template
+from flask import Blueprint, abort, g, jsonify, render_template, request, url_for
 
 from .auth import visible_projects
-from .constants import PAUSE_REASONS, PROJECT_DOCUMENT_TYPES
+from .constants import PAUSE_REASONS, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES
 from .models import Project, settings_for_client
 from .timeutil import to_local
 
@@ -35,6 +35,8 @@ _DETAIL_FIELDS = (
 
 @bp.before_request
 def _client_only():
+    if request.endpoint == "client_portal.welcome":
+        return None       # the landing page is public - see auth.PUBLIC_ENDPOINTS
     if g.user.role_key != "client":
         abort(403, "This is a client's own sign-in.")
 
@@ -58,7 +60,13 @@ def _project_summary(project) -> dict:
 # built from the business's own website page; its one way onward is the "My projects" button.
 @bp.get("/welcome")
 def welcome():
-    return render_template("client_landing.html")
+    # Signed in as a client: straight to their projects. Anyone else: the client sign-in, which then comes back
+    # to their projects.
+    if g.user is not None and g.user.role_key == "client":
+        projects_url = url_for("client_portal.my_projects")
+    else:
+        projects_url = url_for("auth.login", **{"as": "client", "next": url_for("client_portal.my_projects")})
+    return render_template("client_landing.html", projects_url=projects_url)
 
 
 @bp.get("/my-projects")
@@ -89,7 +97,10 @@ def my_project_detail(project_id):
     return jsonify(
         project={**_project_summary(project), **{k: detail[k] for k in _DETAIL_FIELDS}},
         client={"name": client.name, "contact_name": client.contact_name, "phone": client.phone},
-        document_types=PROJECT_DOCUMENT_TYPES,
+        # The work order (BOQ) and purchase order come first (kohal, 2026-10-26: "show work order (BOQ) and
+        # purchase order in progress as well for client view"), then the closing documents.
+        document_types=PROJECT_ATTACHMENT_TYPES + PROJECT_DOCUMENT_TYPES,
+        attachment_types=PROJECT_ATTACHMENT_TYPES,
         dashboard={
             # Same "Running for" basis as app/projects.py's _detail: the start date if set, else the day it was added.
             "started": (project.start_date or to_local(project.created_at).date()).isoformat(),

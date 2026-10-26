@@ -57,9 +57,41 @@ def test_a_client_has_only_a_projects_tab_and_no_me_hub(app):
     assert who.get("/me").headers["Location"].endswith("/my-projects")
 
 
-def test_only_a_client_role_can_see_the_landing_page(client, admin_client, accounts_client):
-    for who in (client, admin_client, accounts_client):
-        assert who.get("/welcome").status_code == 403
+def test_the_landing_page_is_public_and_its_button_depends_on_who_is_looking(app, anon):
+    """kohal, 2026-10-26: the shared link always opens the landing page - signed in or not."""
+    page = anon.get("/welcome")
+    assert page.status_code == 200
+    assert b"/login?as=client" in page.data and b"my-projects" in page.data    # sign in first, then on to projects
+    with app.app_context():
+        who = client_user(app, make_client())
+    assert b'href="/my-projects"' in who.get("/welcome").data
+
+
+def test_a_client_signing_out_goes_back_to_the_landing_page(app):
+    from conftest import csrf
+    with app.app_context():
+        who = client_user(app, make_client())
+    assert b"Sign out" in who.get("/my-projects").data
+    res = who.post("/logout", data={"csrf": csrf(who)})
+    assert res.status_code == 302 and res.headers["Location"].endswith("/welcome")
+    assert who.get("/api/my-projects").status_code == 401
+
+
+def test_a_client_sees_the_work_order_and_purchase_order_on_file(app, admin_client):
+    import io
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine)
+        who = client_user(app, mine)
+    assert who.get(f"/api/my-projects/{pid}").get_json()["project"]["documents"] == {}
+    for doc_type in ("work_order_boq", "purchase_order"):
+        admin_client.post(f"/api/projects/{pid}/documents/{doc_type}",
+                          data={"file": (io.BytesIO(b"fake"), "x.pdf", "application/pdf")}, content_type="multipart/form-data")
+    data = who.get(f"/api/my-projects/{pid}").get_json()
+    assert set(data["project"]["documents"]) == {"work_order_boq", "purchase_order"}
+    assert [k for k, _ in data["attachment_types"]] == ["work_order_boq", "purchase_order"]
+    assert who.post(f"/api/projects/{pid}/documents/purchase_order").status_code == 403    # view only
+
 
 
 def test_a_client_sees_only_their_own_projects(app):

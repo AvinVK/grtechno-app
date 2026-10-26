@@ -193,7 +193,7 @@
   // number and a WhatsApp message with the sign-in link.
   function showLoginLink(resultBox, data, client) {
     const u = data.user;
-    const link = `${window.location.origin}/login?as=client`;
+    const link = `${window.location.origin}/welcome`;
     const message = `GR Techno Fire Safety
 
 See your projects here:

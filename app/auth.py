@@ -32,7 +32,9 @@ LOCKOUT = timedelta(minutes=5)
 PIN_LENGTH = 6
 CODE_ALPHABET = "23456789"   # digits only (no 0/1, read aloud or misread for O/I) - one keyboard to type
                               # on a phone, instead of switching between letters and numbers typing it in
-PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "deploy.deploy", "static"}
+# The client landing page is public too (kohal, 2026-10-26: "everytime the client sees the landing page when he
+# opens the link after logging out") - it is what the shared link opens, signed in or not.
+PUBLIC_ENDPOINTS = {"auth.login", "auth.set_pin", "deploy.deploy", "static", "client_portal.welcome"}
 
 
 def _landing_url(user) -> str:
@@ -603,5 +605,7 @@ def set_pin():
 @bp.post("/logout")
 def logout():
     check_csrf()
+    was_client = bool(g.user and g.user.role_key == "client")
     session.clear()
-    return redirect(url_for("auth.login"))
+    # A client goes back to the business page they were sent to in the first place, not a bare sign-in form.
+    return redirect(url_for("client_portal.welcome" if was_client else "auth.login"))

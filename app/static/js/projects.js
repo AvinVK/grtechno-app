@@ -1111,6 +1111,19 @@
 
     form.addEventListener('input', recalcFinish);
 
+    // The work order (BOQ) and purchase order (kohal, 2026-10-26: "work order (BOQ) and purchase order
+    // upload option for existing projects") - each goes up the moment a file is picked, so they sit outside
+    // the Save details form and rebuild only their own rows afterwards, not the fields being edited above.
+    const paperList = h('div', { class: 'doc-list' });
+    function renderPapers() {
+      clear(paperList).append(...data.attachment_types.map(([key, label]) => documentRow(P, key, label, (saved) => {
+        P.documents = saved.project.documents;
+        renderPapers();
+      })));
+    }
+    renderPapers();
+    const papers = h('section', { class: 'p-section' }, h('h3', {}, 'Work order & purchase order'), paperList);
+
     const site = [P.site_address, P.site_city, P.site_district, P.site_state].filter(Boolean).join(', ');
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
@@ -1121,7 +1134,7 @@
           canOpenClients ? h('a', { class: 'p-client-name', href: `/clients#c${c.id}` }, c.name) : h('span', { class: 'p-client-name' }, c.name)),
         c.phone ? h('a', { class: 'btn small', href: `tel:${c.phone.replace(/[^\d+]/g, '')}` }, 'Call') : null,
         site ? h('p', { class: 'hint' }, `Site: ${site}${P.site_pincode ? ` - ${P.site_pincode}` : ''}`) : null),
-      form));
+      form, papers));
     recalcFinish();
     window.scrollTo(0, 0);
   }
