@@ -707,7 +707,9 @@
       }
       renderPhotos();
 
-      const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true });
+      // hidden: the "Add photos" label is the button - the browser's own "Choose files / No file chosen" widget
+      // used to show inside it and stretch the row (same as the project Progress tab's photo input).
+      const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true, hidden: true });
       // Disabled (with a hint alongside) rather than letting someone pick a file and only then finding out
       // it was refused - same rule as before (the survey must be saved first), just said up front.
       if (!lead.survey) fileInput.disabled = true;
