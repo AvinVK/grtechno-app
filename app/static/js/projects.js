@@ -1429,15 +1429,23 @@
     });
 
     // The work order number and the two papers behind it sit above the stages (kohal, 2026-10-26: "at the
-    // top before commencement, we should show work order, purchase order and work order number") - upload or
-    // replace from here, same as More details.
+    // top before commencement, we should show work order, purchase order and work order number") - view
+    // only here ("not upload, just view option... if not uploaded, it should show not uploaded yet"); adding
+    // or replacing a file happens in More details.
     const papers = h('section', { class: 'progress-papers' },
       h('div', { class: 'doc-list' },
         h('div', { class: 'doc-row' },
           h('span', { class: `doc-check ${P.work_order_no ? 'is-done' : ''}`, 'aria-hidden': 'true' }, P.work_order_no ? '✓' : ''),
           h('span', { class: 'doc-label' }, 'Work order no.'),
           h('span', { class: 'doc-value' }, P.work_order_no || 'Not added yet')),
-        ...data.attachment_types.map(([key, label]) => documentRow(P, key, label, onChanged))));
+        ...data.attachment_types.map(([key, label]) => {
+          const doc = P.documents && P.documents[key];
+          return h('div', { class: 'doc-row' },
+            h('span', { class: `doc-check ${doc ? 'is-done' : ''}`, 'aria-hidden': 'true' }, doc ? '✓' : ''),
+            h('span', { class: 'doc-label' }, label),
+            doc ? h('a', { href: doc.url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View')
+              : h('span', { class: 'doc-value' }, 'Not uploaded yet'));
+        })));
 
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),

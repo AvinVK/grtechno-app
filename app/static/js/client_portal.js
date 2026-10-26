@@ -255,15 +255,18 @@
       return upcomingStageRow(stage, idx);
     });
     // The work order (BOQ) and purchase order sit above the stages (kohal, 2026-10-26: "show work order
-    // (BOQ) and purchase order in progress as well for client view") - only the ones that are on file.
-    const papers = data.attachment_types
-      .filter(([key]) => data.project.documents[key])
-      .map(([key, label]) => h('li', {}, h('a', { href: data.project.documents[key].url, target: '_blank', rel: 'noopener noreferrer' }, label)));
+    // (BOQ) and purchase order in progress as well for client view"), with "not uploaded yet" for any that isn't.
+    const papers = data.attachment_types.map(([key, label]) => {
+      const doc = data.project.documents[key];
+      return h('li', {}, doc
+        ? h('a', { href: doc.url, target: '_blank', rel: 'noopener noreferrer' }, label)
+        : `${label}: not uploaded yet`);
+    });
     const woNo = data.project.work_order_no;
-    const paperBox = papers.length || woNo ? h('section', { class: 'p-section' },
+    const paperBox = h('section', { class: 'p-section' },
       h('h3', {}, 'Work order'),
-      woNo ? h('div', { class: 'dash-info' }, infoRow('Work order number', woNo)) : null,
-      papers.length ? h('ul', {}, papers) : null) : null;
+      h('div', { class: 'dash-info' }, infoRow('Work order number', woNo || 'Not added yet')),
+      h('ul', {}, papers));
     return [paperBox, bar, h('p', { class: 'lead-step-text' }, stepText), ...body];
   }
 
