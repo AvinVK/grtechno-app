@@ -11,13 +11,15 @@ from werkzeug.exceptions import abort
 
 from . import inventory as inv
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
-from .constants import COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
+from .constants import (
+    COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
+)
 from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local, today_local
-from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, delete_upload, save_upload
+from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, copy_upload, delete_upload, save_upload
 from .validation import Fields, api_errors, parse_money
 
 bp = Blueprint("projects", __name__)
@@ -25,6 +27,7 @@ api_errors(bp)
 
 PINCODE_RE = re.compile(r"[1-9][0-9]{5}")
 PROJECT_DOCUMENT_LABELS = dict(PROJECT_DOCUMENT_TYPES)
+PROJECT_ATTACHMENT_LABELS = dict(PROJECT_ATTACHMENT_TYPES)
 PROJECT_STAGE_KEYS = {key for key, _label, _note in PROJECT_STAGES}
 
 
@@ -107,6 +110,12 @@ def create_project_from_lead(lead, user):
         ))
     db.session.add(project)
     db.session.flush()
+    # The work order (BOQ) and purchase order uploaded on the lead come along as the project's own copies.
+    for doc in lead.documents:
+        project.documents.append(ProjectDocument(
+            doc_type=doc.doc_type, filename=copy_upload("lead_documents", doc.filename, "project_documents"),
+            uploaded_by_code=doc.uploaded_by_code,
+        ))
     lead.activities.insert(0, Activity(kind="project", text=f"Project {project.code} created"))
     return project, reused
 
@@ -357,6 +366,7 @@ def _detail(project):
         "currency": settings_for_client()["currency"],
         "payment_modes": PAYMENT_MODES,
         "document_types": PROJECT_DOCUMENT_TYPES,
+        "attachment_types": PROJECT_ATTACHMENT_TYPES,
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,
@@ -526,11 +536,14 @@ def upload_document(project_id, doc_type):
     """One of the documents required before close_project will allow this project to close (kohal,
     2026-10-21: "need to mandatorily upload these 3 things once measure done = true. final estimate, work
     completion certi, final invoice mandatory upload") - admin only, same gate as closing itself since
-    that's the only thing this serves. Re-uploading a type replaces what was there."""
-    if not g.user.is_admin:
-        abort(403, "Only the admin can upload a project's closing documents.")
-    if doc_type not in PROJECT_DOCUMENT_LABELS:
+    that's the only thing this serves. Re-uploading a type replaces what was there.
+
+    The work order (BOQ) and purchase order go through the same route (kohal, 2026-10-26) but aren't closing
+    documents, so anyone who can work on the project may add them, not just the admin."""
+    if doc_type not in PROJECT_DOCUMENT_LABELS and doc_type not in PROJECT_ATTACHMENT_LABELS:
         abort(404)
+    if doc_type in PROJECT_DOCUMENT_LABELS and not g.user.is_admin:
+        abort(403, "Only the admin can upload a project's closing documents.")
     project = _project_or_404(project_id)
     files = request.files.getlist("file")
     if not files:
@@ -555,10 +568,10 @@ def upload_document(project_id, doc_type):
 
 @bp.delete("/api/projects/<int:project_id>/documents/<doc_type>")
 def delete_document(project_id, doc_type):
-    if not g.user.is_admin:
-        abort(403, "Only the admin can remove a project's closing documents.")
-    if doc_type not in PROJECT_DOCUMENT_LABELS:
+    if doc_type not in PROJECT_DOCUMENT_LABELS and doc_type not in PROJECT_ATTACHMENT_LABELS:
         abort(404)
+    if doc_type in PROJECT_DOCUMENT_LABELS and not g.user.is_admin:
+        abort(403, "Only the admin can remove a project's closing documents.")
     project = _project_or_404(project_id)
     existing = next((d for d in project.documents if d.doc_type == doc_type), None)
     if existing:

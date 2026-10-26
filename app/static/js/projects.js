@@ -1111,6 +1111,19 @@
 
     form.addEventListener('input', recalcFinish);
 
+    // The work order (BOQ) and purchase order (kohal, 2026-10-26: "work order (BOQ) and purchase order
+    // upload option for existing projects") - each goes up the moment a file is picked, so they sit outside
+    // the Save details form and rebuild only their own rows afterwards, not the fields being edited above.
+    const paperList = h('div', { class: 'doc-list' });
+    function renderPapers() {
+      clear(paperList).append(...data.attachment_types.map(([key, label]) => documentRow(P, key, label, (saved) => {
+        P.documents = saved.project.documents;
+        renderPapers();
+      })));
+    }
+    renderPapers();
+    const papers = h('section', { class: 'p-section' }, h('h3', {}, 'Work order & purchase order'), paperList);
+
     const site = [P.site_address, P.site_city, P.site_district, P.site_state].filter(Boolean).join(', ');
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
@@ -1121,7 +1134,7 @@
           canOpenClients ? h('a', { class: 'p-client-name', href: `/clients#c${c.id}` }, c.name) : h('span', { class: 'p-client-name' }, c.name)),
         c.phone ? h('a', { class: 'btn small', href: `tel:${c.phone.replace(/[^\d+]/g, '')}` }, 'Call') : null,
         site ? h('p', { class: 'hint' }, `Site: ${site}${P.site_pincode ? ` - ${P.site_pincode}` : ''}`) : null),
-      form));
+      form, papers));
     recalcFinish();
     window.scrollTo(0, 0);
   }
@@ -1415,9 +1428,29 @@
       return upcomingStageRow(stage, idx);
     });
 
+    // The work order number and the two papers behind it sit above the stages (kohal, 2026-10-26: "at the
+    // top before commencement, we should show work order, purchase order and work order number") - view
+    // only here ("not upload, just view option... if not uploaded, it should show not uploaded yet"); adding
+    // or replacing a file happens in More details.
+    const papers = h('section', { class: 'progress-papers' },
+      h('div', { class: 'doc-list' },
+        h('div', { class: 'doc-row' },
+          h('span', { class: `doc-check ${P.work_order_no ? 'is-done' : ''}`, 'aria-hidden': 'true' }, P.work_order_no ? '✓' : ''),
+          h('span', { class: 'doc-label' }, 'Work order no.'),
+          h('span', { class: 'doc-value' }, P.work_order_no || 'Not added yet')),
+        ...data.attachment_types.map(([key, label]) => {
+          const doc = P.documents && P.documents[key];
+          return h('div', { class: 'doc-row' },
+            h('span', { class: `doc-check ${doc ? 'is-done' : ''}`, 'aria-hidden': 'true' }, doc ? '✓' : ''),
+            h('span', { class: 'doc-label' }, label),
+            doc ? h('a', { href: doc.url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View')
+              : h('span', { class: 'doc-value' }, 'Not uploaded yet'));
+        })));
+
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'progress', data.dashboard.can_see_progress),
+      papers,
       bar, h('p', { class: 'lead-step-text' }, stepText),
       ...body));
     window.scrollTo(0, 0);

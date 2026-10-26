@@ -5,7 +5,7 @@ from decimal import Decimal
 from app.constants import COMMISSION_ROLE_KEY, PROJECT_DOCUMENT_TYPES
 from app.extensions import db
 from app.models import Attendance, Client, Lead, Project, ProjectPayment, Role, RoleModule, Service, User, Worker, WorkerAttendance, utcnow
-from conftest import make_user, signed_in, win_lead
+from conftest import advance_to_negotiation, make_user, signed_in, win_lead
 
 
 def upload_all_documents(admin_client, pid):
@@ -1517,3 +1517,63 @@ def test_a_project_chandrapur_pm_creates_is_auto_assigned_to_them(app):
     pm, user = chandrapur_pm(app)
     res = pm.post("/api/projects", json={"new_client_name": "Auto Assign Test"})
     assert res.status_code == 201 and res.get_json()["project"]["manager_code"] == user.code
+
+
+# ---------- work order (BOQ) and purchase order: on file any time, never needed to close ----------
+# (kohal, 2026-10-26: "work order (BOQ) and purchase order upload option for existing projects")
+
+def test_work_order_and_purchase_order_can_be_added_without_blocking_the_close(app, client, admin_client):
+    pid = make_project(client, admin_client)
+    for doc_type in ("work_order_boq", "purchase_order"):
+        res = admin_client.post(f"/api/projects/{pid}/documents/{doc_type}",
+                                 data={"file": (io.BytesIO(b"fake"), "wo.pdf", "application/pdf")},
+                                 content_type="multipart/form-data")
+        assert res.status_code == 201
+        assert res.get_json()["project"]["documents"][doc_type]["url"]
+    detail = admin_client.get(f"/api/projects/{pid}").get_json()
+    assert [k for k, _ in detail["attachment_types"]] == ["work_order_boq", "purchase_order"]
+    # Still three required closing documents, none of which these two count towards.
+    with app.app_context():
+        assert set(db.session.get(Project, pid).missing_documents) == {"final_estimate", "completion_certificate", "final_invoice"}
+    assert admin_client.delete(f"/api/projects/{pid}/documents/purchase_order").status_code == 200
+
+
+# ---------- the same two papers, uploaded on the lead's Work order & advance step ----------
+# (kohal, 2026-10-26: "upload work order (BOQ) and purchase order during work order step in lead flow")
+
+def _pdf(name="wo.pdf"):
+    return {"file": (io.BytesIO(b"fake"), name, "application/pdf")}
+
+
+def test_work_order_papers_uploaded_on_the_lead_carry_over_to_the_project(client, admin_client):
+    lead = make_lead(client)
+    lid = lead["id"]
+    advance_to_negotiation(client, lid)
+    for doc_type in ("work_order_boq", "purchase_order"):
+        res = client.post(f"/api/leads/{lid}/documents/{doc_type}", data=_pdf(), content_type="multipart/form-data")
+        assert res.status_code == 201
+        assert res.get_json()["documents"][doc_type]["url"].startswith("/uploads/lead_documents/")
+    # Replacing keeps one row per type.
+    again = client.post(f"/api/leads/{lid}/documents/purchase_order", data=_pdf("po2.pdf"), content_type="multipart/form-data")
+    assert set(again.get_json()["documents"]) == {"work_order_boq", "purchase_order"}
+    assert client.delete(f"/api/leads/{lid}/documents/work_order_boq").status_code == 200
+    client.post(f"/api/leads/{lid}/documents/work_order_boq", data=_pdf(), content_type="multipart/form-data")
+
+    client.patch(f"/api/leads/{lid}", json={"work_order_no": "WO-9", "work_order_date": "2026-09-23",
+                                            "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer"})
+    won = admin_client.patch(f"/api/leads/{lid}", json={"stage": "Won"}).get_json()
+    docs = admin_client.get(f"/api/projects/{won['project_id']}").get_json()["project"]["documents"]
+    assert set(docs) == {"work_order_boq", "purchase_order"}
+    assert docs["purchase_order"]["url"].startswith("/uploads/project_documents/")
+    assert client.get(docs["purchase_order"]["url"]).status_code == 200       # the copy is a real, served file
+    # Once it is a project, the lead no longer takes uploads.
+    assert client.post(f"/api/leads/{lid}/documents/purchase_order", data=_pdf(), content_type="multipart/form-data").status_code == 409
+
+
+def test_lead_documents_are_only_for_the_two_papers_and_the_leads_own_people(client, admin_client, accounts_client):
+    lid = make_lead(client)["id"]
+    assert client.post(f"/api/leads/{lid}/documents/final_invoice", data=_pdf(), content_type="multipart/form-data").status_code == 404
+    assert client.post(f"/api/leads/{lid}/documents/purchase_order", data={}, content_type="multipart/form-data").status_code == 422
+    assert accounts_client.post(f"/api/leads/{lid}/documents/purchase_order", data=_pdf(), content_type="multipart/form-data").status_code in (403, 404)
+    assert admin_client.post(f"/api/leads/{lid}/documents/purchase_order", data=_pdf(), content_type="multipart/form-data").status_code == 201
+

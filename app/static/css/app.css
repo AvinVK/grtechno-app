@@ -704,6 +704,8 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 }
 .doc-check.is-done { border-color: var(--ok); background: var(--ok); color: #fff; }
 .doc-label { flex: 1; min-width: 0; font-weight: 600; }
+.doc-value { color: var(--muted); font-size: 14px; }
+.progress-papers { margin: 14px 0 18px; }
 .doc-row .link-btn { font-size: 13px; }
 
 /* The Progress tab's fixed installation checklist (kohal, 2026-10-22) - one stage worked on at a time,

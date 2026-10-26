@@ -254,7 +254,20 @@
       if (idx === currentIdx) return currentStageCard(stage, idx, data.pause_reasons, data.currency);
       return upcomingStageRow(stage, idx);
     });
-    return [bar, h('p', { class: 'lead-step-text' }, stepText), ...body];
+    // The work order (BOQ) and purchase order sit above the stages (kohal, 2026-10-26: "show work order
+    // (BOQ) and purchase order in progress as well for client view"), with "not uploaded yet" for any that isn't.
+    const papers = data.attachment_types.map(([key, label]) => {
+      const doc = data.project.documents[key];
+      return h('li', {}, doc
+        ? h('a', { href: doc.url, target: '_blank', rel: 'noopener noreferrer' }, label)
+        : `${label}: not uploaded yet`);
+    });
+    const woNo = data.project.work_order_no;
+    const paperBox = h('section', { class: 'p-section' },
+      h('h3', {}, 'Work order'),
+      h('div', { class: 'dash-info' }, infoRow('Work order number', woNo || 'Not added yet')),
+      h('ul', {}, papers));
+    return [paperBox, bar, h('p', { class: 'lead-step-text' }, stepText), ...body];
   }
 
   const SECTIONS = { '': renderOverview, payments: renderPayments, details: renderDetails, progress: renderProgress };
