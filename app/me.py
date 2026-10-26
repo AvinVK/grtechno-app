@@ -6,7 +6,7 @@ another page. The bottom tabs come from base.html, like on every other page."""
 
 from datetime import timedelta
 
-from flask import Blueprint, abort, g, jsonify, render_template, request
+from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, url_for
 
 from . import categories
 from .auth import (
@@ -131,6 +131,9 @@ def _extra_tiles():
 
 @bp.get("/me")
 def page():
+    # A client has no Me hub (kohal, 2026-10-26) - their one tab is their projects list.
+    if g.user.role_key == "client":
+        return redirect(url_for("client_portal.my_projects"))
     keys = {m.key for m in modules_for(g.user)}
     return render_template("me.html", summaries=_summaries(keys), extra_tiles=_extra_tiles(),
                            # Users & roles / Employee management aren't in_nav (see modules_for), so they

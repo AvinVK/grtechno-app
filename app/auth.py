@@ -46,7 +46,7 @@ def _landing_url(user) -> str:
     if user.is_admin:
         return url_for("me.page")
     if user.role_key == "client":
-        return url_for("client_portal.my_projects")
+        return url_for("client_portal.welcome")
     return url_for("attendance.page")
 
 
@@ -447,6 +447,38 @@ def _setup_code_ok(user, code: str) -> bool:
     )
 
 
+# ---------- a client signs in with their phone number alone ----------
+# (kohal, 2026-10-26: "no need for setup code as well... that client just needs to enter the contact and see
+# the projects") - so the phone number is the only secret there is. Wrong numbers are therefore throttled per
+# address: past CLIENT_MISS_LIMIT misses inside CLIENT_MISS_WINDOW, that address waits, which makes walking
+# through phone numbers one by one impractical. Kept in memory per process - a soft brake, not a ledger.
+
+CLIENT_MISS_LIMIT = 8
+CLIENT_MISS_WINDOW = timedelta(minutes=10)
+_client_misses: dict = {}
+
+
+def _client_by_phone(text: str):
+    """The active client login whose userid is this phone number (last 10 digits, so +91 / 0 / spaces / dashes
+    don't matter), or None."""
+    digits = re.sub(r"\D", "", text or "")[-10:]
+    if len(digits) != 10:
+        return None
+    user = User.query.filter_by(userid=digits).first()
+    return user if user and user.role_key == "client" and user.is_active else None
+
+
+def _client_throttled() -> bool:
+    now = utcnow()
+    recent = [t for t in _client_misses.get(request.remote_addr, []) if now - t < CLIENT_MISS_WINDOW]
+    _client_misses[request.remote_addr] = recent
+    return len(recent) >= CLIENT_MISS_LIMIT
+
+
+def _note_client_miss() -> None:
+    _client_misses.setdefault(request.remote_addr, []).append(utcnow())
+
+
 # ---------- request hooks ----------
 
 @bp.before_app_request
@@ -492,7 +524,26 @@ def login():
         check_csrf()
         user = find_user(request.form.get("userid", ""))
         pin = request.form.get("pin", "")
-        if _is_locked(user):
+        phone_client = _client_by_phone(request.form.get("userid", ""))
+        if client_mode and not pin and not phone_client:
+            # A client's phone number is their whole sign-in, so a number that isn't one is counted.
+            if _client_throttled():
+                error = LOCKED_MESSAGE
+            else:
+                _note_client_miss()
+                error = "We couldn't find a client login for that phone number. Ask us to give you access."
+        elif phone_client and not pin:
+            # No PIN to check. The first time in, give the login an unguessable hash so it counts as active
+            # (auth.load_user only keeps a session for someone who has a password_hash, and "Has logged in"
+            # on the Clients list reads it) - nobody knows it, so the PIN form can never match it.
+            if not phone_client.password_hash:
+                phone_client.password_hash = generate_password_hash(secrets.token_hex(16))
+            db.session.commit()
+            session.clear()
+            session["uid"] = phone_client.code
+            session.permanent = True
+            return redirect(next_url or _landing_url(phone_client))
+        elif _is_locked(user):
             error = LOCKED_MESSAGE
         else:
             has_pin = bool(user and user.password_hash)

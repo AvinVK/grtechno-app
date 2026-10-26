@@ -4,6 +4,7 @@ app/clients.py's give_login, and tests/test_client_portal.py for what that login
 
 from app.extensions import db
 from app.models import Client, User
+from conftest import csrf
 
 
 def make_client(name="Kalyani Cold Storage", contact_name="Mr. Kalyani", phone="9876543210"):
@@ -25,19 +26,19 @@ def test_giving_login_access_creates_a_client_role_user(app, admin_client):
     res = admin_client.post(f"/api/clients/{cid}/login")
     assert res.status_code == 201
     body = res.get_json()
-    assert body["setup_code"] and body["code_days"]
+    assert "setup_code" not in body   # phone number is the whole sign-in (kohal, 2026-10-26)
     with app.app_context():
         user = db.session.get(User, body["user"]["code"])
         assert user.role_key == "client" and user.client_id == cid
         assert user.name == "Mr. Kalyani"
 
 
-def test_giving_login_access_twice_reissues_the_same_login_not_a_duplicate(app, admin_client):
+def test_giving_login_access_twice_returns_the_same_login_not_a_duplicate(app, admin_client):
     cid = make_client()
     first = admin_client.post(f"/api/clients/{cid}/login").get_json()
     second = admin_client.post(f"/api/clients/{cid}/login").get_json()
     assert first["user"]["code"] == second["user"]["code"]
-    assert first["setup_code"] != second["setup_code"]
+    assert first["user"]["userid"] == second["user"]["userid"]
     with app.app_context():
         assert User.query.filter_by(client_id=cid).count() == 1
 
@@ -49,7 +50,7 @@ def test_client_detail_shows_login_status(app, admin_client):
 
     admin_client.post(f"/api/clients/{cid}/login")
     after = admin_client.get(f"/api/clients/{cid}").get_json()
-    assert after["login"]["status"] == "pending"   # setup code issued, PIN not set yet
+    assert after["login"]["status"] == "pending"   # given, but the client hasn't signed in yet
 
 
 def test_a_client_with_no_contact_name_falls_back_to_the_client_name(admin_client):
@@ -93,18 +94,15 @@ def test_two_clients_cannot_share_the_same_phone_login(admin_client):
 # ---------- the Clients list flags who has actually logged in, without a tap into each one ----------
 
 def test_the_clients_list_flags_who_has_actually_logged_in(app, admin_client):
-    """kohal, 2026-10-22: "change login to 'has logged in'" - a setup code sitting unused shouldn't count,
-    only a client who has actually set their PIN."""
+    """kohal, 2026-10-22: "change login to 'has logged in'" - a login nobody has used yet shouldn't count,
+    only a client who has actually signed in."""
     logged_in = make_client("Kailash Hospital", phone="9876543210")
     still_pending = make_client("Standalone Site", phone="9876543211")
     not_given = make_client("Orchid Heights CHS", phone="9876543212")
-    code = admin_client.post(f"/api/clients/{logged_in}/login").get_json()["user"]["code"]
+    admin_client.post(f"/api/clients/{logged_in}/login")
     admin_client.post(f"/api/clients/{still_pending}/login")
-    with app.app_context():
-        from werkzeug.security import generate_password_hash
-        user = db.session.get(User, code)
-        user.password_hash = generate_password_hash("482917")
-        db.session.commit()
+    anon = app.test_client()
+    assert anon.post("/login", data={"csrf": csrf(anon), "userid": "9876543210"}).status_code == 302
 
     clients = {c["id"]: c for c in admin_client.get("/api/clients").get_json()["clients"]}
     assert clients[logged_in]["has_logged_in"] is True
