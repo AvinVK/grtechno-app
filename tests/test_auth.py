@@ -87,13 +87,12 @@ def test_login_lands_a_client_on_their_own_portal(app, anon):
         db.session.commit()
         userid = who.userid
     ok = login(anon, userid, "482917")
-    assert ok.status_code == 302 and ok.headers["Location"].endswith("/my-projects")
+    assert ok.status_code == 302 and ok.headers["Location"].endswith("/welcome")
 
 
-def test_a_client_can_sign_in_with_their_own_phone_number_end_to_end(app, admin_client, anon):
-    """kohal, 2026-10-23: "the login of client should be mapped to its mobile number... so number will be
-    the mapping key" - the full real flow: admin gives login access, the client sets their PIN using their
-    phone number as the userid, then signs in with it."""
+def test_a_client_signs_in_with_just_their_phone_number(app, admin_client, anon):
+    """kohal, 2026-10-26: "no need for setup code as well... that client just needs to enter the contact and
+    see the projects" - the admin gives access, the client types their phone number, no code or PIN."""
     from app.models import Client
     with app.app_context():
         c = Client(name="Kalyani Cold Storage", phone="9876543210")
@@ -101,14 +100,35 @@ def test_a_client_can_sign_in_with_their_own_phone_number_end_to_end(app, admin_
         db.session.commit()
         cid = c.id
     given = admin_client.post(f"/api/clients/{cid}/login").get_json()
-    userid = given["user"]["userid"]
-    assert userid == "9876543210"
+    assert given["user"]["userid"] == "9876543210" and "setup_code" not in given
 
-    done = set_pin(anon, userid, given["setup_code"], "482917")
-    assert done.status_code == 302
+    # Any way of writing the number works, and the PIN box isn't even on the client page.
+    assert b"PIN" not in anon.get("/login?as=client").data
+    ok = anon.post("/login", data={"csrf": csrf(anon), "userid": "+91 98765-43210", "as": "client"})
+    assert ok.status_code == 302 and ok.headers["Location"].endswith("/welcome")
+    assert anon.get("/api/my-projects").status_code == 200
+    # Signing in is what makes it a login that "has logged in".
+    assert admin_client.get(f"/api/clients/{cid}").get_json()["login"]["status"] == "active"
 
-    ok = login(app.test_client(), userid, "482917")
-    assert ok.status_code == 302 and ok.headers["Location"].endswith("/my-projects")
+
+def test_a_phone_number_that_is_not_a_client_login_is_refused_and_throttled(app, anon):
+    from app.auth import CLIENT_MISS_LIMIT, _client_misses
+    _client_misses.clear()
+    for _ in range(CLIENT_MISS_LIMIT):
+        res = anon.post("/login", data={"csrf": csrf(anon), "userid": "9000000000", "as": "client"})
+        assert res.status_code == 200 and b"find a client login" in res.data
+    blocked = anon.post("/login", data={"csrf": csrf(anon), "userid": "9000000000", "as": "client"})
+    assert b"Too many wrong tries" in blocked.data
+    _client_misses.clear()
+
+
+def test_staff_cannot_sign_in_with_no_pin_by_typing_their_userid(app, anon):
+    with app.app_context():
+        who = make_user("Someone Staff", pin="482917")
+        userid = who.userid
+    res = anon.post("/login", data={"csrf": csrf(anon), "userid": userid, "as": "client"})
+    assert res.status_code == 200
+    assert anon.get("/api/my-projects").status_code in (401, 403)
 
 
 def test_login_and_set_pin_show_client_mode_copy_when_asked(anon):

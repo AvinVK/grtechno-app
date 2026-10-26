@@ -34,6 +34,34 @@ def test_only_a_client_role_can_use_the_portal(client, admin_client, accounts_cl
         assert who.get("/api/my-projects").status_code == 403
 
 
+def test_a_client_lands_on_the_business_page_first_and_it_leads_to_their_projects(app):
+    """kohal, 2026-10-26: "whenever i share the login details to client, first they should land on a landing
+    page of the business" - served to a client, with its way into the portal and its images/styles resolving."""
+    with app.app_context():
+        who = client_user(app, make_client())
+    page = who.get("/welcome")
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert "G R Institute of Technology" in html and 'href="/my-projects"' in html
+    assert who.get("/static/css/landing.css").status_code == 200
+    assert "Fire fighting systems, installed" not in html  # only the website's first page, not the whole site
+
+
+def test_a_client_has_only_a_projects_tab_and_no_me_hub(app):
+    """kohal, 2026-10-26: "remove me tab from clients view and have only projects tab there"."""
+    with app.app_context():
+        who = client_user(app, make_client())
+    html = who.get("/my-projects").get_data(as_text=True)
+    nav = html[html.index('class="bottom-nav"'):html.index("</nav>", html.index('class="bottom-nav"'))]
+    assert "Projects" in nav and "Me" not in nav.replace("Menu", "")
+    assert who.get("/me").headers["Location"].endswith("/my-projects")
+
+
+def test_only_a_client_role_can_see_the_landing_page(client, admin_client, accounts_client):
+    for who in (client, admin_client, accounts_client):
+        assert who.get("/welcome").status_code == 403
+
+
 def test_a_client_sees_only_their_own_projects(app):
     with app.app_context():
         mine = make_client("Kalyani Cold Storage")
@@ -143,6 +171,39 @@ def test_a_clients_own_project_shows_the_scheduled_payment_and_whether_its_paid(
     paid = who.get(f"/api/my-projects/{pid}").get_json()
     stages2 = {s["key"]: s for s in paid["stages"]}
     assert stages2["commencement"]["payment_received"] is True
+
+
+def test_a_client_sees_value_payments_and_details_but_nothing_internal(app, admin_client):
+    """kohal, 2026-10-23: "client should be able to see everything in project except material, expenses and
+    attendance. only view access" - Overview/Payment/More details data comes through, the three hidden
+    areas (and who brought the lead in) never do."""
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine, title="Fire NOC work")
+        who = client_user(app, mine)
+    admin_client.patch(f"/api/projects/{pid}", json={
+        "title": "Fire NOC work", "site_name": "Plant 2", "estimated_amount": 100000, "work_order_no": "WO-7", "completion_days": 30,
+        "payments": [{"label": "Advance", "amount": 40000, "mode": "Cash", "paid_date": "2026-10-01"}],
+    })
+
+    data = who.get(f"/api/my-projects/{pid}").get_json()
+    p = data["project"]
+    assert p["net_amount"] == 100000.0 and p["work_order_no"] == "WO-7" and p["completion_days"] == 30
+    assert [s["label"] for s in p["payments"]] == ["Advance"] and p["payments"][0]["paid_date"] == "2026-10-01"
+    assert data["client"]["name"] == "Kalyani Cold Storage"
+    assert data["dashboard"]["started"]
+    for hidden in ("materials", "expenses", "wage_expenses", "team", "brought_by", "total_material_cost", "total_expense"):
+        assert hidden not in data and hidden not in data["dashboard"] and hidden not in p
+
+
+def test_a_client_has_no_way_to_change_a_project(app):
+    with app.app_context():
+        mine = make_client("Kalyani Cold Storage")
+        pid = make_project_for(mine)
+        who = client_user(app, mine)
+    assert who.patch(f"/api/projects/{pid}", json={"estimated_amount": 1}).status_code == 403
+    assert who.patch(f"/api/my-projects/{pid}", json={"estimated_amount": 1}).status_code == 405
+    assert who.get(f"/api/projects/{pid}/material-requests").status_code == 403
 
 
 def test_a_client_never_reaches_the_normal_projects_api(app):

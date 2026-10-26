@@ -23,6 +23,8 @@ class TestConfig(Config):
 
 @pytest.fixture
 def app():
+    from app.auth import _client_misses
+    _client_misses.clear()      # the per-address brake on wrong client phone numbers is process-wide
     app = create_app(TestConfig)
     with app.app_context():
         db.create_all()

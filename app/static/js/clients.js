@@ -186,27 +186,30 @@
     window.scrollTo(0, 0);
   }
 
-  // Same one-time-reveal card as Users & roles' own showCode (app/static/js/users.js) - a client's setup
-  // code is exactly that same secret, just handed out from here instead since the admin picks *which*
-  // client it's for by being on that client's own page (kohal, 2026-10-22: "the admin would also have to
-  // choose which client it is").
-  function showLoginCode(resultBox, data, client) {
-    // Userid is the client's own phone number now (kohal, 2026-10-23: "so number will be the mapping
-    // key") - they already know it, so this message only needs to carry the setup code.
+  // What the admin hands a client once they have a login (kohal, 2026-10-26: "no need for setup code as
+  // well. as soon as give login access is clicked, it should show login phone number and share link on
+  // whatsapp to the client. that client just needs to enter the contact and see the projects") - nothing
+  // secret to reveal once any more: the client's phone number is the whole sign-in, so this is just the
+  // number and a WhatsApp message with the sign-in link.
+  function showLoginLink(resultBox, data, client) {
     const u = data.user;
-    const message = `Leads\n\nYour phone number:\n${u.userid}\n\nSetup code:\n${data.setup_code}\n(works once, valid ${data.code_days} days)\n\nSet your PIN at: ${window.location.origin}/set-pin?as=client`;
+    const link = `${window.location.origin}/login?as=client`;
+    const message = `GR Techno Fire Safety
+
+See your projects here:
+${link}
+
+Sign in with your phone number: ${u.userid}`;
     clear(resultBox).append(h('section', { class: 'code-card' },
       h('h3', {}, `Login for ${client.name}`),
-      h('dl', {},
-        h('dt', {}, 'Phone number (login)'), h('dd', { class: 'code-value' }, u.userid),
-        h('dt', {}, 'Setup code'), h('dd', { class: 'code-value' }, data.setup_code)),
-      h('p', { class: 'hint' }, `Shown only now. It works once and is valid for ${data.code_days} days - share both with the client, they'll set their own PIN at /set-pin.`),
+      h('dl', {}, h('dt', {}, 'Phone number (login)'), h('dd', { class: 'code-value' }, u.userid)),
+      h('p', { class: 'hint' }, 'They open the link, enter this phone number and see their projects. No code or PIN.'),
       h('div', { class: 'code-actions' },
         h('a', { class: 'btn primary', href: `https://wa.me/?text=${encodeURIComponent(message)}`, target: '_blank', rel: 'noopener noreferrer' }, 'Share on WhatsApp'),
         h('button', { class: 'btn', type: 'button', onclick: async () => {
-          try { await navigator.clipboard.writeText(data.setup_code); toast('Copied'); }
-          catch (err) { toast('Could not copy. Select the code and copy it.', true); }
-        } }, 'Copy code')),
+          try { await navigator.clipboard.writeText(link); toast('Copied'); }
+          catch (err) { toast('Could not copy. Select the link and copy it.', true); }
+        } }, 'Copy link')),
       h('button', { class: 'link-btn code-done', type: 'button', onclick: () => { resultBox.hidden = true; clear(resultBox); } }, 'Done')));
     resultBox.hidden = false;
     resultBox.scrollIntoView({ block: 'nearest' });
@@ -228,13 +231,12 @@
   function renderSummary(client, projects, currency, broughtBy, isAdmin, login) {
     LD.setAppbarBack?.('Clients', '#');
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
-    const loginBtn = h('button', { class: 'btn small', type: 'button' }, login ? 'New setup code' : 'Give login access');
+    const loginBtn = h('button', { class: 'btn small', type: 'button' }, login ? 'Share login again' : 'Give login access');
     loginBtn.onclick = async () => {
       loginBtn.disabled = true;
       try {
         const data = await api(`/api/clients/${client.id}/login`, { method: 'POST' });
-        toast(login ? 'New setup code issued' : 'Login created');
-        showLoginCode(resultBox, data, client);
+        showLoginLink(resultBox, data, client);
       } catch (err) {
         toast(err.message, true);
       } finally {

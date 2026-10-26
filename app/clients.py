@@ -6,7 +6,7 @@ from flask import Blueprint, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
 
 from . import categories
-from .auth import SETUP_CODE_DAYS, create_user, issue_setup_code, visible_clients, visible_projects
+from .auth import create_user, visible_clients, visible_projects
 from .extensions import db
 from .models import Client, Lead, Project, settings_for_client
 from .projects import brought_by
@@ -114,34 +114,32 @@ def get_client(client_id):
 
 @bp.post("/api/clients/<int:client_id>/login")
 def give_login(client_id):
-    """Set this client up with their own sign-in, or re-issue a fresh setup code if they already have one
-    (same "New setup code" idea as Users & roles' own reset) - admin only. The one place a User gets linked
-    to a Client (User.client_id) - see auth.visible_projects' own "client" branch for what that then
-    scopes them to see.
+    """Set this client up with their own sign-in (or return the one they already have) - admin only. The
+    one place a User gets linked to a Client (User.client_id) - see auth.visible_projects' own "client"
+    branch for what that then scopes them to see.
 
-    The userid is the client's own phone number, not a generated name-code (kohal, 2026-10-23: "no client
-    will be patient enough to enter the code and set the pin. so number will be the mapping key") - still
-    needs the one-time setup code + PIN below, just a memorable login id instead of a random one."""
+    The userid is the client's own phone number, and that is the whole sign-in: no setup code, no PIN
+    (kohal, 2026-10-26: "no need for setup code as well... that client just needs to enter the contact and
+    see the projects") - see auth.login's client branch. Safe to tap again: it just returns the same login
+    so the admin can share the link once more."""
     if not g.user.is_admin:
         abort(403, "Only the admin can give a client login access.")
     client = _client_or_404(client_id)
-    existing = client.logins[0] if client.logins else None
-    if existing is not None:
-        setup_code = issue_setup_code(existing)
-        user = existing
-    else:
+    user = client.logins[0] if client.logins else None
+    if user is None:
         phone_userid = _phone_userid(client.phone)
         if not phone_userid:
             return jsonify(error="Add a valid 10-digit phone number for this client first."), 422
         try:
-            user, setup_code = create_user(client.contact_name or client.name, role="client", userid=phone_userid)
+            user, _ = create_user(client.contact_name or client.name, role="client", userid=phone_userid)
         except ValueError as err:
             return jsonify(error=str(err)), 422
         user.client_id = client.id
+        user.setup_code_hash = None       # a phone-only login never uses the one-time code create_user made
+        user.setup_code_expires = None
         db.session.add(user)
     db.session.commit()
-    return jsonify(user={"code": user.code, "userid": user.userid, "name": user.name},
-                    setup_code=setup_code, code_days=SETUP_CODE_DAYS), 201
+    return jsonify(user={"code": user.code, "userid": user.userid, "name": user.name}), 201
 
 
 @bp.patch("/api/clients/<int:client_id>")

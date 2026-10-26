@@ -22,17 +22,22 @@
              inputmode="{{ 'numeric' if client_mode else 'text' }}"
              {% if not userid %}autofocus{% endif %} required>
     </div>
+    {% if client_mode %}
+    {# A client's phone number is their whole sign-in - no PIN (kohal, 2026-10-26). #}
+    {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
+    {% else %}
     {% call pin_field('pin', 'PIN', 6, 'current-password', autosubmit=true,
                       attrs=('autofocus ' if userid else '') ~ 'required' ~ (' aria-invalid="true" aria-describedby="login-error"' if error else '')) %}
       {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
     {% endcall %}
-    <button class="btn primary" type="submit">Sign in</button>
-    <p class="hint">First time, or forgot your PIN? <a href="{{ url_for('auth.set_pin', as='client' if client_mode else none) }}">Set a new PIN</a> with the setup code from your admin.</p>
+    {% endif %}
+    <button class="btn primary" type="submit">{{ 'Continue' if client_mode else 'Sign in' }}</button>
+    {% if not client_mode %}<p class="hint">First time, or forgot your PIN? <a href="{{ url_for('auth.set_pin') }}">Set a new PIN</a> with the setup code from your admin.</p>{% endif %}
     <p class="hint">
       {% if client_mode %}<a href="{{ url_for('auth.login') }}">Staff sign in instead</a>
       {% else %}Are you a client? <a href="{{ url_for('auth.login', as='client') }}">Sign in here</a>{% endif %}
     </p>
   </form>
 </main>
-<script src="{{ asset('js/pin.js') }}"></script>
+{% if not client_mode %}<script src="{{ asset('js/pin.js') }}"></script>{% endif %}
 {% endblock %}

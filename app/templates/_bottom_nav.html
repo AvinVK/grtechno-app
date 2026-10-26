@@ -4,6 +4,16 @@
    "current" there is worked out here from the endpoint. Every tab but Me only shows for a role that
    actually has that module, so there's never one here that just 403s - and a role with none of Leads/
    Clients/Projects/Inventory/Attendance still gets Me, instead of no nav bar at all. #}
+{# A client (kohal, 2026-10-26: "remove me tab from clients view and have only projects tab there") has no Me hub
+   and none of the modules above - their one tab is their own projects list (app/client_portal.py). #}
+{% if current_user.role_key == 'client' %}
+<nav class="bottom-nav" aria-label="Main">
+  <a class="bottom-nav-item" href="{{ url_for('client_portal.my_projects') }}" aria-current="page">
+    <span class="nav-icon-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13h8"/></svg></span>
+    <span>Projects</span>
+  </a>
+</nav>
+{% else %}
 {% set has_leads_tab = nav_modules|selectattr('key', 'equalto', 'leads')|list %}
 <nav class="bottom-nav" aria-label="Main">
   {% if has_leads_tab %}
@@ -46,3 +56,4 @@
     <span>Me</span>
   </a>
 </nav>
+{% endif %}
