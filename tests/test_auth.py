@@ -57,6 +57,23 @@ def test_login_lands_the_admin_on_me_and_everyone_else_on_attendance(app, anon, 
     assert ok2.status_code == 302 and ok2.headers["Location"].endswith("/attendance")
 
 
+def test_signing_in_relinks_an_employee_row_that_lost_its_login(app, anon):
+    """The work plan, wages, fooding and cash all hang off the Worker linked to the User; a link lost to a
+    bad migration must heal on the next sign-in instead of leaving the person cut off for good."""
+    from app.auth import sync_worker_for_user
+    from app.models import Worker
+    person = make_user("Lost Link", role="helper", pin="193857")
+    sync_worker_for_user(person)
+    db.session.commit()
+    worker = Worker.query.filter_by(user_code=person.code).first()
+    worker.user_code = None
+    db.session.commit()
+
+    assert login(anon, person.userid, "193857").status_code == 302
+    assert db.session.get(Worker, worker.id).user_code == person.code
+    assert Worker.query.filter_by(name="Lost Link").count() == 1       # re-linked, not duplicated
+
+
 # ---------- a client role lands on its own portal, not Attendance (kohal, 2026-10-22) ----------
 
 def test_login_lands_a_client_on_their_own_portal(app, anon):

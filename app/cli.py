@@ -4,7 +4,7 @@ import click
 
 from .extensions import db
 from .auth import create_user, find_user, issue_setup_code, SETUP_CODE_DAYS
-from .models import Activity, Lead, LeadSurvey, User, utcnow
+from .models import Activity, Lead, LeadSurvey, Role, RoleModule, User, Worker, utcnow
 from .timeutil import today_local
 
 # (company, contact, phone, service, source, value, stage, follow-up offset in days or None, notes)
@@ -64,6 +64,39 @@ def register_cli(app):
         db.session.commit()
         click.echo(f"New setup code issued for {user.name}.")
         _print_credentials(user, setup_code)
+
+    @app.cli.command("access-report")
+    def access_report():
+        """Read-only: for every signed-in user, which role/modules/employee row they actually resolve to.
+        Run it against the live database to see why someone can't see a tile or isn't offered a work plan."""
+        modules_by_role = {}
+        for rm in RoleModule.query.all():
+            modules_by_role.setdefault(rm.role_key, []).append(rm.module_key)
+        workers = Worker.query.all()
+        by_code = {w.user_code: w for w in workers if w.user_code}
+        unlinked = [w for w in workers if not w.user_code]
+        users = User.query.filter(User.is_admin.is_(False), User.password_hash.isnot(None)).order_by(User.name).all()
+        for u in users:
+            if u.role_key == "client":
+                continue
+            role = db.session.get(Role, u.role_key)
+            w = by_code.get(u.code)
+            problems = []
+            if role is None:
+                problems.append("ROLE ROW MISSING")
+            if not modules_by_role.get(u.role_key):
+                problems.append("ROLE HAS NO MODULES")
+            if w is None:
+                problems.append("NO EMPLOYEE ROW LINKED (no work plan, wages, fooding, cash)")
+            first = u.name.strip().lower().split()[0] if u.name.strip() else ""
+            twins = [x.name for x in unlinked if first and first in x.name.lower()]
+            click.echo(f"{u.name} [{u.role_key}] active={u.is_active} modules={sorted(modules_by_role.get(u.role_key, []))} "
+                       f"employment={w.employment_type or '-' if w else 'n/a'}")
+            for p in problems:
+                click.echo(f"    !! {p}")
+            if twins:
+                click.echo(f"    ?? unlinked employee rows with a similar name: {twins}")
+        click.echo(f"\n{len(users)} signed-in users, {len(unlinked)} employee rows with no login.")
 
     @app.cli.command("seed-demo")
     @click.option("--force", is_flag=True, help="Delete every existing lead first.")

@@ -104,6 +104,23 @@ def test_deploy_backs_up_then_upgrades_an_existing_database(server):
     assert kept == [("keep-1234",)]                                                  # existing data survived
 
 
+def test_upgrading_does_not_cascade_through_a_rebuilt_users_table(server):
+    """Rebuilding `users` (batch_alter_table) with foreign keys on used to fire every child table's ON DELETE
+    rule on the live site: workers.user_code went NULL (employees "had no login"), attendance was wiped."""
+    with server.app_context():
+        upgrade(directory=str(deploy.BASE_DIR / "migrations"), revision="b7e2f9a4c816")
+    c = sqlite3.connect(server.db_file)
+    c.execute("insert into users (code, userid, name, is_admin, is_active, failed_attempts, created_at) "
+              "values ('1234', 'keep-1234', 'Keep', 0, 1, 0, '2026-01-01')")
+    c.execute("insert into workers (name, source, created_at, category, user_code) "
+              "values ('Keep', 'user_account', '2026-01-01', 'staff', '1234')")
+    c.commit(); c.close()
+
+    assert server.test_client().post("/deploy", headers=HEADERS).status_code == 200
+    kept = sqlite3.connect(server.db_file).execute("select user_code from workers").fetchall()
+    assert kept == [("1234",)]
+
+
 def test_only_the_newest_backups_are_kept(server):
     sqlite3.connect(server.db_file).close()
     folder = server.db_file.parent / "backups"

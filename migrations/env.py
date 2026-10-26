@@ -97,6 +97,14 @@ def run_migrations_online():
     connectable = get_engine()
 
     with connectable.connect() as connection:
+        # SQLite's batch_alter_table rebuilds a table by dropping the old one, and with foreign keys on (the
+        # app switches them on for every connection, see extensions.py) that drop fires every child table's
+        # ON DELETE rule: rebuilding `users` set every workers.user_code to NULL, wiped attendance (CASCADE)
+        # and blanked lead owners on the live site. Off for the migration run only; must be set before any
+        # transaction starts, SQLite ignores it inside one.
+        if connection.dialect.name == "sqlite":
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            connection.commit()          # end the transaction SQLAlchemy auto-began for the PRAGMA
         context.configure(
             connection=connection,
             target_metadata=get_metadata(),

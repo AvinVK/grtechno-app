@@ -502,6 +502,9 @@ def login():
                 error = "This account is switched off. Ask your admin."
             elif matches and has_pin:
                 user.failed_attempts = 0
+                # Self-heal: the employee row (work plan, wages, fooding, cash all hang off it) used to be made
+                # only at first PIN setup, so anyone whose link was lost or never made stayed cut off for good.
+                sync_worker_for_user(user)
                 db.session.commit()
                 session.clear()
                 session["uid"] = user.code
