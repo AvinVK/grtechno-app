@@ -923,7 +923,10 @@
       outcomeClientId = clientId;
       inputs.stage.addOption(result, result);
       inputs.stage.value = result;
-      saveBtn.click();
+      // Not saveBtn.click(): once the work order is saved every step is done, there's no current-step card,
+      // and saveBtn isn't in the page at all - a detached button's click submits nothing, so Mark won/lost
+      // silently did nothing (kohal, 2026-10-26). The form itself is always in the document.
+      form.requestSubmit();
     };
 
     // quoteSection's fields belong to this form (see above) but live outside it in the DOM, so error
@@ -988,7 +991,13 @@
           const stageOk = requireFilled([...surveyCheck(), ...negotiationCheck()]);
           if (Object.keys(missing).length || !stageOk) {
             Object.keys(missing).forEach((name) => inputs[name]?.closest('details')?.setAttribute('open', ''));
-            throw { message: 'Check the highlighted fields', fields: missing };
+            // The survey/negotiation boxes requireFilled flags sit in step sheets that aren't on screen on a
+            // lead's detail page, so say where to look instead of an unexplained "highlighted fields".
+            throw {
+              message: stageOk ? 'Check the highlighted fields'
+                : 'Some Site survey or Negotiation details are incomplete - open that step and fill them in',
+              fields: missing,
+            };
           }
         }
 
@@ -1030,11 +1039,17 @@
         errorBox.textContent = err.message;
         errorBox.hidden = false;
         let first = null;
+        const unshown = [];
         for (const [name, message] of Object.entries(err.fields || {})) {
           const p = formRoots.map((root) => root.querySelector(`#err-${name}`)).find(Boolean);
-          if (p) p.textContent = message;
+          if (p && p.isConnected) p.textContent = message;
+          else unshown.push(`${name.replace(/_/g, ' ')}: ${message}`);
           if (inputs[name]) { inputs[name].setAttribute('aria-invalid', 'true'); first = first || inputs[name]; }
         }
+        // On a lead's detail page the form's own fields live in step sheets that aren't on screen, so a
+        // message with nowhere to land would leave only "Check the highlighted fields" and nothing
+        // highlighted - say which ones in the error box instead.
+        if (unshown.length) errorBox.textContent = `${err.message} (${unshown.join('; ')})`;
         (first || errorBox).focus?.();
       } finally {
         saveBtn.disabled = false;
