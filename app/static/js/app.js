@@ -847,6 +847,42 @@
         h('div', { class: 'check-grid' }, woServiceBoxes.map((s) => s.box)),
         h('p', { class: 'err', id: 'err-wo_service_ids', role: 'alert' }));
 
+      // The work order (BOQ) and purchase order (kohal, 2026-10-26: "upload work order (BOQ) and purchase order
+      // during work order step") - optional, each goes up the moment a file is picked and rides along onto the
+      // project when the lead is won. View only once the lead has been won or lost.
+      function leadDocsField() {
+        const list = h('div', { class: 'doc-list' });
+        const canUpload = negotiationFinalized && !isPastStage('Work order & advance');
+        const render = () => {
+          clear(list).append(...[['work_order_boq', 'Work order (BOQ)'], ['purchase_order', 'Purchase order']].map(([key, label]) => {
+            const doc = (lead.documents || {})[key];
+            const input = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', hidden: true });
+            input.onchange = async () => {
+              if (!input.files.length) return;
+              const body = new FormData();
+              body.append('file', input.files[0]);
+              try {
+                const res = await fetch(`/api/leads/${lead.id}/documents/${key}`, { method: 'POST', body, credentials: 'same-origin' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'Could not upload this document');
+                lead.documents = data.documents;
+                toast(doc ? 'Document replaced' : 'Document added');
+                render();
+              } catch (e) { toast(e.message, true); }
+              input.value = '';
+            };
+            return h('div', { class: 'doc-row' },
+              h('span', { class: `doc-check ${doc ? 'is-done' : ''}`, 'aria-hidden': 'true' }, doc ? '✓' : ''),
+              h('span', { class: 'doc-label' }, label),
+              doc ? h('a', { href: doc.url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View') : null,
+              canUpload ? h('label', { class: 'link-btn' }, doc ? 'Replace' : 'Upload', input)
+                : (doc ? null : h('span', { class: 'doc-value' }, 'Not uploaded yet')));
+          }));
+        };
+        render();
+        return h('div', { class: 'field wide' }, h('label', {}, 'Work order & purchase order'), list);
+      }
+
       const workOrderFields = h('div', { class: 'form-grid' },
         woServiceField,
         wrapField('work_order_no', 'Work order no.', text('text', L.work_order_no, { maxlength: 60, autocomplete: 'off' }), '', true),
@@ -855,7 +891,8 @@
           text('number', L.advance_amount, { min: '0', step: 'any', inputmode: 'decimal' }), '', true),
         wrapField('advance_date', 'Date of payment', dateField(L.advance_date), '', true),
         wrapField('advance_mode', 'Mode of payment', choice(S.payment_modes, L.advance_mode, 'Choose how it was paid'), '', true),
-        wrapField('advance_comments', 'Comments', area(2, L.advance_comments), 'wide'));
+        wrapField('advance_comments', 'Comments', area(2, L.advance_comments), 'wide'),
+        leadDocsField());
       workOrderSectionNode = h('details', { class: `stage-section${negotiationFinalized ? '' : ' locked'}`, open: negotiationFinalized && expand === 4 },
         h('summary', { class: 'stage-section-title' }, 'Work order & advance'),
         h('div', { class: 'stage-section-body' }, workOrderFields));

@@ -4,6 +4,7 @@ The uploaded file's own name is never trusted or kept; only its extension surviv
 we recognise."""
 
 import secrets
+import shutil
 
 from flask import Blueprint, current_app, send_from_directory
 from werkzeug.exceptions import abort
@@ -32,6 +33,16 @@ def save_upload(file_storage, subdir: str, allowed: dict = IMAGE_TYPES) -> str:
     filename = f"{secrets.token_hex(16)}.{ext}"
     file_storage.save(directory / filename)
     return filename
+
+
+def copy_upload(src_subdir: str, filename: str, dst_subdir: str) -> str:
+    """Copy a stored file into another upload folder under a fresh name and return that name - so the two
+    owners (a lead's document and the project's copy of it) can each delete theirs without touching the other."""
+    root = current_app.config["UPLOAD_DIR"]
+    new_name = f"{secrets.token_hex(16)}.{filename.rsplit('.', 1)[-1]}"
+    (root / dst_subdir).mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(root / src_subdir / filename, root / dst_subdir / new_name)
+    return new_name
 
 
 def delete_upload(subdir: str, filename: str) -> None:

@@ -137,6 +137,7 @@ class Lead(db.Model):
         "LeadNegotiation", back_populates="lead", cascade="all, delete-orphan",
         order_by="LeadNegotiation.round_no",
     )
+    documents = db.relationship("LeadDocument", back_populates="lead", cascade="all, delete-orphan")
 
     def to_dict(self, with_activities: bool = False) -> dict:
         service_names = [s.name for s in self.services] if self.services else ([self.service] if self.service else [])
@@ -171,6 +172,7 @@ class Lead(db.Model):
             "enquired_by_name": self.enquired_by.name if self.enquired_by else None,
             "survey": self.survey.to_dict() if self.survey else None,
             "negotiations": [n.to_dict() for n in self.negotiations],
+            "documents": {d.doc_type: d.to_dict() for d in self.documents},
         }
         if with_activities:
             data["activities"] = [a.to_dict() for a in self.activities]
@@ -584,6 +586,27 @@ class ProjectExpense(db.Model):
             "entry_date": self.entry_date.isoformat(), "note": self.note,
             "created_by_name": self.created_by.name if self.created_by else None,
         }
+
+
+class LeadDocument(db.Model):
+    """The work order (BOQ) or purchase order uploaded at a lead's Work order & advance step (kohal,
+    2026-10-26) - see constants.PROJECT_ATTACHMENT_TYPES for the doc_type values. Optional, and copied onto the
+    project as ProjectDocument rows when the lead is won. Re-uploading a type replaces it."""
+
+    __tablename__ = "lead_documents"
+    __table_args__ = (db.UniqueConstraint("lead_id", "doc_type", name="uq_lead_documents_lead_type"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    doc_type = db.Column(db.String(30), nullable=False)
+    filename = db.Column(db.String(80), nullable=False)
+    uploaded_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    lead = db.relationship("Lead", back_populates="documents")
+
+    def to_dict(self) -> dict:
+        return {"doc_type": self.doc_type, "url": f"/uploads/lead_documents/{self.filename}", "created_at": _iso(self.created_at)}
 
 
 class ProjectDocument(db.Model):

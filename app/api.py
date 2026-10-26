@@ -11,14 +11,14 @@ from . import categories
 from .auth import visible_clients, visible_leads
 from .modules import check_module, modules_for
 from .projects import ProjectError, create_project_from_lead
-from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, PAYMENT_MODES, STAGES, WON
+from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, STAGES, WON
 from .extensions import db
 from .models import (
-    Activity, Client, Lead, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
+    Activity, Client, Lead, LeadDocument, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
     Worker, settings_for_client, utcnow,
 )
 from .timeutil import to_local, today_local
-from .uploads import UploadError, delete_upload, save_upload
+from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -541,6 +541,53 @@ def delete_survey_photo(lead_id, photo_id):
         abort(404)
     delete_upload("survey", photo.filename)
     lead.survey.photos.remove(photo)
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True))
+
+
+# ---------- work order (BOQ) and purchase order, at the Work order & advance step ----------
+# (kohal, 2026-10-26: "upload work order (BOQ) and purchase order during work order step in lead flow") -
+# optional, and they change nothing about when a lead can move on; they just ride along onto the project
+# (app/projects.py) when the lead is won.
+
+@bp.post("/leads/<int:lead_id>/documents/<doc_type>")
+def upload_lead_document(lead_id, doc_type):
+    lead = _own_lead_or_404(lead_id)
+    if doc_type not in dict(PROJECT_ATTACHMENT_TYPES):
+        abort(404)
+    if lead.project is not None:
+        abort(409, "This lead is already a project - add it from the project's More details.")
+    files = request.files.getlist("file")
+    if not files:
+        abort(422, "Choose a file")
+    try:
+        filename = save_upload(files[0], "lead_documents", allowed=DOCUMENT_TYPES)
+    except UploadError as err:
+        abort(422, err.message)
+    existing = next((d for d in lead.documents if d.doc_type == doc_type), None)
+    if existing:
+        delete_upload("lead_documents", existing.filename)
+        existing.filename = filename
+        existing.uploaded_by_code = g.user.code
+        existing.created_at = utcnow()
+    else:
+        lead.documents.append(LeadDocument(doc_type=doc_type, filename=filename, uploaded_by_code=g.user.code))
+    lead.updated_at = utcnow()
+    db.session.commit()
+    return jsonify(lead.to_dict(with_activities=True)), 201
+
+
+@bp.delete("/leads/<int:lead_id>/documents/<doc_type>")
+def delete_lead_document(lead_id, doc_type):
+    lead = _own_lead_or_404(lead_id)
+    if lead.project is not None:
+        abort(409, "This lead is already a project - remove it from the project's More details.")
+    existing = next((d for d in lead.documents if d.doc_type == doc_type), None)
+    if existing is None:
+        abort(404)
+    delete_upload("lead_documents", existing.filename)
+    lead.documents.remove(existing)
     lead.updated_at = utcnow()
     db.session.commit()
     return jsonify(lead.to_dict(with_activities=True))

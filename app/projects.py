@@ -19,7 +19,7 @@ from .models import Activity, Attendance, Client, Material, MaterialMovement, Pr
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .timeutil import to_local, today_local
-from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, delete_upload, save_upload
+from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, copy_upload, delete_upload, save_upload
 from .validation import Fields, api_errors, parse_money
 
 bp = Blueprint("projects", __name__)
@@ -110,6 +110,12 @@ def create_project_from_lead(lead, user):
         ))
     db.session.add(project)
     db.session.flush()
+    # The work order (BOQ) and purchase order uploaded on the lead come along as the project's own copies.
+    for doc in lead.documents:
+        project.documents.append(ProjectDocument(
+            doc_type=doc.doc_type, filename=copy_upload("lead_documents", doc.filename, "project_documents"),
+            uploaded_by_code=doc.uploaded_by_code,
+        ))
     lead.activities.insert(0, Activity(kind="project", text=f"Project {project.code} created"))
     return project, reused
 
