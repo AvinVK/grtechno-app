@@ -259,7 +259,11 @@
     const papers = data.attachment_types
       .filter(([key]) => data.project.documents[key])
       .map(([key, label]) => h('li', {}, h('a', { href: data.project.documents[key].url, target: '_blank', rel: 'noopener noreferrer' }, label)));
-    const paperBox = papers.length ? h('section', { class: 'p-section' }, h('h3', {}, 'Documents'), h('ul', {}, papers)) : null;
+    const woNo = data.project.work_order_no;
+    const paperBox = papers.length || woNo ? h('section', { class: 'p-section' },
+      h('h3', {}, 'Work order'),
+      woNo ? h('div', { class: 'dash-info' }, infoRow('Work order number', woNo)) : null,
+      papers.length ? h('ul', {}, papers) : null) : null;
     return [paperBox, bar, h('p', { class: 'lead-step-text' }, stepText), ...body];
   }
 

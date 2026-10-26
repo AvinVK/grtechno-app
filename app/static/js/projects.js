@@ -1428,9 +1428,21 @@
       return upcomingStageRow(stage, idx);
     });
 
+    // The work order number and the two papers behind it sit above the stages (kohal, 2026-10-26: "at the
+    // top before commencement, we should show work order, purchase order and work order number") - upload or
+    // replace from here, same as More details.
+    const papers = h('section', { class: 'progress-papers' },
+      h('div', { class: 'doc-list' },
+        h('div', { class: 'doc-row' },
+          h('span', { class: `doc-check ${P.work_order_no ? 'is-done' : ''}`, 'aria-hidden': 'true' }, P.work_order_no ? '✓' : ''),
+          h('span', { class: 'doc-label' }, 'Work order no.'),
+          h('span', { class: 'doc-value' }, P.work_order_no || 'Not added yet')),
+        ...data.attachment_types.map(([key, label]) => documentRow(P, key, label, onChanged))));
+
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'progress', data.dashboard.can_see_progress),
+      papers,
       bar, h('p', { class: 'lead-step-text' }, stepText),
       ...body));
     window.scrollTo(0, 0);
