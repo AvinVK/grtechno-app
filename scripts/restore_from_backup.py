@@ -97,6 +97,11 @@ def main():
             print(f"  {table:25} live had {before:5}, +{added}")
         print("Blanked 'who did this' columns refilled (only where currently empty):")
         for table, col in blanked_columns(conn):
+            # The tables above were emptied, so their live ids restarted from 1 and no longer line up with the
+            # backup's - matching on id would copy the wrong person onto a row. Their own columns already
+            # came across with the insert above.
+            if table in {t for t, _ in CASCADED}:
+                continue
             n = refill_nulls(conn, table, col)
             if n:
                 print(f"  {table}.{col:20} {n}")
