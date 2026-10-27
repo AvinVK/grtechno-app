@@ -158,7 +158,7 @@
     const modeSel = selectField(reg.payment_modes, '', { title: 'How was it paid', placeholder: 'Choose one' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const allotBtn = h('button', { class: 'btn primary', type: 'button' }, 'Add');
-    const pauseBtn = h('button', { class: 'btn small', type: 'button' }, f.is_paused ? 'Resume' : 'Pause');
+    const pauseBtn = h('button', { class: 'btn', type: 'button' }, f.is_paused ? 'Resume' : 'Pause');
     allotBtn.onclick = async () => {
       allotBtn.disabled = true;
       errEl.textContent = '';
@@ -205,7 +205,7 @@
         field('amount', 'Amount', amountInput),
         field('payment_mode', 'How was it paid', modeSel),
         errEl,
-        h('div', { class: 'form-actions' }, pauseBtn, allotBtn))));
+        h('div', { class: 'confirm-actions' }, pauseBtn, allotBtn))));
     window.scrollTo(0, 0);
   }
 
