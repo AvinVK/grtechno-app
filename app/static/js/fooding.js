@@ -60,11 +60,12 @@
           : h('p', { class: 'hint' }, 'Nothing logged yet - use + Add expense when you spend some of this on travel or anything else.'))));
   }
 
-  function entryRow(cur) {
+  function entryRow(cur, { forManager = false } = {}) {
     return (e) => h('li', { class: 'p-row' },
       h('span', { class: 'p-main' },
-        h('span', { class: 'row-title' }, e.kind === 'allot' ? 'Allotted to you' : (e.purpose || 'Expense')),
-        h('span', { class: 'row-sub' }, [fmtDate(e.entry_date), e.payment_mode].filter(Boolean).join(' · '))),
+        h('span', { class: 'row-title' }, e.kind === 'allot' ? (forManager ? 'Credited' : 'Allotted to you') : (e.purpose || 'Expense')),
+        h('span', { class: 'row-sub' }, [fmtDate(e.entry_date), e.payment_mode,
+          e.created_by_name ? `${e.kind === 'allot' ? 'by' : 'logged by'} ${e.created_by_name}` : null].filter(Boolean).join(' · '))),
       h('span', { class: 'row-value' }, (e.kind === 'allot' ? '+' : '−') + money(e.amount, cur)));
   }
 
@@ -174,17 +175,31 @@
         pauseBtn.disabled = false;
       }
     };
-    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+    // The register: every credit and every expense with its date and who entered it (kohal, 2026-10-27:
+    // "when clicking on one daily wages person, it should show credited, spent with date, who credited just
+    // like a register"). Loaded after the sheet opens so the top-up form is there straight away.
+    const registerBox = h('section', { class: 'fooding-register' }, h('p', { class: 'loading' }, 'Loading register…'));
+    api(`/api/fooding/${w.worker_id}`).then((reg) => {
+      const entries = reg.entries || [];
+      clear(registerBox).append(
+        h('h3', {}, 'Register'),
+        h('p', { class: 'hint' }, `Daily food deducted so far: ${money(reg.auto_deducted, cur)}`),
+        entries.length
+          ? h('ul', { class: 'card-group' }, entries.map(entryRow(cur, { forManager: true })))
+          : h('p', { class: 'hint' }, 'Nothing credited or spent yet.'));
+    }).catch((err) => { clear(registerBox).append(h('p', { class: 'hint' }, err.message)); });
+
+    overlay.append(h('div', { class: 'amount-sheet register-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, w.worker_name),
       h('p', { class: 'hint' },
         `${money(w.allotted_total, cur)} allotted so far · ${money(w.remaining, cur)} remaining · ${money(dailyAmount, cur)}/day`,
         w.is_paused ? ' · Paused' : ''),
+      registerBox,
       field('amount', 'Add to balance', amountInput),
       field('payment_mode', 'How was it paid', modeSel),
       errEl,
       h('div', { class: 'confirm-actions' }, pauseBtn, cancelBtn, allotBtn)));
     document.body.append(overlay);
-    amountInput.focus();
   }
 
   if (mode === 'manage') loadManage(); else loadOwn();

@@ -408,3 +408,24 @@ def test_wages_with_no_rate_set_shows_none_not_an_error(app):
     who, _ = daily_wage_user(app)
     data = who.get("/api/wages/me").get_json()
     assert data["daily_rate"] is None
+
+
+# ---------- the per-person register (kohal, 2026-10-27) ----------
+
+def test_a_persons_fooding_register_lists_credits_and_expenses_with_date_and_who(app, accounts_client, admin_client):
+    wid = daily_wage_worker()
+    accounts_client.post(f"/api/fooding/{wid}/allot", json={"amount": 3000, "payment_mode": "Cash"})
+    admin_client.post(f"/api/fooding/{wid}/allot", json={"amount": 500, "payment_mode": "Online/UPI"})
+
+    reg = accounts_client.get(f"/api/fooding/{wid}").get_json()
+    assert [(e["kind"], e["amount"], e["payment_mode"]) for e in reg["entries"]] == [
+        ("allot", 500.0, "Online/UPI"), ("allot", 3000.0, "Cash")]
+    assert all(e["entry_date"] and e["created_by_name"] for e in reg["entries"])
+    assert {e["created_by_name"] for e in reg["entries"]} == {"Anil Accounts", "grtechno"}
+    assert reg["fooding"]["allotted_total"] == 3500.0 and reg["auto_deducted"] == 0.0
+
+
+def test_only_admin_or_accountant_can_open_a_fooding_register(client):
+    wid = daily_wage_worker()
+    assert client.get(f"/api/fooding/{wid}").status_code == 403
+

@@ -389,6 +389,12 @@
       foodingInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
     employmentSel.addEventListener('change', () => { foodingInput.checked = employmentSel.value === 'daily_wages'; });
 
+    // Petrol payment (kohal, 2026-10-27): on means an odometer photo and reading at every check-in and
+    // check-out, paid by the kilometre once approved - see app/petrol.py.
+    const petrolInput = h('input', { type: 'checkbox', checked: !!w.petrol_enabled });
+    const petrolSwitch = h('label', { class: 'switch' },
+      petrolInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
+
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, submitLabel);
     const form = h('form', { novalidate: true, class: 'project-form',
@@ -418,6 +424,7 @@
             qualification: qualificationInput.value, experience: experienceInput.value, skills: skillsInput.value,
             phone: phoneInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
             wage_amount: wageInput.value === '' ? null : wageInput.value, fooding_opt_in: foodingInput.checked,
+            petrol_enabled: petrolInput.checked,
             pf_number: pfInput.value, esic_number: esicInput.value, reference: referenceInput.value,
           });
           close();
@@ -441,6 +448,7 @@
         field('employment_type', 'Salary, daily wages, or contractor', employmentSel),
         wageField,
         h('div', { class: 'toggle-row wide' }, h('span', {}, 'Fooding?'), foodingSwitch),
+        h('div', { class: 'toggle-row wide' }, h('span', {}, 'Petrol payment?'), petrolSwitch),
         field('pf_number', 'PF number', pfInput),
         field('esic_number', 'ESIC number', esicInput),
         field('reference', 'Reference', referenceInput, { wide: true })),

@@ -351,6 +351,9 @@ def _employee_fields(payload):
     # this (see Worker.fooding_eligible); this is purely the switch for anyone else.
     if "fooding_opt_in" in payload:
         data["fooding_opt_in"] = bool(payload["fooding_opt_in"])
+    # Petrol payment (kohal, 2026-10-27) - on means odometer photo + reading at every check-in and check-out.
+    if "petrol_enabled" in payload:
+        data["petrol_enabled"] = bool(payload["petrol_enabled"])
 
     return data, errors
 

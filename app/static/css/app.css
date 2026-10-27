@@ -1858,3 +1858,14 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .stage-section.locked { opacity: 0.55; }
 .stage-section.locked > summary.stage-section-title { cursor: not-allowed; }
 .stage-section.locked > summary.stage-section-title::before { display: none; }
+
+/* Petrol payment (kohal, 2026-10-27): the odometer photos shown to whoever approves a claim. */
+.petrol-photos { display: flex; gap: 10px; margin-top: 6px; }
+.petrol-photo { display: grid; gap: 2px; justify-items: center; text-decoration: none; color: inherit; }
+.petrol-photo img { width: 96px; height: 96px; object-fit: cover; border-radius: var(--r-control); border: 1px solid var(--line); }
+.fooding-register { display: grid; gap: 8px; margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.fooding-register h3 { margin: 0; font: 600 16px/1.2 var(--font-display); }
+.odo-box { display: grid; gap: 12px; }
+.odo-box h2, .odo-box p { margin: 0; }
+.petrol-register { display: grid; gap: 12px; }
+.petrol-register h3, .petrol-register .hint { margin: 0; }

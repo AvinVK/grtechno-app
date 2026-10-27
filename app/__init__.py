@@ -38,6 +38,7 @@ def create_app(config_object=Config):
     from .attendance import bp as attendance_bp
     from .commissions import bp as commissions_bp
     from .fooding import bp as fooding_bp
+    from .petrol import bp as petrol_bp
     from .cash_purchases import bp as cash_purchases_bp
     from .wages import bp as wages_bp
     from .payroll import bp as payroll_bp
@@ -68,6 +69,7 @@ def create_app(config_object=Config):
     app.register_blueprint(attendance_bp)
     app.register_blueprint(commissions_bp)
     app.register_blueprint(fooding_bp)
+    app.register_blueprint(petrol_bp)
     app.register_blueprint(cash_purchases_bp)
     app.register_blueprint(wages_bp)
     app.register_blueprint(payroll_bp)

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Petrol - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Petrol{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1" data-mode="{{ mode }}"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/petrol.js') }}" defer></script>
+{% endblock %}
