@@ -1877,3 +1877,6 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .odo-box h2, .odo-box p { margin: 0; }
 .petrol-register { display: grid; gap: 12px; }
 .petrol-register h3, .petrol-register .hint { margin: 0; }
+.p-main .chip { align-self: flex-start; justify-self: start; width: fit-content; margin-top: 4px; }
+.p-section + .p-section { margin-top: 18px; }
+.stage-filter + .p-section { margin-top: 16px; }

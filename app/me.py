@@ -101,9 +101,13 @@ def _extra_tiles():
 
     tiles = []
     if can_manage_fooding(g.user):
+        from .models import FoodingEntry
         n = fooding_eligible_workers().count()
+        # Allotments the other of admin / accountant asked for, waiting on this person (kohal, 2026-10-27).
+        waiting = FoodingEntry.query.filter(FoodingEntry.kind == "allot", FoodingEntry.status == "pending",
+                                             FoodingEntry.created_by_code != g.user.code).count()
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
-                       "sum": f"{n} on fooding" if n else None})
+                       "sum": " · ".join(x for x in (f"{n} on fooding" if n else "", f"{waiting} to approve" if waiting else "") if x) or None})
     if can_manage_fooding(g.user):
         n = Worker.query.filter(Worker.petrol_enabled.is_(True)).count()
         tiles.append({"href": "/petrol", "icon": "petrol", "name": "Petrol",
