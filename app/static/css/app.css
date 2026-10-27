@@ -1655,15 +1655,19 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .me-section-head h2 { font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 
 .me-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+/* The icon sits beside the name, with the one-line figure under it (kohal, 2026-10-27: "these boxes are taking
+   too much space, make logo and heading in line") - a short row, not a tall box. */
 .me-tile {
-  display: grid; align-content: start; gap: 4px; min-height: 96px; padding: 14px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 10px; row-gap: 1px;
+  padding: 11px 12px;
   border: 1px solid var(--line); border-radius: var(--r-card); background: var(--panel);
   color: var(--ink); text-decoration: none;
 }
 .me-tile:hover { border-color: var(--line-strong); }
-.me-tile .sb-icon { width: 26px; height: 26px; margin-bottom: 6px; color: var(--accent-dark); }
-.me-tile-name { font: 600 15px/1.25 var(--font-display); overflow-wrap: anywhere; }
-.me-tile-sum { color: var(--muted); font-size: 13px; }
+.me-tile .sb-icon { grid-row: 1 / span 2; width: 24px; height: 24px; color: var(--accent-dark); }
+.me-tile-name { grid-column: 2; font: 600 15px/1.25 var(--font-display); overflow-wrap: anywhere; }
+.me-tile-sum { grid-column: 2; color: var(--muted); font-size: 13px; }
+.me-tile-name:last-child { grid-row: 1 / span 2; }          /* no figure under it: centre it beside the icon */
 
 .me-row {
   display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 0 16px;
