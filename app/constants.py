@@ -21,6 +21,10 @@ PROJECT_DOCUMENT_TYPES = [
     ("final_invoice", "Final invoice"),
 ]
 
+# What a kilometre of an employee's own-vehicle riding is paid, in rupees (kohal, 2026-10-27: "everyday
+# petrol amount = diff in kilometer *4") - see models.PetrolEntry.
+PETROL_RATE_PER_KM = 4
+
 # Papers a project can have on file at any time, none of them needed to close it (kohal, 2026-10-26: "work
 # order (BOQ) and purchase order upload option for existing projects") - stored in the same project_documents
 # table as the closing documents above, but kept out of PROJECT_DOCUMENT_TYPES so they never block closing.

@@ -104,6 +104,10 @@ def _extra_tiles():
         n = fooding_eligible_workers().count()
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{n} on fooding" if n else None})
+    if can_manage_fooding(g.user):
+        n = Worker.query.filter(Worker.petrol_enabled.is_(True)).count()
+        tiles.append({"href": "/petrol", "icon": "petrol", "name": "Petrol",
+                       "sum": f"{n} on petrol" if n else None})
     if can_manage_cash_purchases(g.user):
         # Both kinds of thing waiting on the admin here - a cash request and a purchase to approve - count
         # toward the same "n pending" (kohal, 2026-10-21 added cash requests alongside purchase approvals).
@@ -122,6 +126,8 @@ def _extra_tiles():
         cur = settings_for_client()["currency"]
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": f"{cur}{remaining:.0f} left" if remaining is not None else None})
+    if worker and worker.petrol_enabled:
+        tiles.append({"href": "/petrol", "icon": "petrol", "name": "Petrol", "sum": None})
     if worker and worker.role_key == COMMISSION_ROLE_KEY:
         cur = settings_for_client()["currency"]
         tiles.append({"href": "/commissions", "icon": "commission", "name": "Commission",

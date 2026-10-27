@@ -383,9 +383,12 @@
       checkOutBtn.onclick = async () => {
         checkOutBtn.disabled = true;
         try {
-          await api('/api/attendance/check-out', { method: 'POST' });
-          toast('Checked out');
-          await reload();
+          if (await ATT.checkOut({ petrol: !!data.petrol_required })) {
+            toast('Checked out');
+            await reload();
+            return;
+          }
+          checkOutBtn.disabled = false;
         } catch (err) {
           toast(err.message, true);
           checkOutBtn.disabled = false;

@@ -59,6 +59,13 @@
     <div id="me-attendance-approvals-list" class="card-group me-rows"></div>
   </section>
 
+  {# Odometer photos and readings waiting for a decision (kohal, 2026-10-27) - the admin or that project's
+     manager, see app/petrol.py's can_approve_petrol. Hidden when nothing's waiting. #}
+  <section class="me-section" id="me-petrol-approvals" aria-labelledby="me-petrol-approvals-h" hidden>
+    <div class="me-section-head"><h2 id="me-petrol-approvals-h">Pending approvals</h2><span class="chip chip-role">Petrol</span></div>
+    <div id="me-petrol-approvals-list" class="card-group me-rows"></div>
+  </section>
+
   {# A daily-wage worker telling the office ahead of time they won't be in (kohal, 2026-10-19: "Absent
      should be inform 1 day before ... alert should be given to admin and project manager") - the admin or
      a project manager, same as app/attendance.py's own _can_see_absences. Nothing to do with a project. #}

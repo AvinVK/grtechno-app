@@ -19,8 +19,9 @@ from .auth import (
     _is_daily_wage,
 )
 from .extensions import db
-from .models import AbsenceRequest, Attendance, Project, User, utcnow
+from .models import AbsenceRequest, Attendance, PetrolEntry, Project, User, utcnow
 from .modules import check_module, has_module
+from .petrol import odometer_file, parse_reading, petrol_on, purge_old_photos, save_odometer
 from .timeutil import today_local, to_local
 from .validation import Fields, api_errors
 
@@ -87,6 +88,7 @@ def state():
     recent history. `today` is the currently open session (null if none - whether they never checked in
     today, or already checked out and could check in again); `today_sessions` is every one of today's rows,
     open or closed, oldest first."""
+    purge_old_photos()
     open_session = _open_session()
     today_sessions = (Attendance.query.filter_by(user_code=g.user.code, work_date=date.today())
                        .order_by(Attendance.check_in_at).all())
@@ -102,6 +104,8 @@ def state():
         history=[a.to_dict() for a in history],
         can_see_team=g.user.sees_all,
         location_required=current_app.config["REQUIRE_ATTENDANCE_LOCATION"],
+        # Petrol payment (kohal, 2026-10-27): on means an odometer photo + reading at check-in and check-out.
+        petrol_required=petrol_on(g.user),
         can_mark_absent=_is_daily_wage(g.user),
         my_absences=[a.to_dict() for a in AbsenceRequest.query.filter_by(user_code=g.user.code)
                      .order_by(AbsenceRequest.for_date.desc()).limit(10).all()],
@@ -114,11 +118,17 @@ def check_in():
     if _open_session() is not None:
         return jsonify(error="You are already checked in. Check out first."), 409
 
-    payload = request.get_json(silent=True) if request.is_json else {}
+    # JSON normally; multipart (form fields + the odometer photo) for someone on petrol payment.
+    payload = request.get_json(silent=True) if request.is_json else request.form.to_dict()
     if not isinstance(payload, dict):
         payload = {}
     f = Fields(payload)
     f.text("notes", 400)
+    petrol = petrol_on(g.user)
+    in_reading = in_file = None
+    if petrol:
+        in_reading = parse_reading(payload.get("odometer_reading"), f.errors, "odometer_reading")
+        in_file = odometer_file(request.files, "odometer_photo", f.errors)
     project = None
     raw_id = payload.get("project_id")
     if raw_id not in (None, ""):
@@ -156,6 +166,10 @@ def check_in():
         approved_at=utcnow() if approved else None,
     )
     db.session.add(row)
+    if petrol:
+        db.session.flush()
+        row.petrol = PetrolEntry(user_code=g.user.code, work_date=row.work_date, in_reading=in_reading,
+                                 in_photo=save_odometer(in_file))
     db.session.commit()
     return jsonify(today=row.to_dict()), 201
 
@@ -166,6 +180,20 @@ def check_out():
     row = _open_session()
     if row is None:
         return jsonify(error="You are not checked in."), 409
+    # A session that began with an odometer reading (petrol payment was on) must end with one too (kohal,
+    # 2026-10-27: "both should be mandatory if toggle is on").
+    out_file = None
+    if row.petrol is not None:
+        form = request.get_json(silent=True) if request.is_json else request.form.to_dict()
+        errors = {}
+        out_reading = parse_reading((form or {}).get("odometer_reading"), errors, "odometer_reading")
+        out_file = odometer_file(request.files, "odometer_photo", errors)
+        if out_reading is not None and out_reading < row.petrol.in_reading:
+            errors["odometer_reading"] = f"The reading can't be lower than at check-in ({row.petrol.in_reading})"
+        if errors:
+            return jsonify(error="Check the highlighted fields", fields=errors), 422
+        row.petrol.out_reading = out_reading
+        row.petrol.out_photo = save_odometer(out_file)
     row.check_out_at = utcnow()
     # An early checkout, for a daily-wage worker, needs its own sign-off even if the check-in itself was
     # already approved (kohal, 2026-10-19: "Early checkout approval required of project manager") - back to

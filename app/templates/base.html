@@ -40,7 +40,7 @@
     <div class="appbar-row">
       <h1 class="appbar-title-pushed">{{ page_title_html }}</h1>
       <div class="appbar-actions">{{ actions_html }}</div>
-      {% block hub_back %}<a class="back-link appbar-back" id="appbar-back" href="{{ url_for('me.page') }}" aria-label="Back to {% block back_label %}Me{% endblock %}">‹</a>{% endblock %}
+      {% block hub_back %}<a class="back-link appbar-back" id="appbar-back" href="{{ url_for('me.page') }}" aria-label="Back to {% block back_label %}Me{% endblock %}"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12H4M10 6l-6 6 6 6"/></svg></a>{% endblock %}
     </div>
     {% block tabs %}{% endblock %}
   </header>

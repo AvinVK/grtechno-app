@@ -148,6 +148,73 @@ window.ATT = (() => {
     return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
   }
 
+  /* Petrol payment (kohal, 2026-10-27): for someone it is switched on for, every check-in and check-out also
+     needs the odometer's reading (a whole number) and a photo of it - both mandatory. Asked in a small box;
+     resolves { reading, file } once both are given, or null if they back out. The photo is shrunk first
+     (longest side 1280px, JPEG) so a phone's multi-megabyte picture doesn't weigh the server down. */
+  async function shrinkImage(file) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.7));
+      return blob ? new File([blob], 'odometer.jpg', { type: 'image/jpeg' }) : file;
+    } catch (e) {
+      return file;
+    }
+  }
+
+  function askOdometer(title) {
+    return new Promise((resolve) => {
+      let picked = null;
+      const reading = h('input', { id: 'odo-reading', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocomplete: 'off', placeholder: 'e.g. 12345' });
+      const fileInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true });
+      const status = h('span', { class: 'hint' }, 'No photo yet');
+      const pickBtn = h('label', { class: 'btn' }, 'Take odometer photo', fileInput);
+      const err = h('p', { class: 'err', role: 'alert' });
+      const okBtn = h('button', { class: 'btn primary', type: 'button' }, title);
+      const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+      fileInput.onchange = async () => {
+        if (!fileInput.files.length) return;
+        status.textContent = 'Preparing photo\u2026';
+        picked = await shrinkImage(fileInput.files[0]);
+        status.textContent = 'Photo added';
+      };
+      const finish = (result) => { overlay.remove(); resolve(result); };
+      okBtn.onclick = () => {
+        const value = reading.value.trim();
+        if (!/^[0-9]+$/.test(value)) { err.textContent = 'Enter the odometer reading as a whole number'; reading.focus(); return; }
+        if (!picked) { err.textContent = 'Take a photo of the odometer'; return; }
+        finish({ reading: value, file: picked });
+      };
+      cancelBtn.onclick = () => finish(null);
+      const card = h('div', { class: 'confirm-card odo-box', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Odometer' },
+        h('h2', {}, 'Odometer'),
+        h('p', {}, `Enter the reading and take a photo of the odometer to ${title.toLowerCase()}.`),
+        h('div', { class: 'field' }, h('label', { for: 'odo-reading' }, 'Odometer reading (km)'), reading),
+        h('div', { class: 'field' }, pickBtn, status),
+        err,
+        h('div', { class: 'confirm-actions' }, cancelBtn, okBtn));
+      const overlay = h('div', { class: 'confirm-overlay' }, card);
+      document.body.append(overlay);
+      reading.focus();
+    });
+  }
+
+  /* Same as LD.api's POST, but as multipart so the odometer photo can ride along. */
+  async function postForm(url, fields, file) {
+    const body = new FormData();
+    Object.entries(fields).forEach(([k, v]) => { if (v !== null && v !== undefined && v !== '') body.append(k, v); });
+    if (file) body.append('odometer_photo', file);
+    const res = await fetch(url, { method: 'POST', body, credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data.fields && Object.values(data.fields)[0]) || data.error || 'Something went wrong');
+    return data;
+  }
+
   /* Check in: explain why the location is needed (unless we already have one), fetch it once, let the
      person pick what they're working on (narrowed to projects near them), then record it. Resolves the
      server's reply, or null if they backed out at any step. Throws the API's error, or a "no location"
@@ -155,7 +222,7 @@ window.ATT = (() => {
      same response's `location_required` - off only for local dev testing (see app/config.py's
      REQUIRE_ATTENDANCE_LOCATION, never on in prod), in which case this skips asking for a location at all
      rather than just tolerating it failing. */
-  async function checkIn(projects, { location = null, required = true } = {}) {
+  async function checkIn(projects, { location = null, required = true, petrol = false } = {}) {
     let here = location;
     if (!here && required) {
       if (!(await explainLocationIsRequired())) return null;
@@ -165,16 +232,23 @@ window.ATT = (() => {
     const choice = await pickProject(projects, '', here ? nearestDistrict(here) : null);
     if (choice === undefined) return null;                      // closed the list without choosing
     const marketing = choice === 'marketing';
-    return window.LD.api('/api/attendance/check-in', {
-      method: 'POST',
-      body: {
-        project_id: marketing ? null : choice || null, work: marketing ? 'marketing' : 'office',
-        lat: here ? here.lat : null, lng: here ? here.lng : null,
-      },
-    });
+    const body = {
+      project_id: marketing ? null : choice || null, work: marketing ? 'marketing' : 'office',
+      lat: here ? here.lat : null, lng: here ? here.lng : null,
+    };
+    if (!petrol) return window.LD.api('/api/attendance/check-in', { method: 'POST', body });
+    const odo = await askOdometer('Check in');
+    if (!odo) return null;
+    return postForm('/api/attendance/check-in', { ...body, odometer_reading: odo.reading }, odo.file);
   }
 
-  const checkOut = () => window.LD.api('/api/attendance/check-out', { method: 'POST' });
+  /* Resolves the server's reply, or null if they backed out of the odometer box (petrol payment on). */
+  async function checkOut({ petrol = false } = {}) {
+    if (!petrol) return window.LD.api('/api/attendance/check-out', { method: 'POST' });
+    const odo = await askOdometer('Check out');
+    if (!odo) return null;
+    return postForm('/api/attendance/check-out', { odometer_reading: odo.reading }, odo.file);
+  }
 
   /* The dark Today card: where today's check-in stands, the time since checking in, and one big Check in /
      Check out button. Drawn into `box` from /api/attendance/state's `data`; after a check-in or check-out
@@ -200,7 +274,7 @@ window.ATT = (() => {
         button.textContent = 'Checking in\u2026';
         try {
           const required = data.location_required !== false;
-          if (await checkIn(data.projects, { required })) {
+          if (await checkIn(data.projects, { required, petrol: !!data.petrol_required })) {
             toast(required ? 'Checked in with your location' : 'Checked in');
             await onChange();
             return;
@@ -222,9 +296,12 @@ window.ATT = (() => {
       button.onclick = async () => {
         button.disabled = true;
         try {
-          await checkOut();
-          toast('Checked out');
-          await onChange();
+          if (await checkOut({ petrol: !!data.petrol_required })) {
+            toast('Checked out');
+            await onChange();
+            return;
+          }
+          button.disabled = false;
         } catch (err) {
           toast(err.message, true);
           button.disabled = false;
@@ -249,6 +326,6 @@ window.ATT = (() => {
 
   return {
     fmtTime, nearestDistrict, getLocation, explainLocationIsRequired, pickProject, elapsedSince, checkIn, checkOut,
-    renderToday,
+    askOdometer, renderToday,
   };
 })();

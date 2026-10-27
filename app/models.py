@@ -2,7 +2,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from .constants import DEFAULT_SETTINGS, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
+from .constants import DEFAULT_SETTINGS, PETROL_RATE_PER_KM, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
 from .crypto import EncryptedText
 from .extensions import db
 
@@ -607,6 +607,59 @@ class LeadDocument(db.Model):
 
     def to_dict(self) -> dict:
         return {"doc_type": self.doc_type, "url": f"/uploads/lead_documents/{self.filename}", "created_at": _iso(self.created_at)}
+
+
+class PetrolEntry(db.Model):
+    """One check-in/out session's petrol claim (kohal, 2026-10-27: "at checkin time submit odometer pic and
+    its reading as integer and at checkout submit odometer reading pic and its reading as integer... both
+    should be mandatory if toggle is on... approved by admin or project manager... nex day, you can delete
+    that pic so that the backend db does not get heavier... everyday petrol amount = diff in kilometer *4").
+
+    Created at check-in (in_reading/in_photo), completed at check-out (out_reading/out_photo) - only then can
+    an approver act on it, once, for the pair. The amount only counts once approved. The two photos are
+    deleted (the filename cleared, the file removed) on a later day once the entry has been decided - see
+    app/petrol.py's purge_old_photos; the readings, km and amount stay."""
+
+    __tablename__ = "petrol_entries"
+    __table_args__ = (db.UniqueConstraint("attendance_id", name="uq_petrol_entries_attendance"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    attendance_id = db.Column(db.Integer, db.ForeignKey("attendance.id", ondelete="CASCADE"), nullable=False)
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="CASCADE"), nullable=False, index=True)
+    work_date = db.Column(db.Date, nullable=False, index=True)
+    in_reading = db.Column(db.Integer, nullable=False)
+    in_photo = db.Column(db.String(80), nullable=True)
+    out_reading = db.Column(db.Integer, nullable=True)
+    out_photo = db.Column(db.String(80), nullable=True)
+    status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")   # pending | approved | rejected
+    approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    attendance = db.relationship("Attendance", backref=db.backref("petrol", uselist=False, cascade="all, delete-orphan", passive_deletes=True))
+    user = db.relationship("User", foreign_keys=[user_code])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_code])
+
+    @property
+    def km(self):
+        return self.out_reading - self.in_reading if self.out_reading is not None else None
+
+    @property
+    def amount(self):
+        return Decimal(self.km) * Decimal(PETROL_RATE_PER_KM) if self.km is not None else None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "user_code": self.user_code, "user_name": self.user.name if self.user else None,
+            "work_date": self.work_date.isoformat(),
+            "project_title": self.attendance.project.title if self.attendance and self.attendance.project else None,
+            "in_reading": self.in_reading, "out_reading": self.out_reading,
+            "in_photo_url": f"/uploads/odometer/{self.in_photo}" if self.in_photo else None,
+            "out_photo_url": f"/uploads/odometer/{self.out_photo}" if self.out_photo else None,
+            "km": self.km, "amount": float(self.amount) if self.amount is not None else None,
+            "status": self.status,
+            "approved_by_name": self.approved_by.name if self.approved_by else None,
+        }
 
 
 class ProjectDocument(db.Model):
@@ -1485,6 +1538,9 @@ class Worker(db.Model):
     # 2026-10-18), not just daily-wage workers; see fooding_eligible below, which everywhere else actually
     # checks (it's just this column, but named for what it means rather than how it's stored).
     fooding_opt_in = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    # Petrol payment (kohal, 2026-10-27): when on, every check-in and check-out needs an odometer photo and
+    # reading - see PetrolEntry and app/petrol.py.
+    petrol_enabled = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     pf_number = db.Column(EncryptedText, nullable=True)
     esic_number = db.Column(EncryptedText, nullable=True)
     reference = db.Column(db.String(200), nullable=False, default="", server_default="")
@@ -1561,7 +1617,7 @@ class Worker(db.Model):
                 "joining_date": self.joining_date.isoformat() if self.joining_date else None,
                 "employment_type": self.employment_type,
                 "wage_amount": float(self.wage_amount) if self.wage_amount is not None else None,
-                "fooding_opt_in": self.fooding_opt_in,
+                "fooding_opt_in": self.fooding_opt_in, "petrol_enabled": self.petrol_enabled,
                 "pf_number": self.pf_number, "esic_number": self.esic_number, "reference": self.reference,
                 "paid_amount": float(self.paid_amount),
                 "payments": [p.to_dict() for p in self.payments],

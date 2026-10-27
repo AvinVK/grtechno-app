@@ -7,7 +7,7 @@
    the chevron is kept in the DOM even with the bottom nav there - but starts hidden (this is the list,
    same as Clients/Projects at their own top level) and inventory.js reveals it once you're a level in,
    repointing it at the material or the list as you go, same as Workforce/People's own sub-screens. #}
-{% block hub_back %}<a class="back-link appbar-back" id="appbar-back" href="{{ url_for('me.page') }}" aria-label="Back to Me" hidden>‹</a>{% endblock %}
+{% block hub_back %}<a class="back-link appbar-back" id="appbar-back" href="{{ url_for('me.page') }}" aria-label="Back to Me" hidden><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12H4M10 6l-6 6 6 6"/></svg></a>{% endblock %}
 
 {% block actions %}
   <a class="btn primary appbar-primary" href="/inventory#new">+ Material</a>

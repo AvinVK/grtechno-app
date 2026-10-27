@@ -180,6 +180,24 @@ def list_fooding():
                    payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
 
 
+@bp.get("/api/fooding/<int:worker_id>")
+def register(worker_id):
+    """One person's fooding register (kohal, 2026-10-27: "when clicking on one daily wages person, it should
+    show credited, spent with date, who credited just like a register") - every top-up and every expense,
+    newest first, each with its date, how it was paid and who entered it, plus how much the automatic daily
+    deduction has taken so far (the account's deductions less the expenses someone logged)."""
+    _manage_only()
+    worker = _fooding_eligible_or_404(worker_id)
+    account = account_for(worker)
+    db.session.commit()
+    entries = list(account.entries) if account else []
+    spent = sum((e.amount for e in entries if e.kind == "expense"), Decimal("0"))
+    auto = (account.deducted_total - spent) if account else Decimal("0")
+    return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
+                   entries=[e.to_dict() for e in entries], auto_deducted=float(max(auto, Decimal("0"))),
+                   payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
+
+
 @bp.post("/api/fooding/<int:worker_id>/allot")
 def allot(worker_id):
     """Add to what's already allotted (kohal's own answer, 2026-10-18: a top-up adds to the remaining

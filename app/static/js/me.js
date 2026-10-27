@@ -674,3 +674,67 @@
   load();
 })();
 
+/* Odometer photos and readings waiting for a decision (kohal, 2026-10-27: "both checkin and checkout odo pics
+   should be approved by admin or project manager") - one approval per check-in/out pair, by the admin or that
+   session's project manager (app/petrol.py's can_approve_petrol). The amount only counts once approved.
+   Hidden when nothing's waiting. */
+(() => {
+  'use strict';
+
+  const section = document.getElementById('me-petrol-approvals');
+  if (!section) return;
+  const list = document.getElementById('me-petrol-approvals-list');
+  const { h, clear, api, toast, confirm, money } = window.LD;
+
+  function fmtDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  }
+
+  async function load() {
+    let data;
+    try {
+      data = await api('/api/petrol/approvals');
+    } catch (err) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = data.approvals.length === 0;
+    clear(list);
+    data.approvals.forEach((r) => list.append(approvalRow(r, data.currency)));
+  }
+
+  async function act(r, action) {
+    if (action === 'reject') {
+      const sure = await confirm('Reject this petrol claim? This cannot be undone.', { ok: 'Reject', danger: true, title: 'Reject petrol' });
+      if (!sure) return;
+    }
+    try {
+      await api(`/api/petrol/${r.id}/${action}`, { method: 'POST' });
+      toast(action === 'approve' ? 'Approved' : 'Rejected');
+      load();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  const photoLink = (url, label) => (url
+    ? h('a', { class: 'petrol-photo', href: url, target: '_blank', rel: 'noopener noreferrer' },
+      h('img', { src: url, alt: `${label} odometer photo`, loading: 'lazy' }), h('span', { class: 'hint' }, label))
+    : null);
+
+  function approvalRow(r, cur) {
+    return h('div', { class: 'card me-row approval-row petrol-approval' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, r.user_name),
+        h('span', { class: 'hint' }, [fmtDate(r.work_date), r.project_title].filter(Boolean).join(' · ')),
+        h('span', { class: 'hint' }, `${r.in_reading} → ${r.out_reading} · ${r.km} km · ${money(r.amount, cur)}`),
+        h('div', { class: 'petrol-photos' }, photoLink(r.in_photo_url, 'Check-in'), photoLink(r.out_photo_url, 'Check-out'))),
+      h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')));
+  }
+
+  load();
+})();
+

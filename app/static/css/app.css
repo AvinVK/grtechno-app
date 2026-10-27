@@ -133,8 +133,12 @@ a { color: var(--accent-dark); }
 }
 /* Title, primary action and the back link all share this one row - see base.html. */
 .appbar-row { display: flex; align-items: center; gap: 10px; min-height: 44px; }
-/* Just the chevron - the place it leads to is spoken (aria-label, see base.html/common.js), not shown. */
-.appbar-back { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; font-size: 26px; font-weight: 700; }
+/* Just an arrow, at the left of the row (kohal, 2026-10-27: "it should be at the top left and have an arrow like
+   this <- but the hyphen should be joint") - the place it leads to is spoken (aria-label, see base.html/
+   common.js), not shown. Placed first with `order`, so the pages that supply their own copy of the link
+   (Inventory) land in the same spot without touching their markup. */
+.appbar-back { order: -1; flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-left: -12px; }
+.appbar-back svg { width: 24px; height: 24px; }
 .appbar-back[hidden] { display: none; }
 .appbar.pushed .appbar-actions { flex: none; margin-left: 0; }
 .appbar.pushed .appbar-actions .btn { min-height: 40px; padding: 0 14px; font-size: 14px; white-space: nowrap; }
@@ -1655,15 +1659,19 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .me-section-head h2 { font: 600 12px/1.2 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 
 .me-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+/* The icon sits beside the name, with the one-line figure under it (kohal, 2026-10-27: "these boxes are taking
+   too much space, make logo and heading in line") - a short row, not a tall box. */
 .me-tile {
-  display: grid; align-content: start; gap: 4px; min-height: 96px; padding: 14px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 10px; row-gap: 1px;
+  padding: 11px 12px;
   border: 1px solid var(--line); border-radius: var(--r-card); background: var(--panel);
   color: var(--ink); text-decoration: none;
 }
 .me-tile:hover { border-color: var(--line-strong); }
-.me-tile .sb-icon { width: 26px; height: 26px; margin-bottom: 6px; color: var(--accent-dark); }
-.me-tile-name { font: 600 15px/1.25 var(--font-display); overflow-wrap: anywhere; }
-.me-tile-sum { color: var(--muted); font-size: 13px; }
+.me-tile .sb-icon { grid-row: 1 / span 2; width: 24px; height: 24px; color: var(--accent-dark); }
+.me-tile-name { grid-column: 2; font: 600 15px/1.25 var(--font-display); overflow-wrap: anywhere; }
+.me-tile-sum { grid-column: 2; color: var(--muted); font-size: 13px; }
+.me-tile-name:last-child { grid-row: 1 / span 2; }          /* no figure under it: centre it beside the icon */
 
 .me-row {
   display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 0 16px;
@@ -1858,3 +1866,14 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .stage-section.locked { opacity: 0.55; }
 .stage-section.locked > summary.stage-section-title { cursor: not-allowed; }
 .stage-section.locked > summary.stage-section-title::before { display: none; }
+
+/* Petrol payment (kohal, 2026-10-27): the odometer photos shown to whoever approves a claim. */
+.petrol-photos { display: flex; gap: 10px; margin-top: 6px; }
+.petrol-photo { display: grid; gap: 2px; justify-items: center; text-decoration: none; color: inherit; }
+.petrol-photo img { width: 96px; height: 96px; object-fit: cover; border-radius: var(--r-control); border: 1px solid var(--line); }
+.fooding-register { display: grid; gap: 8px; margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.fooding-register h3 { margin: 0; font: 600 16px/1.2 var(--font-display); }
+.odo-box { display: grid; gap: 12px; }
+.odo-box h2, .odo-box p { margin: 0; }
+.petrol-register { display: grid; gap: 12px; }
+.petrol-register h3, .petrol-register .hint { margin: 0; }
