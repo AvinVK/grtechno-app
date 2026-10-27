@@ -30,7 +30,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .auth import can_manage_fooding
 from .extensions import db
-from .models import FoodingAccount, FoodingEntry, Worker, settings_for_client
+from .models import FoodingAccount, FoodingEntry, Worker, settings_for_client, utcnow
 from .timeutil import today_local
 from .validation import api_errors
 
@@ -84,6 +84,12 @@ def account_for(worker, *, create=False):
     return account
 
 
+def _approved(entries):
+    """What actually happened to the balance - an allotment still waiting for approval (or turned down) is not
+    part of anyone's register."""
+    return [e for e in entries if e.status == "approved"]
+
+
 def _empty_dict(worker):
     """Same shape as FoodingAccount.to_dict(), for a daily-wage worker nobody has allotted anything to
     yet - nothing to settle, so no need to actually create a row just to answer a GET."""
@@ -113,7 +119,7 @@ def my_fooding():
     account = account_for(worker)
     db.session.commit()
     return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
-                   entries=[e.to_dict() for e in account.entries] if account else [],
+                   entries=[e.to_dict() for e in _approved(account.entries)] if account else [],
                    payment_modes=list(PAYMENT_MODES),
                    currency=settings_for_client()["currency"])
 
@@ -164,7 +170,7 @@ def add_my_expense():
     db.session.add(FoodingEntry(account=account, kind="expense", amount=amount, payment_mode=mode,
                                  purpose=purpose, entry_date=today_local(), created_by_code=g.user.code))
     db.session.commit()
-    return jsonify(fooding=account.to_dict(), entries=[e.to_dict() for e in account.entries]), 201
+    return jsonify(fooding=account.to_dict(), entries=[e.to_dict() for e in _approved(account.entries)]), 201
 
 
 # ---------- admin/accountant management ----------
@@ -190,7 +196,7 @@ def register(worker_id):
     worker = _fooding_eligible_or_404(worker_id)
     account = account_for(worker)
     db.session.commit()
-    entries = list(account.entries) if account else []
+    entries = _approved(account.entries) if account else []
     spent = sum((e.amount for e in entries if e.kind == "expense"), Decimal("0"))
     auto = (account.deducted_total - spent) if account else Decimal("0")
     return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
@@ -211,12 +217,86 @@ def allot(worker_id):
     amount, mode, errors = _amount_and_mode(payload)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
+    # Not added to the balance yet - it is a request that the other of admin / accountant has to approve
+    # (kohal, 2026-10-27: "if admin gives, accountant can approve or vice versa"). See approve_request below.
     account = account_for(worker, create=True)
-    account.allotted_total += amount
-    db.session.add(FoodingEntry(account=account, kind="allot", amount=amount, payment_mode=mode,
-                                 entry_date=today_local(), created_by_code=g.user.code))
+    entry = FoodingEntry(account=account, kind="allot", amount=amount, payment_mode=mode, status="pending",
+                          entry_date=today_local(), created_by_code=g.user.code)
+    db.session.add(entry)
     db.session.commit()
-    return jsonify(fooding=account.to_dict())
+    return jsonify(fooding=account.to_dict(), request=entry.to_dict())
+
+
+# ---------- allotment requests: the other of admin / accountant approves ----------
+
+def _request_or_404(entry_id):
+    entry = db.session.get(FoodingEntry, entry_id)
+    if entry is None or entry.kind != "allot":
+        abort(404)
+    return entry
+
+
+@bp.get("/api/fooding/requests")
+def list_requests():
+    """Active requests (waiting for the other person) and the history of every one decided since (kohal,
+    2026-10-27: "a subtab or request in fooding tab where one can see active request and history")."""
+    _manage_only()
+    pending = (FoodingEntry.query.filter_by(kind="allot", status="pending")
+               .order_by(FoodingEntry.created_at).all())
+    history = (FoodingEntry.query.filter(FoodingEntry.kind == "allot", FoodingEntry.status != "pending")
+               .order_by(db.func.coalesce(FoodingEntry.decided_at, FoodingEntry.created_at).desc(), FoodingEntry.id.desc()).limit(200).all())
+    rows = []
+    for e in pending:
+        d = e.to_dict()
+        d["can_decide"] = e.created_by_code != g.user.code       # someone else asked - this person may decide
+        d["is_mine"] = e.created_by_code == g.user.code
+        rows.append(d)
+    return jsonify(pending=rows, history=[e.to_dict() for e in history],
+                   currency=settings_for_client()["currency"])
+
+
+def _decide_request(entry_id, status):
+    _manage_only()
+    entry = _request_or_404(entry_id)
+    if entry.status != "pending":
+        abort(409, "This request has already been decided.")
+    if entry.created_by_code == g.user.code:
+        abort(403, "Someone else has to approve this - you made the request.")
+    if status == "approved":
+        account = account_for(entry.account.worker, create=True)
+        account.allotted_total += entry.amount
+        entry.entry_date = today_local()              # the day the money was actually credited
+    entry.status = status
+    entry.decided_by_code = g.user.code
+    entry.decided_at = utcnow()
+    db.session.commit()
+    return jsonify(request=entry.to_dict())
+
+
+@bp.post("/api/fooding/requests/<int:entry_id>/approve")
+def approve_request(entry_id):
+    return _decide_request(entry_id, "approved")
+
+
+@bp.post("/api/fooding/requests/<int:entry_id>/reject")
+def reject_request(entry_id):
+    return _decide_request(entry_id, "rejected")
+
+
+@bp.post("/api/fooding/requests/<int:entry_id>/cancel")
+def cancel_request(entry_id):
+    """Whoever made a request can take it back while it is still waiting."""
+    _manage_only()
+    entry = _request_or_404(entry_id)
+    if entry.status != "pending":
+        abort(409, "This request has already been decided.")
+    if entry.created_by_code != g.user.code:
+        abort(403, "Only whoever made the request can withdraw it.")
+    entry.status = "cancelled"
+    entry.decided_by_code = g.user.code
+    entry.decided_at = utcnow()
+    db.session.commit()
+    return jsonify(request=entry.to_dict())
 
 
 def _set_paused(worker_id, paused):

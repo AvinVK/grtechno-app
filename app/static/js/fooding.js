@@ -108,16 +108,32 @@
 
   /* ---------- mode "manage": the admin or accountant's own page ---------- */
 
+  /* Employees | Requests (kohal, 2026-10-27: "a subtab or request in fooding tab where one can see active
+     request and history"). `waiting` is how many requests are waiting on this person, shown on the tab. */
+  const tabBar = (active, waiting) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Fooding section' },
+    [['employees', 'Employees', '#'], ['requests', waiting ? `Requests (${waiting})` : 'Requests', '#requests']].map(([key, label, href]) => h('a', {
+      class: 'filter-chip', href, 'aria-current': active === key ? 'page' : null,
+    }, label)));
+
+  async function waitingCount() {
+    try {
+      const r = await api('/api/fooding/requests');
+      return r.pending.filter((p) => p.can_decide).length;
+    } catch (err) { return 0; }
+  }
+
   async function loadManage() {
     LD.resetAppbarBack?.();
     let data;
+    let waiting = 0;
     try {
-      data = await api('/api/fooding');
+      [data, waiting] = await Promise.all([api('/api/fooding'), waitingCount()]);
     } catch (err) {
       clear(view).append(h('p', { class: 'empty-state' }, err.message));
       return;
     }
     clear(view).append(h('div', {},
+      tabBar('employees', waiting),
       h('p', { class: 'result-count' }, `${data.workers.length} daily-wage employee${data.workers.length === 1 ? '' : 's'}`),
       data.workers.length
         ? h('ul', { class: 'card-group' }, data.workers.map((w) => row(w, data.daily_amount, data.currency)))
@@ -157,14 +173,14 @@
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', placeholder: 'Amount to add' });
     const modeSel = selectField(reg.payment_modes, '', { title: 'How was it paid', placeholder: 'Choose one' });
     const errEl = h('p', { class: 'err', role: 'alert' });
-    const allotBtn = h('button', { class: 'btn primary', type: 'button' }, 'Add');
+    const allotBtn = h('button', { class: 'btn primary', type: 'button' }, 'Send for approval');
     const pauseBtn = h('button', { class: 'btn', type: 'button' }, f.is_paused ? 'Resume' : 'Pause');
     allotBtn.onclick = async () => {
       allotBtn.disabled = true;
       errEl.textContent = '';
       try {
         await api(`/api/fooding/${id}/allot`, { method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value } });
-        toast('Added to fooding balance');
+        toast('Sent for approval');
         await showPerson(id);
       } catch (err) {
         errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
@@ -202,6 +218,7 @@
           : h('p', { class: 'hint' }, 'Nothing credited or spent yet.')),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Add to balance'),
+        h('p', { class: 'hint' }, 'The admin or accountant who didn\u2019t ask for it has to approve it before it is added.'),
         field('amount', 'Amount', amountInput),
         field('payment_mode', 'How was it paid', modeSel),
         errEl,
@@ -209,9 +226,67 @@
     window.scrollTo(0, 0);
   }
 
+  /* ---------- Requests: what is waiting on someone, and the history of what was decided ---------- */
+
+  const STATUS = { approved: ['Approved', 'chip-role'], rejected: ['Rejected', 'chip-off'], cancelled: ['Withdrawn', 'chip-off'], pending: ['Waiting', 'chip-off'] };
+
+  async function showRequests() {
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
+    let data;
+    try {
+      data = await api('/api/fooding/requests');
+    } catch (err) {
+      clear(view).append(h('p', { class: 'empty-state' }, err.message));
+      return;
+    }
+    const cur = data.currency;
+    const waiting = data.pending.filter((p) => p.can_decide).length;
+
+    async function act(r, action, doneText) {
+      try {
+        await api(`/api/fooding/requests/${r.id}/${action}`, { method: 'POST' });
+        toast(doneText);
+        await showRequests();
+      } catch (err) { toast(err.message, true); }
+    }
+
+    const activeRow = (r) => h('li', { class: 'card approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, `${r.worker_name} \u00b7 ${money(r.amount, cur)}`),
+        h('span', { class: 'hint' }, [r.payment_mode, `asked by ${r.created_by_name || 'someone'}`, fmtDate(r.entry_date)].join(' \u00b7 ')),
+        r.is_mine ? h('span', { class: 'hint' }, 'Waiting for the other of admin / accountant to approve') : null),
+      h('div', { class: 'approval-actions' },
+        r.can_decide ? h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve', 'Approved') }, 'Approve') : null,
+        r.can_decide ? h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject', 'Rejected') }, 'Reject') : null,
+        r.is_mine ? h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'cancel', 'Request withdrawn') }, 'Withdraw') : null));
+
+    const historyRow = (r) => h('li', { class: 'p-row' },
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, r.worker_name),
+        h('span', { class: 'row-sub' }, [fmtDate(r.entry_date), r.payment_mode, r.created_by_name ? `asked by ${r.created_by_name}` : null,
+          r.decided_by_name ? `${r.status === 'cancelled' ? 'withdrawn' : r.status} by ${r.decided_by_name}` : null].filter(Boolean).join(' \u00b7 ')),
+        h('span', { class: `chip ${STATUS[r.status][1]}` }, STATUS[r.status][0])),
+      h('span', { class: 'row-value' }, money(r.amount, cur)));
+
+    clear(view).append(h('div', {},
+      tabBar('requests', waiting),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Active'),
+        data.pending.length
+          ? h('ul', { class: 'card-group' }, data.pending.map(activeRow))
+          : h('p', { class: 'hint' }, 'Nothing waiting. When someone allots fooding money it shows up here until the other of admin / accountant approves it.')),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'History'),
+        data.history.length
+          ? h('ul', { class: 'card-group' }, data.history.map(historyRow))
+          : h('p', { class: 'hint' }, 'Nothing decided yet.'))));
+  }
+
   function route() {
     const m = /^#p(\d+)$/.exec(window.location.hash);
     if (m) return showPerson(Number(m[1]));
+    if (window.location.hash === '#requests') return showRequests();
     return loadManage();
   }
 

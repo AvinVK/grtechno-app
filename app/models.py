@@ -832,15 +832,27 @@ class FoodingEntry(db.Model):
     entry_date = db.Column(db.Date, nullable=False)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    # An allotment is a request until the other of admin / accountant approves it (kohal, 2026-10-27: "if admin
+    # gives, accountant can approve or vice versa") - pending | approved | rejected | cancelled. Only an
+    # approved allot adds to the account's allotted_total. Every expense, and every entry from before this
+    # existed, is 'approved'.
+    status = db.Column(db.String(10), nullable=False, default="approved", server_default="approved")
+    decided_by_code = db.Column(db.String(4), nullable=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
 
     account = db.relationship("FoodingAccount", back_populates="entries")
     created_by = db.relationship("User")
 
     def to_dict(self) -> dict:
+        decider = db.session.get(User, self.decided_by_code) if self.decided_by_code else None
         return {
             "id": self.id, "kind": self.kind, "amount": float(self.amount), "payment_mode": self.payment_mode,
             "purpose": self.purpose, "entry_date": self.entry_date.isoformat(),
             "created_by_name": self.created_by.name if self.created_by else None,
+            "created_by_code": self.created_by_code, "status": self.status,
+            "decided_by_name": decider.name if decider else None, "decided_at": _iso(self.decided_at),
+            "created_at": _iso(self.created_at),
+            "worker_id": self.account.worker_id, "worker_name": self.account.worker.name,
         }
 
 
