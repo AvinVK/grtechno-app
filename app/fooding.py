@@ -195,7 +195,7 @@ def register(worker_id):
     auto = (account.deducted_total - spent) if account else Decimal("0")
     return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
                    entries=[e.to_dict() for e in entries], auto_deducted=float(max(auto, Decimal("0"))),
-                   currency=settings_for_client()["currency"])
+                   payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
 
 
 @bp.post("/api/fooding/<int:worker_id>/allot")

@@ -8,7 +8,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, money, closeOnBack } = window.LD;
+  const { $, h, clear, api, money } = window.LD;
   const view = $('#view');
   const mode = view.dataset.mode;
 
@@ -61,6 +61,7 @@
   /* ---------- mode "manage" ---------- */
 
   async function loadManage() {
+    LD.resetAppbarBack?.();
     let data;
     try {
       data = await api('/api/petrol');
@@ -73,31 +74,38 @@
       h('p', { class: 'result-count' }, `${data.workers.length} employee${data.workers.length === 1 ? '' : 's'} on petrol payment`),
       data.workers.length
         ? h('ul', { class: 'card-group' }, data.workers.map((w) => h('li', {}, h('button', {
-          type: 'button', class: 'card me-row approval-row fooding-row', onclick: () => openRegister(w),
+          type: 'button', class: 'card me-row approval-row fooding-row', onclick: () => { window.location.hash = `#p${w.worker_id}`; },
         },
         h('div', { class: 'approval-main' },
           h('strong', {}, w.worker_name),
-          h('span', { class: 'hint' }, [`${w.month_km} km this month`, w.pending ? `${w.pending} waiting for approval` : null].filter(Boolean).join(' · '))),
+          h('span', { class: 'hint' }, [`${w.month_km} km this month`, w.pending ? `${w.pending} waiting for approval` : null].filter(Boolean).join(' \u00b7 '))),
         h('span', { class: 'fn-stat-value' }, money(w.month_total, cur))))))
         : h('p', { class: 'empty-state' }, 'Nobody is on petrol payment yet - switch it on for someone in Employee management.')));
   }
 
-  async function openRegister(w) {
-    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-    const body = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
-    const closeBtn = h('button', { class: 'btn', type: 'button' }, 'Close');
-    const finish = closeOnBack(() => overlay.remove());
-    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
-    closeBtn.onclick = () => finish();
-    overlay.append(h('div', { class: 'amount-sheet register-sheet', role: 'dialog', 'aria-modal': 'true' },
-      h('h2', {}, w.worker_name), body, h('div', { class: 'confirm-actions' }, closeBtn)));
-    document.body.append(overlay);
+  /* A person's register opens as its own page, like an employee in the attendance register. */
+  async function showPerson(id) {
+    LD.setAppbarBack?.('Petrol', '#');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
     try {
-      clear(body).append(registerBlock(await api(`/api/petrol/worker/${w.worker_id}`)));
+      const data = await api(`/api/petrol/worker/${id}`);
+      clear(view).append(h('div', { class: 'people' },
+        h('div', { class: 'att-head' }, h('h2', {}, data.worker_name)),
+        registerBlock(data)));
+      window.scrollTo(0, 0);
     } catch (err) {
-      clear(body).append(h('p', { class: 'empty-state' }, err.message));
+      clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back')));
     }
   }
 
-  if (mode === 'manage') loadManage(); else loadOwn();
+  function route() {
+    const m = /^#p(\d+)$/.exec(window.location.hash);
+    if (m) return showPerson(Number(m[1]));
+    return loadManage();
+  }
+
+  if (mode === 'manage') {
+    window.addEventListener('hashchange', route);
+    route();
+  } else loadOwn();
 })();

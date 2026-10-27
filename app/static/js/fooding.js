@@ -109,6 +109,7 @@
   /* ---------- mode "manage": the admin or accountant's own page ---------- */
 
   async function loadManage() {
+    LD.resetAppbarBack?.();
     let data;
     try {
       data = await api('/api/fooding');
@@ -119,17 +120,17 @@
     clear(view).append(h('div', {},
       h('p', { class: 'result-count' }, `${data.workers.length} daily-wage employee${data.workers.length === 1 ? '' : 's'}`),
       data.workers.length
-        ? h('ul', { class: 'card-group' }, data.workers.map((w) => row(w, data.daily_amount, data.currency, data.payment_modes)))
+        ? h('ul', { class: 'card-group' }, data.workers.map((w) => row(w, data.daily_amount, data.currency)))
         : h('p', { class: 'empty-state' }, 'No daily-wage employees yet - mark someone from Employee management first.')));
   }
 
-  function row(w, dailyAmount, cur, paymentModes) {
+  function row(w, dailyAmount, cur) {
     const sub = w.is_paused
       ? 'Paused'
       : `${money(w.allotted_total, cur)} allotted · ${money(dailyAmount, cur)}/day`;
     return h('li', {}, h('button', {
       type: 'button', class: `card me-row approval-row fooding-row${w.is_paused ? ' is-paused' : ''}`,
-      onclick: () => openManageSheet(w, dailyAmount, cur, paymentModes),
+      onclick: () => { window.location.hash = `#p${w.worker_id}`; },
     },
       h('div', { class: 'approval-main' },
         h('strong', {}, w.worker_name),
@@ -137,27 +138,34 @@
       h('span', { class: 'fn-stat-value' }, money(w.remaining, cur))));
   }
 
-  function openManageSheet(w, dailyAmount, cur, paymentModes) {
-    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+  /* One person's own page, opened from the list the way an employee opens from the attendance register
+     (kohal, 2026-10-27: "it should open like how attendance register opens") - the register of everything
+     credited and spent with date and who entered it (kohal: "show credited, spent with date, who credited
+     just like a register"), then adding to the balance and pausing the daily deduction. */
+  async function showPerson(id) {
+    LD.setAppbarBack?.('Fooding', '#');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
+    let reg;
+    try {
+      reg = await api(`/api/fooding/${id}`);
+    } catch (err) {
+      clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back')));
+      return;
+    }
+    const f = reg.fooding;
+    const cur = reg.currency;
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', placeholder: 'Amount to add' });
-    const modeSel = selectField(paymentModes, '', { title: 'How was it paid', placeholder: 'Choose one' });
+    const modeSel = selectField(reg.payment_modes, '', { title: 'How was it paid', placeholder: 'Choose one' });
     const errEl = h('p', { class: 'err', role: 'alert' });
-    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Close');
     const allotBtn = h('button', { class: 'btn primary', type: 'button' }, 'Add');
-    const pauseBtn = h('button', { class: 'btn small', type: 'button' }, w.is_paused ? 'Resume' : 'Pause');
-    const finish = closeOnBack(() => overlay.remove());
-    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
-    cancelBtn.onclick = () => finish();
+    const pauseBtn = h('button', { class: 'btn small', type: 'button' }, f.is_paused ? 'Resume' : 'Pause');
     allotBtn.onclick = async () => {
       allotBtn.disabled = true;
       errEl.textContent = '';
       try {
-        await api(`/api/fooding/${w.worker_id}/allot`, {
-          method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value },
-        });
-        finish();
+        await api(`/api/fooding/${id}/allot`, { method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value } });
         toast('Added to fooding balance');
-        await loadManage();
+        await showPerson(id);
       } catch (err) {
         errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
         allotBtn.disabled = false;
@@ -166,41 +174,49 @@
     pauseBtn.onclick = async () => {
       pauseBtn.disabled = true;
       try {
-        await api(`/api/fooding/${w.worker_id}/${w.is_paused ? 'resume' : 'pause'}`, { method: 'POST' });
-        finish();
-        toast(w.is_paused ? 'Fooding resumed' : 'Fooding paused');
-        await loadManage();
+        await api(`/api/fooding/${id}/${f.is_paused ? 'resume' : 'pause'}`, { method: 'POST' });
+        toast(f.is_paused ? 'Fooding resumed' : 'Fooding paused');
+        await showPerson(id);
       } catch (err) {
         toast(err.message, true);
         pauseBtn.disabled = false;
       }
     };
-    // The register: every credit and every expense with its date and who entered it (kohal, 2026-10-27:
-    // "when clicking on one daily wages person, it should show credited, spent with date, who credited just
-    // like a register"). Loaded after the sheet opens so the top-up form is there straight away.
-    const registerBox = h('section', { class: 'fooding-register' }, h('p', { class: 'loading' }, 'Loading register…'));
-    api(`/api/fooding/${w.worker_id}`).then((reg) => {
-      const entries = reg.entries || [];
-      clear(registerBox).append(
+    const entries = reg.entries || [];
+    clear(view).append(h('div', { class: 'people' },
+      h('div', { class: 'att-head' },
+        h('h2', {}, f.worker_name),
+        h('span', { class: 'att-head-date' }, f.is_paused ? 'Paused' : `${money(f.daily_amount, cur)}/day`)),
+      h('div', { class: 'client-stats' },
+        h('div', { class: 'stat' },
+          h('span', { class: 'stat-label' }, 'Allotted'),
+          h('span', { class: 'stat-value is-text' }, money(f.allotted_total, cur))),
+        h('div', { class: 'stat' },
+          h('span', { class: 'stat-label' }, 'Remaining'),
+          h('span', { class: 'stat-value is-text' }, money(f.remaining, cur)),
+          h('span', { class: 'stat-note' }, `Daily food deducted: ${money(reg.auto_deducted, cur)}`))),
+      h('section', { class: 'p-section' },
         h('h3', {}, 'Register'),
-        h('p', { class: 'hint' }, `Daily food deducted so far: ${money(reg.auto_deducted, cur)}`),
         entries.length
           ? h('ul', { class: 'card-group' }, entries.map(entryRow(cur, { forManager: true })))
-          : h('p', { class: 'hint' }, 'Nothing credited or spent yet.'));
-    }).catch((err) => { clear(registerBox).append(h('p', { class: 'hint' }, err.message)); });
-
-    overlay.append(h('div', { class: 'amount-sheet register-sheet', role: 'dialog', 'aria-modal': 'true' },
-      h('h2', {}, w.worker_name),
-      h('p', { class: 'hint' },
-        `${money(w.allotted_total, cur)} allotted so far · ${money(w.remaining, cur)} remaining · ${money(dailyAmount, cur)}/day`,
-        w.is_paused ? ' · Paused' : ''),
-      registerBox,
-      field('amount', 'Add to balance', amountInput),
-      field('payment_mode', 'How was it paid', modeSel),
-      errEl,
-      h('div', { class: 'confirm-actions' }, pauseBtn, cancelBtn, allotBtn)));
-    document.body.append(overlay);
+          : h('p', { class: 'hint' }, 'Nothing credited or spent yet.')),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Add to balance'),
+        field('amount', 'Amount', amountInput),
+        field('payment_mode', 'How was it paid', modeSel),
+        errEl,
+        h('div', { class: 'form-actions' }, pauseBtn, allotBtn))));
+    window.scrollTo(0, 0);
   }
 
-  if (mode === 'manage') loadManage(); else loadOwn();
+  function route() {
+    const m = /^#p(\d+)$/.exec(window.location.hash);
+    if (m) return showPerson(Number(m[1]));
+    return loadManage();
+  }
+
+  if (mode === 'manage') {
+    window.addEventListener('hashchange', route);
+    route();
+  } else loadOwn();
 })();
