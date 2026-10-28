@@ -26,7 +26,8 @@
     {# A client's phone number is their whole sign-in - no PIN (kohal, 2026-10-26). #}
     {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
     {% else %}
-    {% call pin_field('pin', 'PIN', 6, 'current-password', autosubmit=true,
+    {# No auto-submit when the last digit goes in (kohal, 2026-10-28: it jumped to "wrong PIN" before anyone pressed Sign in) - the button is what sends it. #}
+    {% call pin_field('pin', 'PIN', 6, 'current-password',
                       attrs=('autofocus ' if userid else '') ~ 'required' ~ (' aria-invalid="true" aria-describedby="login-error"' if error else '')) %}
       {% if error %}<p class="err" id="login-error" role="alert">{{ error }}</p>{% endif %}
     {% endcall %}
