@@ -25,7 +25,8 @@
     {% call pin_field('pin', 'New PIN', pin_length, 'new-password', attrs='minlength="' ~ pin_length ~ '" required') %}
       <p class="hint">Exactly {{ pin_length }} digits.</p>
     {% endcall %}
-    {% call pin_field('confirm', 'Type it again', pin_length, 'new-password', autosubmit=true,
+    {# No auto-submit once it is full (kohal, 2026-10-28) - Save PIN is what sends it. #}
+    {% call pin_field('confirm', 'Type it again', pin_length, 'new-password',
                       attrs='minlength="' ~ pin_length ~ '" required' ~ (' aria-invalid="true" aria-describedby="setup-error"' if error else '')) %}
       {% if error %}<p class="err" id="setup-error" role="alert">{{ error }}</p>{% endif %}
     {% endcall %}
