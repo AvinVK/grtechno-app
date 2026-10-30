@@ -485,9 +485,18 @@ Sign in with your phone number: ${u.userid}`;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const finish = closeOnBack(() => overlay.remove());
     overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    // Closing the box also steps the history back once (closeOnBack's pushed entry), which lands a moment
+    // later - so the move to the form waits for that, or the back step would undo it and leave the list showing
+    // (kohal, 2026-10-30: "when i click on adhoc client, its not opening the form").
+    const go = (hash) => {
+      const stepsBack = !!(history.state && history.state.ldOverlay != null);
+      finish();
+      if (stepsBack) window.addEventListener('popstate', () => { window.location.hash = hash; }, { once: true });
+      else window.location.hash = hash;
+    };
     const choice = (title, sub, hash) => h('button', {
       type: 'button', class: 'card me-row approval-row chooser-row',
-      onclick: () => { finish(); window.location.hash = hash; },
+      onclick: () => go(hash),
     }, h('div', { class: 'approval-main' }, h('strong', {}, title), h('span', { class: 'hint' }, sub)));
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Add a client'),
