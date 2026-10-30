@@ -25,6 +25,10 @@
     return h('span', { class: `chip chip-p-${tone}` }, label);
   };
 
+  // The Clients page has no back arrow in its top bar (its bottom tab is the way out), so every screen below the
+  // list carries its own way back right under the bar (kohal, 2026-10-30: "no back button to client list").
+  const backLink = (href, label) => h('a', { class: 'back-link adhoc-back', href }, `← ${label}`);
+
   /* ---------- list, grouped by area, with a search and a service filter ---------- */
 
   let listCurrency = '';
@@ -286,6 +290,7 @@ Sign in with your phone number: ${u.userid}`;
     }
 
     clear(view).append(h('div', { class: 'project-detail' },
+      backLink('#', 'Back to clients'),
       h('div', { class: 'client-head' },
         h('div', {},
           h('h2', {}, client.name),
@@ -384,6 +389,7 @@ Sign in with your phone number: ${u.userid}`;
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
+      backLink(`#c${C.id}`, 'Back to client'),
       h('div', { class: 'p-head' }, h('h2', {}, 'Edit details')),
       form));
   }
@@ -475,6 +481,7 @@ Sign in with your phone number: ${u.userid}`;
       h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
+      backLink('#', 'Back to clients'),
       h('div', { class: 'p-head' }, h('h2', {}, 'Add client')),
       form));
   }
@@ -485,9 +492,18 @@ Sign in with your phone number: ${u.userid}`;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const finish = closeOnBack(() => overlay.remove());
     overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    // Closing the box also steps the history back once (closeOnBack's pushed entry), which lands a moment
+    // later - so the move to the form waits for that, or the back step would undo it and leave the list showing
+    // (kohal, 2026-10-30: "when i click on adhoc client, its not opening the form").
+    const go = (hash) => {
+      const stepsBack = !!(history.state && history.state.ldOverlay != null);
+      finish();
+      if (stepsBack) window.addEventListener('popstate', () => { window.location.hash = hash; }, { once: true });
+      else window.location.hash = hash;
+    };
     const choice = (title, sub, hash) => h('button', {
       type: 'button', class: 'card me-row approval-row chooser-row',
-      onclick: () => { finish(); window.location.hash = hash; },
+      onclick: () => go(hash),
     }, h('div', { class: 'approval-main' }, h('strong', {}, title), h('span', { class: 'hint' }, sub)));
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Add a client'),
@@ -626,6 +642,7 @@ Sign in with your phone number: ${u.userid}`;
     renderService();
     renderItems();
     clear(view).append(h('div', { class: 'project-detail' },
+      backLink(presetId ? `#c${presetId}` : '#', presetId ? 'Back to client' : 'Back to clients'),
       h('div', { class: 'p-head' }, h('h2', {}, 'Adhoc order')),
       restored ? h('p', { class: 'hint' }, 'What you had typed has been put back. ',
         h('button', { class: 'link-btn', type: 'button', onclick: () => { clearDraft(); showAdhoc(presetId); } }, 'Start over')) : null,
@@ -635,6 +652,9 @@ Sign in with your phone number: ${u.userid}`;
 
   function route() {
     const hash = window.location.hash;
+    // "+ Client" is for starting a client - not shown while already on a client form.
+    const addBtn = $('#add-client-btn');
+    if (addBtn) addBtn.hidden = hash === '#new' || hash.startsWith('#adhoc');
     if (hash === '#new') return showNew();
     const adhocRoute = /^#adhoc(?:\/c(\d+))?$/.exec(hash);
     if (adhocRoute) return showAdhoc(adhocRoute[1] ? Number(adhocRoute[1]) : null);
