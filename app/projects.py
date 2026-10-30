@@ -10,6 +10,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
+from .adhoc import _adhoc_kind
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
     COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
@@ -202,7 +203,7 @@ def list_projects():
         currency=settings["currency"],
         services=settings["services"],                      # for the Add project form
         payment_modes=PAYMENT_MODES,
-        clients=[{"id": c.id, "name": c.name} for c in visible_clients().order_by(Client.name)],
+        clients=[{"id": c.id, "name": c.name} for c in visible_clients().filter(Client.is_adhoc.is_(False)).order_by(Client.name)],
     )
 
 
@@ -367,6 +368,9 @@ def _detail(project):
         "payment_modes": PAYMENT_MODES,
         "document_types": PROJECT_DOCUMENT_TYPES,
         "attachment_types": PROJECT_ATTACHMENT_TYPES,
+        # An adhoc project (app/adhoc.py) says which of its two services it is, so the items form shows the
+        # right boxes (refilling has the three dates); empty for every normal project.
+        "adhoc_kind": _adhoc_kind(project) if client.is_adhoc else "",
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,
@@ -819,6 +823,12 @@ def delete_project(project_id):
 # it, how, and when is an Inventory-side action either way. This project page just shows what's pending,
 # read-only, and lets anyone who can see the project ask for more or send some back.
 
+def _can_request_adhoc_material(user) -> bool:
+    """Material for an adhoc project (kohal, 2026-10-30: "only project manager or accountant or admin can request
+    for these materials from inventory") - narrower than a normal project, where anyone who can see it may ask."""
+    return user.is_admin or user.role_key in PROJECT_MANAGER_ROLE_KEYS or user.role_key == "accounts"
+
+
 def _material_request_dict(movement):
     d = movement.to_dict()
     d["material_name"] = movement.material.name
@@ -868,6 +878,10 @@ def material_requests(project_id):
         materials=[{"id": m.id, "code": m.code, "name": m.name, "unit": m.unit, "stock_qty": float(m.stock_qty)}
                    for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
         returnable_materials=returnable,
+        # Whether the signed-in person may ask for (or return) material on this project, and - for an adhoc
+        # project - what its order lists, so the request form can offer those items to pick from.
+        can_request=_can_request_adhoc_material(g.user) if project.client.is_adhoc else True,
+        adhoc_items=[i.to_dict() for i in project.adhoc_items] if project.client.is_adhoc else [],
     )
 
 
@@ -881,11 +895,22 @@ def request_material(project_id):
     themselves; see app/inventory.py's approve_material_request, which also refuses the requester their own
     approval if they try it directly."""
     project = _project_or_404(project_id)
+    if project.client.is_adhoc and not _can_request_adhoc_material(g.user):
+        abort(403, "Only a project manager, the accountant or the admin can request material for an adhoc project.")
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
 
     kind = "in" if payload.get("kind") == "in" else "out"
+    if kind == "out" and project.client.is_adhoc:
+        # An adhoc project only asks for what its own order lists (kohal, 2026-10-30: "material should be already
+        # filled and should not be able to change") - the material is fixed to one of the order's items.
+        allowed = {i.fe_type.strip().lower() for i in project.adhoc_items}
+        raw_pick = payload.get("material_id")
+        picked = db.session.get(Material, int(raw_pick)) if str(raw_pick).isdigit() else None
+        chosen = (picked.name if picked else str(payload.get("material_name") or "")).strip().lower()
+        if chosen not in allowed:
+            return jsonify(error="Check the highlighted fields", fields={"material_id": "Choose one of this order's items"}), 422
     f = Fields(payload)
     f.money("quantity", nullable=False)
     f.text("note", 200)

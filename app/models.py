@@ -329,6 +329,9 @@ class Client(db.Model):
     city = db.Column(db.String(120), nullable=False, default="", server_default="")
     address = db.Column(EncryptedText, nullable=False, default="", server_default="")
     notes = db.Column(db.Text, nullable=False, default="", server_default="")
+    # An adhoc client (kohal, 2026-10-30) - someone who buys or gets extinguishers refilled once or now and
+    # then, kept apart from the normal clients; identified by their contact number (see app/adhoc.py).
+    is_adhoc = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
@@ -350,6 +353,7 @@ class Client(db.Model):
         services = sorted({name for p in self.projects for name in p.service_names})
         return {
             "id": self.id, "name": self.name, "contact_name": self.contact_name, "phone": self.phone,
+            "is_adhoc": self.is_adhoc,
             "email": self.email, "site_name": self.site_name, "site_category": self.site_category, "pincode": self.pincode,
             "state": self.state, "district": self.district, "city": self.city, "address": self.address,
             "notes": self.notes, "owner_name": self.owner.name if self.owner else None,
@@ -411,6 +415,8 @@ class Project(db.Model):
         order_by="ProjectExpense.entry_date.desc(), ProjectExpense.id.desc()",
     )
     documents = db.relationship("ProjectDocument", back_populates="project", cascade="all, delete-orphan")
+    adhoc_items = db.relationship("AdhocItem", back_populates="project", cascade="all, delete-orphan",
+                                  order_by="AdhocItem.position, AdhocItem.id")
     stages = db.relationship("ProjectStage", back_populates="project", cascade="all, delete-orphan")
 
     @property
@@ -501,7 +507,7 @@ class Project(db.Model):
             "final_amount": num(self.final_amount), "net_amount": num(self.net_amount),
             "paid_amount": num(self.paid_amount), "manager_code": self.manager_code,
             "manager_name": self.manager.name if self.manager else None,
-            "lead_id": self.lead_id,
+            "lead_id": self.lead_id, "is_adhoc": self.client.is_adhoc,
             "site_state": self.site_state, "site_district": self.site_district, "site_city": self.site_city,
         }
         if detail:
@@ -514,8 +520,44 @@ class Project(db.Model):
                 "payment_terms": self.payment_terms, "special_terms": self.special_terms,
                 "payments": [p.to_dict() for p in self.payments],
                 "documents": {d.doc_type: d.to_dict() for d in self.documents},
+                "adhoc_items": [i.to_dict() for i in self.adhoc_items],
             })
         return data
+
+
+class AdhocItem(db.Model):
+    """One line of an adhoc project (kohal, 2026-10-30): an extinguisher type or fire material, its weight/spec,
+    quantity and rate - and, for a refill, when it was refilled, when its hydro pressure test (HPT) was done and
+    when it expires. The project's value is the total of qty x rate (see app/adhoc.py)."""
+
+    __tablename__ = "adhoc_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    position = db.Column(db.Integer, nullable=False, default=1, server_default="1")
+    fe_type = db.Column(db.String(120), nullable=False, default="", server_default="")
+    weight = db.Column(db.String(60), nullable=False, default="", server_default="")
+    qty = db.Column(db.Integer, nullable=False, default=1, server_default="1")
+    rate = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    refill_date = db.Column(db.Date, nullable=True)
+    hpt_date = db.Column(db.Date, nullable=True)
+    expiry_date = db.Column(db.Date, nullable=True)
+    remark = db.Column(db.String(400), nullable=False, default="", server_default="")
+
+    project = db.relationship("Project", back_populates="adhoc_items")
+
+    @property
+    def amount(self):
+        return Decimal(self.qty) * self.rate
+
+    def to_dict(self) -> dict:
+        def day(d):
+            return d.isoformat() if d else None
+        return {
+            "id": self.id, "fe_type": self.fe_type, "weight": self.weight, "qty": self.qty, "rate": float(self.rate),
+            "amount": float(self.amount), "refill_date": day(self.refill_date), "hpt_date": day(self.hpt_date),
+            "expiry_date": day(self.expiry_date), "remark": self.remark,
+        }
 
 
 class ProjectPayment(db.Model):
@@ -635,6 +677,14 @@ class PetrolEntry(db.Model):
     approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    # Getting paid for it (kohal, 2026-10-30): once approved, the employee can ask for that amount in cash;
+    # the admin or accountant approves it and records how it was paid. "" = not asked | requested | paid |
+    # rejected (a rejected one can be asked for again).
+    cash_status = db.Column(db.String(10), nullable=False, default="", server_default="")
+    cash_requested_at = db.Column(db.DateTime, nullable=True)
+    cash_decided_by_code = db.Column(db.String(4), nullable=True)
+    cash_decided_at = db.Column(db.DateTime, nullable=True)
+    cash_mode = db.Column(db.String(20), nullable=False, default="", server_default="")
 
     attendance = db.relationship("Attendance", backref=db.backref("petrol", uselist=False, cascade="all, delete-orphan", passive_deletes=True))
     user = db.relationship("User", foreign_keys=[user_code])
@@ -659,6 +709,10 @@ class PetrolEntry(db.Model):
             "km": self.km, "amount": float(self.amount) if self.amount is not None else None,
             "status": self.status,
             "approved_by_name": self.approved_by.name if self.approved_by else None,
+            "cash_status": self.cash_status, "cash_mode": self.cash_mode,
+            "cash_requested_at": _iso(self.cash_requested_at), "cash_decided_at": _iso(self.cash_decided_at),
+            "cash_decided_by_name": (db.session.get(User, self.cash_decided_by_code).name
+                                     if self.cash_decided_by_code and db.session.get(User, self.cash_decided_by_code) else None),
         }
 
 

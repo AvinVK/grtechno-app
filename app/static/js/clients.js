@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, pincodeLookup, selectField } = window.LD;
+  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, pincodeLookup, selectField, closeOnBack } = window.LD;
 
   const view = $('#view');
   const canOpenProjects = view.dataset.projects === '1';
@@ -44,7 +44,9 @@
       h('span', { class: 'client-tile', 'data-tone': String(tileTone(c.id)), 'aria-hidden': 'true' }, (c.name[0] || '?').toUpperCase()),
       h('span', { class: 'client-row-main' },
         h('span', { class: 'client-row-name' }, c.name, c.has_logged_in ? h('span', { class: 'client-login-tag' }, 'Has logged in') : null),
-        h('span', { class: 'client-row-count' }, plural(c.project_count, 'project', 'projects'))),
+        h('span', { class: 'client-row-count' }, c.is_adhoc
+          ? [c.phone, plural(c.project_count, 'order', 'orders')].filter(Boolean).join(' \u00b7 ')
+          : plural(c.project_count, 'project', 'projects'))),
       c.total_estimated_value != null ? h('span', { class: 'client-row-value' }, fmtShort(c.total_estimated_value, listCurrency)) : null,
       h('span', { class: 'row-chevron', 'aria-hidden': 'true' }, '›')));
   }
@@ -78,20 +80,24 @@
     try { data = await api('/api/clients'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     listCurrency = data.currency;
 
-    const filter = { q: '', service: '', loggedIn: false };
-    const allServices = [...new Set(data.clients.flatMap((c) => c.services))].sort();
+    // 'all' = the normal clients, 'logged' = the normal clients who have logged in, 'adhoc' = the adhoc ones, kept
+    // as their own list (kohal, 2026-10-30: "option 2" - a separate list).
+    const filter = { q: '', service: '', tab: 'all' };
+    const normal = data.clients.filter((c) => !c.is_adhoc);
+    const adhoc = data.clients.filter((c) => c.is_adhoc);
+    const allServices = [...new Set(normal.flatMap((c) => c.services))].sort();
 
     // "Logged in clients" subtab (kohal, 2026-10-22: "in the client tab, have one subtab called logged in
     // clients") - same filter-chip pattern as the Projects list's own status chips.
     const tabs = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter clients' });
     function renderTabs() {
       clear(tabs);
-      const loggedInCount = data.clients.filter((c) => c.has_logged_in).length;
-      const options = [[false, 'All clients', data.clients.length], [true, 'Logged in clients', loggedInCount]];
+      const loggedInCount = normal.filter((c) => c.has_logged_in).length;
+      const options = [['all', 'All clients', normal.length], ['logged', 'Logged in clients', loggedInCount], ['adhoc', 'Adhoc', adhoc.length]];
       for (const [value, label, n] of options) {
         tabs.append(h('button', {
-          class: 'filter-chip', type: 'button', 'aria-pressed': String(filter.loggedIn === value),
-          onclick: () => { filter.loggedIn = value; renderTabs(); refresh(); },
+          class: 'filter-chip', type: 'button', 'aria-pressed': String(filter.tab === value),
+          onclick: () => { filter.tab = value; renderTabs(); refresh(); },
         }, label, h('span', { class: 'n' }, n)));
       }
     }
@@ -113,16 +119,25 @@
       const q = filter.q.trim().toLowerCase();
       const textOk = !q || [c.name, c.contact_name, c.phone, c.email, c.city, c.district, c.state].some((v) => (v || '').toLowerCase().includes(q));
       const serviceOk = !filter.service || c.services.includes(filter.service);
-      const loggedInOk = !filter.loggedIn || c.has_logged_in;
-      return textOk && serviceOk && loggedInOk;
+      const loggedInOk = filter.tab !== 'logged' || c.has_logged_in;
+      const kindOk = filter.tab === 'adhoc' ? c.is_adhoc : !c.is_adhoc;
+      return textOk && serviceOk && loggedInOk && kindOk;
     }
 
     function refresh() {
       const items = data.clients.filter(matches);
       count.textContent = plural(items.length, 'client', 'clients');
       clear(results);
+      serviceSel.hidden = filter.tab === 'adhoc';       // services only describe the normal clients
+      if (filter.tab === 'adhoc') {
+        // Adhoc clients have no site, only an address - one plain list, newest first.
+        results.append(items.length
+          ? h('ul', { class: 'card-group' }, items.map(clientRow))
+          : h('p', { class: 'empty-state' }, adhoc.length ? 'No adhoc clients match this search.' : 'No adhoc clients yet. Use + Client, then Adhoc client.'));
+        return;
+      }
       if (!items.length) {
-        results.append(h('p', { class: 'empty-state' }, data.clients.length
+        results.append(h('p', { class: 'empty-state' }, normal.length
           ? 'No clients match this search.'
           : 'No clients yet. A client appears here automatically once a lead is won.'));
         return;
@@ -139,7 +154,7 @@
         if (!byState[state][city][area]) byState[state][city][area] = [];
         byState[state][city][area].push(c);
       }
-      const expand = !!(filter.q.trim() || filter.service || filter.loggedIn);  // don't leave a match hidden inside a closed box
+      const expand = !!(filter.q.trim() || filter.service || filter.tab === 'logged');  // don't leave a match hidden inside a closed box
       results.append(...Object.keys(byState).sort(sortUnknownLast).map((state) => {
         const districts = byState[state];
         const total = Object.values(districts).reduce((n, areas) => n + Object.values(areas).reduce((m, list) => m + list.length, 0), 0);
@@ -275,7 +290,7 @@ Sign in with your phone number: ${u.userid}`;
         h('div', {},
           h('h2', {}, client.name),
           contact ? h('p', { class: 'hint' }, contact) : null,
-          h('p', { class: 'hint client-brought' }, 'Brought by ',
+          client.is_adhoc ? h('p', { class: 'hint' }, 'Adhoc client') : h('p', { class: 'hint client-brought' }, 'Brought by ',
             broughtBy ? [h('strong', {}, broughtBy.name), ` · ${broughtBy.how.toLowerCase()}`] : 'not recorded')),
         h('a', { class: 'btn small', href: `#c${client.id}/edit` }, 'Edit details')),
       isAdmin ? h('div', { class: 'client-login-row' },
@@ -298,7 +313,9 @@ Sign in with your phone number: ${u.userid}`;
         projects.length
           ? h('ul', { class: 'client-projects' }, projects.map(projectRow))
           : h('p', { class: 'hint' }, 'No projects for this client yet.'),
-        canOpenProjects ? h('a', { class: 'btn primary add-project-btn', href: `/projects#new/c${client.id}` }, '+ Add project') : null)));
+        client.is_adhoc
+          ? h('a', { class: 'btn primary add-project-btn', href: `#adhoc/c${client.id}` }, '+ New order')
+          : (canOpenProjects ? h('a', { class: 'btn primary add-project-btn', href: `/projects#new/c${client.id}` }, '+ Add project') : null))));
   }
 
   /* ---------- one client: edit contact and site details ---------- */
@@ -462,9 +479,165 @@ Sign in with your phone number: ${u.userid}`;
       form));
   }
 
+  /* ---------- + Client: normal or adhoc? ---------- */
+
+  function openChooser() {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    const choice = (title, sub, hash) => h('button', {
+      type: 'button', class: 'card me-row approval-row chooser-row',
+      onclick: () => { finish(); window.location.hash = hash; },
+    }, h('div', { class: 'approval-main' }, h('strong', {}, title), h('span', { class: 'hint' }, sub)));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, 'Add a client'),
+      choice('Normal client', 'A company or site we do installation work for.', '#new'),
+      choice('Adhoc client', 'Buys or gets extinguishers refilled now and then. Found by contact number.', '#adhoc'),
+      h('div', { class: 'confirm-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => finish() }, 'Cancel'))));
+    document.body.append(overlay);
+  }
+  $('#add-client-btn')?.addEventListener('click', openChooser);
+
+  /* ---------- adhoc order: a new or existing adhoc client, one service, and its items ---------- */
+
+  async function showAdhoc(presetId) {
+    LD.setAppbarBack?.(presetId ? 'Client' : 'Clients', presetId ? `#c${presetId}` : '#');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading\u2026'));
+    let data;
+    try { data = await api('/api/adhoc/clients'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const cur = (await api('/api/clients').catch(() => ({ currency: '' }))).currency;
+
+    const state = { who: presetId ? 'existing' : 'new', service: '' };
+    const text = (type, extra = {}) => h('input', { type, value: '', ...extra });
+    const nameIn = text('text', { maxlength: 160, autocomplete: 'off' });
+    const addressIn = h('textarea', { rows: 2, maxlength: 400 });
+    const phoneIn = text('tel', { maxlength: 40, autocomplete: 'off', inputmode: 'numeric' });
+    const existingSel = selectField(
+      data.clients.map((c) => ({ value: String(c.id), label: `${c.name} \u00b7 ${c.phone}` })),
+      presetId ? String(presetId) : '', { title: 'Choose an adhoc client', placeholder: 'Choose a client' });
+
+    // A refresh must not wipe a half-filled order (kohal, 2026-10-30: "refresh should not clear the form"), so
+    // what has been typed is kept as a draft in the browser and put back when the form opens again; it is
+    // cleared when the order is saved or the person chooses Start over.
+    const DRAFT_KEY = 'adhoc-order-draft';
+    const readDraft = () => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) { return null; } };
+    const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* storage unavailable - nothing to clear */ } };
+    const saved = readDraft();
+    const restored = !!(saved && (saved.preset || null) === (presetId || null)
+      && (saved.name || saved.address || saved.phone || saved.service || (saved.items || []).some((i) => Object.values(i).some(Boolean))));
+    if (restored) {
+      state.who = saved.who === 'existing' ? 'existing' : state.who;
+      state.service = data.services.some((x) => x.key === saved.service) ? saved.service : '';
+      state.draftItems = saved.items || [];
+      nameIn.value = saved.name || '';
+      addressIn.value = saved.address || '';
+      phoneIn.value = saved.phone || '';
+      if (saved.existingId && data.clients.some((c) => String(c.id) === String(saved.existingId))) existingSel.value = String(saved.existingId);
+    }
+
+    const whoBox = h('div', {});
+    const serviceBox = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Service' });
+    const itemsBox = h('div', {});
+    let editor = null;
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save order');
+    const whoTabs = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'New or existing client' });
+
+    function renderWho() {
+      clear(whoTabs);
+      [['new', 'New client'], ['existing', 'Existing client']].forEach(([key, label]) => whoTabs.append(h('button', {
+        class: 'filter-chip', type: 'button', 'aria-pressed': String(state.who === key),
+        onclick: () => { state.who = key; renderWho(); },
+      }, label)));
+      clear(whoBox).append(state.who === 'new'
+        ? h('div', { class: 'form-grid' },
+          field('name', req('Client name'), nameIn, { wide: true }),
+          field('address', req('Address'), addressIn, { wide: true }),
+          field('phone', req('Contact no'), phoneIn, { hint: 'Their 10-digit number. It is how this client is found next time.' }))
+        : h('div', { class: 'form-grid' },
+          field('client_id', req('Adhoc client'), existingSel, { wide: true,
+            hint: data.clients.length ? null : 'There are no adhoc clients yet - use New client first.' })));
+    }
+
+    function renderService() {
+      clear(serviceBox);
+      data.services.forEach((s) => serviceBox.append(h('button', {
+        class: 'filter-chip', type: 'button', 'aria-pressed': String(state.service === s.key),
+        onclick: () => { state.service = s.key; renderService(); renderItems(); },
+      }, s.label)));
+    }
+
+    function renderItems() {
+      clear(itemsBox);
+      editor = null;
+      if (!state.service) { itemsBox.append(h('p', { class: 'hint' }, 'Choose what this order is for.')); return; }
+      editor = window.ADHOC.itemsEditor(state.service, state.draftItems || [], cur);
+      state.draftItems = null;
+      itemsBox.append(h('h3', {}, state.service === 'refilling' ? 'Items to refill' : 'Items supplied'), editor.node);
+    }
+
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        editor?.showErrors({});
+        saveBtn.disabled = true;
+        const body = { service: state.service, items: editor ? editor.getItems() : [] };
+        if (state.who === 'existing') body.client_id = existingSel.value;
+        else Object.assign(body, { name: nameIn.value, address: addressIn.value, phone: phoneIn.value });
+        try {
+          const res = await api('/api/adhoc/orders', { method: 'POST', body });
+          clearDraft();
+          toast('Order saved');
+          if (canOpenProjects) window.location.href = `/projects#p${res.project_id}`;
+          else window.location.hash = `#c${res.client_id}`;
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          // The items' errors ('items.0.qty'...) belong to the editor's own boxes; the plain form fields go through
+          // showFieldErrors (which looks them up by id, and an id with dots in it isn't a valid selector).
+          const plain = Object.fromEntries(Object.entries(err.fields || {}).filter(([k]) => !k.startsWith('items')));
+          const first = showFieldErrors(form, plain);
+          const firstItem = editor ? editor.showErrors(err.fields) : null;
+          (first || firstItem || errorBox).scrollIntoView?.({ block: 'center' });
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox,
+      h('section', { class: 'p-section' }, h('h3', {}, 'Client'), whoTabs, whoBox),
+      h('section', { class: 'p-section' }, h('h3', {}, 'Service'), serviceBox, h('p', { class: 'err', id: 'err-service', role: 'alert' })),
+      h('section', { class: 'p-section' }, itemsBox),
+      h('div', { class: 'form-actions' }, saveBtn));
+
+    function saveDraft() {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({
+          preset: presetId || null, who: state.who, service: state.service, name: nameIn.value, address: addressIn.value,
+          phone: phoneIn.value, existingId: existingSel.value, items: editor ? editor.getItems() : [],
+        }));
+      } catch (e) { /* storage full or blocked - the form still works, it just won't survive a refresh */ }
+    }
+    // After every edit, and after every click (chips, Add more, Remove) once its own handler has run.
+    ['input', 'change'].forEach((type) => form.addEventListener(type, saveDraft));
+    form.addEventListener('click', () => setTimeout(saveDraft, 0));
+
+    renderWho();
+    renderService();
+    renderItems();
+    clear(view).append(h('div', { class: 'project-detail' },
+      h('div', { class: 'p-head' }, h('h2', {}, 'Adhoc order')),
+      restored ? h('p', { class: 'hint' }, 'What you had typed has been put back. ',
+        h('button', { class: 'link-btn', type: 'button', onclick: () => { clearDraft(); showAdhoc(presetId); } }, 'Start over')) : null,
+      form));
+    window.scrollTo(0, 0);
+  }
+
   function route() {
     const hash = window.location.hash;
     if (hash === '#new') return showNew();
+    const adhocRoute = /^#adhoc(?:\/c(\d+))?$/.exec(hash);
+    if (adhocRoute) return showAdhoc(adhocRoute[1] ? Number(adhocRoute[1]) : null);
     const m = /^#c(\d+)(\/edit)?$/.exec(hash);
     if (m) return showDetail(Number(m[1]), !!m[2]);
     return showList();

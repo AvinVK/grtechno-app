@@ -21,6 +21,14 @@ PROJECT_DOCUMENT_TYPES = [
     ("final_invoice", "Final invoice"),
 ]
 
+# The two things an adhoc client can buy (kohal, 2026-10-30: "in adhoc client, there will only be supply of
+# extinguisher and refilling of extinguisher as service. single choice"): the key the form uses, the label it
+# shows, and the name of the Service row (see Service in models.py) the adhoc project is filed under.
+ADHOC_SERVICES = [
+    ("supply", "Supply of FE and Retail sale", "Supply of extinguishers"),
+    ("refilling", "Refilling of FE", "Refilling of fire extinguishers"),
+]
+
 # What a kilometre of an employee's own-vehicle riding is paid, in rupees (kohal, 2026-10-27: "everyday
 # petrol amount = diff in kilometer *4") - see models.PetrolEntry.
 PETROL_RATE_PER_KM = 4

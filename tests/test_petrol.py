@@ -186,3 +186,72 @@ def test_employee_management_can_switch_petrol_on_and_the_page_is_for_the_right_
     off = petrol_user(app, "Nobody", enabled=False)
     assert off.get("/petrol").status_code == 403
     assert off.get("/api/petrol").status_code == 403
+
+
+# ---------- asking for the cash (kohal, 2026-10-30) ----------
+
+def _approved_day(app, admin_client, name="Rider Ravi", start="1000", end="1020"):
+    who = petrol_user(app, name)
+    check_in(who, start)
+    check_out(who, end)
+    entry = PetrolEntry.query.order_by(PetrolEntry.id.desc()).first()
+    admin_client.post(f"/api/petrol/{entry.id}/approve")
+    return who, entry.id
+
+
+def test_an_approved_day_can_be_asked_for_in_cash_only_by_its_owner_and_only_once(app, admin_client):
+    who, eid = _approved_day(app, admin_client)
+    other = petrol_user(app, "Someone Else")
+    assert other.post(f"/api/petrol/{eid}/request-cash").status_code == 404           # not theirs
+    assert who.post(f"/api/petrol/{eid}/request-cash").status_code == 200
+    assert who.post(f"/api/petrol/{eid}/request-cash").status_code == 409             # already asked
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["entries"][0]["cash_status"] == "requested" and mine["unpaid_total"] == 80.0
+
+
+def test_a_day_that_is_not_approved_cannot_be_asked_for(app):
+    who = petrol_user(app)
+    check_in(who, "100")
+    check_out(who, "150")
+    eid = PetrolEntry.query.one().id
+    assert who.post(f"/api/petrol/{eid}/request-cash").status_code == 409
+
+
+def test_the_admin_or_accountant_pays_it_and_must_say_how(app, admin_client, accounts_client, manager_client):
+    who, eid = _approved_day(app, admin_client)
+    who.post(f"/api/petrol/{eid}/request-cash")
+
+    waiting = accounts_client.get("/api/petrol/requests").get_json()
+    assert [p["id"] for p in waiting["pending"]] == [eid] and waiting["payment_modes"] == ["Cash", "Online/UPI"]
+    assert manager_client.get("/api/petrol/requests").status_code == 403
+    assert manager_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cash"}).status_code == 403
+    assert who.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cash"}).status_code == 403
+
+    no_mode = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={})
+    assert no_mode.status_code == 422 and "payment_mode" in no_mode.get_json()["fields"]
+    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cheque"}).status_code == 422
+    done = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Online/UPI"})
+    assert done.status_code == 200 and done.get_json()["entry"]["cash_status"] == "paid"
+
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["paid_total"] == 80.0 and mine["unpaid_total"] == 0.0
+    assert mine["entries"][0]["cash_mode"] == "Online/UPI" and mine["entries"][0]["cash_decided_by_name"] == "Anil Accounts"
+    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cash"}).status_code == 409
+    hist = admin_client.get("/api/petrol/requests").get_json()
+    assert hist["pending"] == [] and [h["id"] for h in hist["history"]] == [eid]
+
+
+def test_a_rejected_cash_request_can_be_asked_for_again(app, admin_client):
+    who, eid = _approved_day(app, admin_client)
+    who.post(f"/api/petrol/{eid}/request-cash")
+    assert admin_client.post(f"/api/petrol/requests/{eid}/reject").status_code == 200
+    assert who.get("/api/petrol/me").get_json()["entries"][0]["cash_status"] == "rejected"
+    assert who.post(f"/api/petrol/{eid}/request-cash").status_code == 200
+    assert who.get("/api/petrol/me").get_json()["entries"][0]["cash_status"] == "requested"
+
+
+def test_the_me_tile_counts_cash_waiting_to_be_paid(app, admin_client):
+    who, eid = _approved_day(app, admin_client)
+    who.post(f"/api/petrol/{eid}/request-cash")
+    assert "1 to pay" in admin_client.get("/me").get_data(as_text=True)
+

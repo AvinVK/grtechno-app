@@ -109,9 +109,11 @@ def _extra_tiles():
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": " · ".join(x for x in (f"{n} on fooding" if n else "", f"{waiting} to approve" if waiting else "") if x) or None})
     if can_manage_fooding(g.user):
+        from .models import PetrolEntry
         n = Worker.query.filter(Worker.petrol_enabled.is_(True)).count()
+        cash = PetrolEntry.query.filter_by(cash_status="requested").count()
         tiles.append({"href": "/petrol", "icon": "petrol", "name": "Petrol",
-                       "sum": f"{n} on petrol" if n else None})
+                       "sum": " · ".join(x for x in (f"{n} on petrol" if n else "", f"{cash} to pay" if cash else "") if x) or None})
     if can_manage_cash_purchases(g.user):
         # Both kinds of thing waiting on the admin here - a cash request and a purchase to approve - count
         # toward the same "n pending" (kohal, 2026-10-21 added cash requests alongside purchase approvals).

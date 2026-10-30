@@ -21,6 +21,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .auth import PROJECT_MANAGER_ROLE_KEYS, can_manage_fooding, visible_projects
 from .constants import PETROL_RATE_PER_KM
+from .fooding import PAYMENT_MODES
 from .extensions import db
 from .models import PetrolEntry, Project, Worker, settings_for_client, utcnow
 from .timeutil import today_local
@@ -104,9 +105,11 @@ def _register(entries):
     total = sum((e.amount for e in approved), Decimal("0"))
     month = sum((e.amount for e in approved if (e.work_date.year, e.work_date.month) == (today.year, today.month)), Decimal("0"))
     km_month = sum((e.km for e in approved if (e.work_date.year, e.work_date.month) == (today.year, today.month)), 0)
+    paid = sum((e.amount for e in approved if e.cash_status == "paid"), Decimal("0"))
     return {
         "entries": [e.to_dict() for e in entries],
         "approved_total": float(total), "month_total": float(month), "month_km": km_month,
+        "paid_total": float(paid), "unpaid_total": float(total - paid),
         "rate_per_km": PETROL_RATE_PER_KM, "currency": settings_for_client()["currency"],
     }
 
@@ -147,8 +150,10 @@ def list_petrol():
         pending = (PetrolEntry.query.filter(PetrolEntry.user_code == w.user_code, PetrolEntry.status == "pending",
                                             PetrolEntry.out_reading.isnot(None)).count() if w.user_code else 0)
         rows.append({"worker_id": w.id, "worker_name": w.name, "month_total": reg["month_total"],
-                     "month_km": reg["month_km"], "approved_total": reg["approved_total"], "pending": pending})
-    return jsonify(workers=rows, rate_per_km=PETROL_RATE_PER_KM, currency=settings_for_client()["currency"])
+                     "month_km": reg["month_km"], "approved_total": reg["approved_total"], "pending": pending,
+                     "unpaid_total": reg["unpaid_total"]})
+    return jsonify(workers=rows, rate_per_km=PETROL_RATE_PER_KM, currency=settings_for_client()["currency"],
+                   cash_waiting=PetrolEntry.query.filter_by(cash_status="requested").count())
 
 
 @bp.get("/api/petrol/worker/<int:worker_id>")
@@ -160,6 +165,86 @@ def worker_register(worker_id):
         abort(404)
     purge_old_photos()
     return jsonify(worker_name=worker.name, **_register(_completed_entries(worker.user_code) if worker.user_code else []))
+
+
+# ---------- cash requests: an approved day's amount, asked for by the employee ----------
+# (kohal, 2026-10-30: "after the odo readings are approved, the employee should get a button to request for that
+# amount of cash... only admin or accountant should be able to approve it... the approver have to enter the mode
+# of payment")
+
+@bp.post("/api/petrol/<int:entry_id>/request-cash")
+def request_cash(entry_id):
+    entry = db.session.get(PetrolEntry, entry_id)
+    if entry is None or entry.user_code != g.user.code:
+        abort(404)
+    if entry.status != "approved":
+        abort(409, "This day hasn't been approved yet.")
+    if entry.cash_status in ("requested", "paid"):
+        abort(409, "This has already been asked for." if entry.cash_status == "requested" else "This has already been paid.")
+    if not entry.amount or entry.amount <= 0:
+        abort(409, "There is no amount to ask for.")
+    entry.cash_status = "requested"
+    entry.cash_requested_at = utcnow()
+    entry.cash_decided_by_code = None
+    entry.cash_decided_at = None
+    entry.cash_mode = ""
+    db.session.commit()
+    return jsonify(entry=entry.to_dict())
+
+
+@bp.get("/api/petrol/requests")
+def list_cash_requests():
+    """Cash requests waiting for the admin or accountant, and the history of those already decided."""
+    _manage_only()
+    purge_old_photos()
+    pending = (PetrolEntry.query.filter_by(cash_status="requested")
+               .order_by(PetrolEntry.cash_requested_at).all())
+    history = (PetrolEntry.query.filter(PetrolEntry.cash_status.in_(("paid", "rejected")))
+               .order_by(db.func.coalesce(PetrolEntry.cash_decided_at, PetrolEntry.created_at).desc(), PetrolEntry.id.desc())
+               .limit(200).all())
+    return jsonify(pending=[e.to_dict() for e in pending], history=[e.to_dict() for e in history],
+                   payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
+
+
+def _manage_only():
+    if not can_manage_fooding(g.user):
+        abort(403, "Only the admin or accountant can handle petrol cash requests.")
+
+
+@bp.post("/api/petrol/requests/<int:entry_id>/approve")
+def approve_cash_request(entry_id):
+    """Pay it: the approver says how (Cash or Online/UPI) - required."""
+    _manage_only()
+    entry = db.session.get(PetrolEntry, entry_id)
+    if entry is None:
+        abort(404)
+    if entry.cash_status != "requested":
+        abort(409, "This isn't waiting for approval.")
+    payload = request.get_json(silent=True) if request.is_json else None
+    mode = (payload or {}).get("payment_mode") if isinstance(payload, dict) else None
+    if mode not in PAYMENT_MODES:
+        return jsonify(error="Choose how it was paid", fields={"payment_mode": "Choose how it was paid"}), 422
+    entry.cash_status = "paid"
+    entry.cash_mode = mode
+    entry.cash_decided_by_code = g.user.code
+    entry.cash_decided_at = utcnow()
+    db.session.commit()
+    return jsonify(entry=entry.to_dict())
+
+
+@bp.post("/api/petrol/requests/<int:entry_id>/reject")
+def reject_cash_request(entry_id):
+    _manage_only()
+    entry = db.session.get(PetrolEntry, entry_id)
+    if entry is None:
+        abort(404)
+    if entry.cash_status != "requested":
+        abort(409, "This isn't waiting for approval.")
+    entry.cash_status = "rejected"
+    entry.cash_decided_by_code = g.user.code
+    entry.cash_decided_at = utcnow()
+    db.session.commit()
+    return jsonify(entry=entry.to_dict())
 
 
 # ---------- approval ----------

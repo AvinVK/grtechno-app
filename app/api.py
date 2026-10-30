@@ -352,7 +352,7 @@ def state():
         staff=[{"id": w.id, "name": w.name} for w in Worker.query.filter_by(category="staff").order_by(Worker.name)],
         enquiry_staff=[{"id": w.id, "name": w.name}
                         for w in Worker.query.filter(Worker.role_key.in_(ENQUIRY_ROLES)).order_by(Worker.name)],
-        clients=[{"id": c.id, "name": c.name} for c in visible_clients().order_by(Client.name)],
+        clients=[{"id": c.id, "name": c.name} for c in visible_clients().filter(Client.is_adhoc.is_(False)).order_by(Client.name)],
         leads=[l.to_dict() for l in leads],
         summary=compute_summary(leads, today),
     )

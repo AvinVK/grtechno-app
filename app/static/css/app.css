@@ -1880,3 +1880,18 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .p-main .chip { align-self: flex-start; justify-self: start; width: fit-content; margin-top: 4px; }
 .p-section + .p-section { margin-top: 18px; }
 .stage-filter + .p-section { margin-top: 16px; }
+.petrol-cash { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+
+/* Adhoc clients (kohal, 2026-10-30): the items of an order. */
+.adhoc-items { display: grid; gap: 12px; }
+.adhoc-item { padding: 12px 14px; display: grid; gap: 10px; }
+.adhoc-item-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.adhoc-add { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.adhoc-total { margin: 0; font-weight: 600; }
+button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: pointer; text-align: left; padding: 14px 16px; }
+.chooser-row .approval-main { gap: 2px; }
+.project-form > .stage-filter { margin: 0 0 8px; }
+.order-material-row { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.order-material-name { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; font-weight: 600; }
+.order-material-name .hint { grid-column: 2; font-weight: 400; }
+.adhoc-back { display: inline-block; margin: 4px 0 2px; font-size: 15px; }
