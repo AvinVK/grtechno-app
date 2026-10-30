@@ -91,7 +91,7 @@ def test_project_title_leads_with_the_site_name_when_the_survey_has_one(client, 
     })
     client.patch(f"/api/leads/{lead['id']}", json={
         "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
-        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer",
+        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "GR BB",
     })
     admin_client.patch(f"/api/leads/{lead['id']}", json={"stage": "Won"})
     detail = client.get(f"/api/leads/{lead['id']}").get_json()
@@ -333,7 +333,7 @@ def test_adding_a_project_takes_services_estimate_work_order_and_advance(admin_c
     res = admin_client.post("/api/projects", json={
         "new_client_name": "Dhanbad Plaza", "services": ["AMC", "Fire alarms"], "estimated_amount": 250000,
         "work_order_no": "WO-77", "work_order_date": "2026-09-30",
-        "advance_amount": 50000, "advance_date": "2026-10-01", "advance_mode": "UPI", "advance_comments": "Office account",
+        "advance_amount": 50000, "advance_date": "2026-10-01", "advance_mode": "VK GPAY SBI", "advance_comments": "Office account",
     })
     assert res.status_code == 201, res.get_json()
     project = res.get_json()["project"]
@@ -342,7 +342,7 @@ def test_adding_a_project_takes_services_estimate_work_order_and_advance(admin_c
     assert project["work_order_no"] == "WO-77" and project["work_order_date"] == "2026-09-30"
     detail = admin_client.get(f"/api/projects/{project['id']}").get_json()
     assert [(p["label"], p["amount"], p["mode"], p["paid_date"], p["comments"]) for p in detail["project"]["payments"]] == [
-        ("Advance", 50000, "UPI", "2026-10-01", "Office account")]
+        ("Advance", 50000, "VK GPAY SBI", "2026-10-01", "Office account")]
     assert detail["project"]["paid_amount"] == 50000
 
 
@@ -1560,7 +1560,7 @@ def test_work_order_papers_uploaded_on_the_lead_carry_over_to_the_project(client
     client.post(f"/api/leads/{lid}/documents/work_order_boq", data=_pdf(), content_type="multipart/form-data")
 
     client.patch(f"/api/leads/{lid}", json={"work_order_no": "WO-9", "work_order_date": "2026-09-23",
-                                            "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer"})
+                                            "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "GR BB"})
     won = admin_client.patch(f"/api/leads/{lid}", json={"stage": "Won"}).get_json()
     docs = admin_client.get(f"/api/projects/{won['project_id']}").get_json()["project"]["documents"]
     assert set(docs) == {"work_order_boq", "purchase_order"}

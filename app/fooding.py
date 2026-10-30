@@ -28,6 +28,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
+from .constants import PAYMENT_ACCOUNTS
 from .auth import can_manage_fooding
 from .extensions import db
 from .models import FoodingAccount, FoodingEntry, Worker, settings_for_client, utcnow
@@ -40,7 +41,7 @@ api_errors(bp)
 # How fooding money changed hands (kohal, 2026-10-18: "add mode of payment option as well. shld be cash,
 # online/UPI") - a fixed pair, not the general PAYMENT_MODES list (Cheque/Bank transfer/Other don't apply
 # to handing cash or a UPI transfer to someone in person).
-PAYMENT_MODES = ("Cash", "Online/UPI")
+PAYMENT_MODES = tuple(PAYMENT_ACCOUNTS)       # the same accounts as everywhere else (kohal, 2026-10-31)
 
 
 def _manage_only():

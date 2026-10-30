@@ -225,10 +225,10 @@
       const periodField = periodSel ? field('period_start', 'Pay period', periodSel) : null;
 
       const modeSel = selectField(
-        [{ value: '', label: 'Mode of payment' }, ...modes.map((m) => ({ value: m, label: m }))],
-        current.mode || '', { title: 'Mode of payment', placeholder: 'Mode of payment' });
+        [{ value: '', label: 'Account' }, ...[...modes, ...(current.mode && !modes.includes(current.mode) ? [current.mode] : [])].map((m) => ({ value: m, label: m }))],
+        current.mode || '', { title: 'Account', placeholder: 'Account' });
       const paidDateInput = dateField(current.paid_date || '', { placeholder: 'Date of payment' });
-      const modeField = field('mode', 'Mode of payment', modeSel);
+      const modeField = field('mode', 'Account', modeSel);
       const dateFieldEl = field('paid_date', 'Date of payment', paidDateInput);
       const paidToggleInput = h('input', { type: 'checkbox', checked: !!current.paid_date });
       const paidToggle = h('label', { class: 'switch' },

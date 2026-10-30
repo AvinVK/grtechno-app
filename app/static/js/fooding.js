@@ -72,7 +72,7 @@
   function openExpenseSheet(paymentModes, cur) {
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal' });
-    const modeSel = selectField(paymentModes, '', { title: 'How was it paid', placeholder: 'Choose one' });
+    const modeSel = selectField(paymentModes, '', { title: 'Account', placeholder: 'Choose an account' });
     const purposeInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off', placeholder: 'e.g. Bus fare to site' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -98,7 +98,7 @@
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Add expense'),
       field('amount', 'Amount', amountInput),
-      field('payment_mode', 'How was it paid', modeSel),
+      field('payment_mode', 'Account', modeSel),
       field('purpose', 'What was it for', purposeInput),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
@@ -171,7 +171,7 @@
     const f = reg.fooding;
     const cur = reg.currency;
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', placeholder: 'Amount to add' });
-    const modeSel = selectField(reg.payment_modes, '', { title: 'How was it paid', placeholder: 'Choose one' });
+    const modeSel = selectField(reg.payment_modes, '', { title: 'Account', placeholder: 'Choose an account' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const allotBtn = h('button', { class: 'btn primary', type: 'button' }, 'Send for approval');
     const pauseBtn = h('button', { class: 'btn', type: 'button' }, f.is_paused ? 'Resume' : 'Pause');
@@ -220,7 +220,7 @@
         h('h3', {}, 'Add to balance'),
         h('p', { class: 'hint' }, 'The admin or accountant who didn\u2019t ask for it has to approve it before it is added.'),
         field('amount', 'Amount', amountInput),
-        field('payment_mode', 'How was it paid', modeSel),
+        field('payment_mode', 'Account', modeSel),
         errEl,
         h('div', { class: 'confirm-actions' }, pauseBtn, allotBtn))));
     window.scrollTo(0, 0);

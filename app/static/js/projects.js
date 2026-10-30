@@ -203,8 +203,8 @@
     const advanceInput = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', autocomplete: 'off' });
     const advanceDate = dateField('', { placeholder: 'Date of payment' });
     const advanceMode = selectField(
-      [{ value: '', label: 'Choose how it was paid' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
-      '', { title: 'Mode of payment', placeholder: 'Choose how it was paid' });
+      [{ value: '', label: 'Choose an account' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
+      '', { title: 'Account', placeholder: 'Choose an account' });
     const advanceComments = h('textarea', { rows: 2 });
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
@@ -281,7 +281,7 @@
         h('div', { class: 'form-grid' },
           field('advance_amount', 'Advance amount', advanceInput),
           field('advance_date', 'Date of payment', advanceDate),
-          field('advance_mode', 'Mode of payment', advanceMode),
+          field('advance_mode', 'Account', advanceMode),
           field('advance_comments', 'Comments', advanceComments, { wide: true }))),
       h('div', { class: 'form-actions' }, saveBtn));
 
@@ -864,10 +864,10 @@
       renderChips();
 
       const modeSel = selectField(
-        [{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
-        current.mode || '', { title: 'Mode of payment', placeholder: 'Mode of payment' });
+        [{ value: '', label: 'Account' }, ...[...data.payment_modes, ...(current.mode && !data.payment_modes.includes(current.mode) ? [current.mode] : [])].map((m) => ({ value: m, label: m }))],
+        current.mode || '', { title: 'Account', placeholder: 'Account' });
       const paidDateInput = dateField(current.paid_date || '', { placeholder: 'Date of payment' });
-      const modeField = field('mode', 'Mode of payment', modeSel);
+      const modeField = field('mode', 'Account', modeSel);
       const dateFieldEl = field('paid_date', 'Date of payment', paidDateInput);
       const paidToggleInput = h('input', { type: 'checkbox', checked: !!current.paid_date });
       const paidToggle = h('label', { class: 'switch' },

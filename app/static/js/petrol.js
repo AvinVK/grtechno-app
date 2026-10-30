@@ -144,7 +144,7 @@
      payment") - a small sheet with the two modes and a Pay button. */
   function openPaySheet(r, paymentModes, cur, onDone) {
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-    const modeSel = selectField(paymentModes, '', { title: 'How was it paid', placeholder: 'Choose one' });
+    const modeSel = selectField(paymentModes, '', { title: 'Account', placeholder: 'Choose an account' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const payBtn = h('button', { class: 'btn primary', type: 'button' }, 'Approve and mark paid');
@@ -167,7 +167,7 @@
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, `${r.user_name} · ${money(r.amount, cur)}`),
       h('p', { class: 'hint' }, `${fmtDate(r.work_date)} · ${r.km} km`),
-      field('payment_mode', 'How was it paid', modeSel),
+      field('payment_mode', 'Account', modeSel),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, payBtn)));
     document.body.append(overlay);

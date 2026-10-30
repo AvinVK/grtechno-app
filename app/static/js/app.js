@@ -890,7 +890,7 @@
         wrapField('advance_amount', `Advance received (${S.settings.currency})`,
           text('number', L.advance_amount, { min: '0', step: 'any', inputmode: 'decimal' }), '', true),
         wrapField('advance_date', 'Date of payment', dateField(L.advance_date), '', true),
-        wrapField('advance_mode', 'Mode of payment', choice(S.payment_modes, L.advance_mode, 'Choose how it was paid'), '', true),
+        wrapField('advance_mode', 'Account', choice(S.payment_modes, L.advance_mode, 'Choose an account'), '', true),
         wrapField('advance_comments', 'Comments', area(2, L.advance_comments), 'wide'),
         leadDocsField());
       workOrderSectionNode = h('details', { class: `stage-section${negotiationFinalized ? '' : ' locked'}`, open: negotiationFinalized && expand === 4 },

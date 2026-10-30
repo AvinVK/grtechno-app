@@ -5,7 +5,14 @@ LOST = "Lost"
 CLOSED_STAGES = (WON, LOST)
 
 # How a payment (the advance, or a project's own payment steps) actually came in.
-PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other"]
+# The accounts money moves through (kohal, 2026-10-31): whoever approves a payment out, records one received from a
+# client, or pays wages or salary, picks one of these. It replaces the old Cash / Cheque / UPI list (same stored
+# column, so nothing is migrated); entries already saved with an old mode keep it and are still accepted when a
+# schedule is saved again.
+PAYMENT_ACCOUNTS = ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
+PAYMENT_MODES = PAYMENT_ACCOUNTS
+LEGACY_PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other", "Online/UPI"]
+ACCEPTED_PAYMENT_MODES = PAYMENT_ACCOUNTS + LEGACY_PAYMENT_MODES
 
 # Who earns commission on a project's negotiated amount (kohal, 2026-10-18) - a role the admin already
 # added on prod via Users & roles, same as any custom role; this is just the one key everything else

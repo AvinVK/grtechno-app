@@ -222,21 +222,21 @@ def test_the_admin_or_accountant_pays_it_and_must_say_how(app, admin_client, acc
     who.post(f"/api/petrol/{eid}/request-cash")
 
     waiting = accounts_client.get("/api/petrol/requests").get_json()
-    assert [p["id"] for p in waiting["pending"]] == [eid] and waiting["payment_modes"] == ["Cash", "Online/UPI"]
+    assert [p["id"] for p in waiting["pending"]] == [eid] and waiting["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
     assert manager_client.get("/api/petrol/requests").status_code == 403
-    assert manager_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cash"}).status_code == 403
-    assert who.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cash"}).status_code == 403
+    assert manager_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 403
+    assert who.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 403
 
     no_mode = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={})
     assert no_mode.status_code == 422 and "payment_mode" in no_mode.get_json()["fields"]
     assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cheque"}).status_code == 422
-    done = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Online/UPI"})
+    done = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "GR BB"})
     assert done.status_code == 200 and done.get_json()["entry"]["cash_status"] == "paid"
 
     mine = who.get("/api/petrol/me").get_json()
     assert mine["paid_total"] == 80.0 and mine["unpaid_total"] == 0.0
-    assert mine["entries"][0]["cash_mode"] == "Online/UPI" and mine["entries"][0]["cash_decided_by_name"] == "Anil Accounts"
-    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cash"}).status_code == 409
+    assert mine["entries"][0]["cash_mode"] == "GR BB" and mine["entries"][0]["cash_decided_by_name"] == "Anil Accounts"
+    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 409
     hist = admin_client.get("/api/petrol/requests").get_json()
     assert hist["pending"] == [] and [h["id"] for h in hist["history"]] == [eid]
 

@@ -13,7 +13,7 @@ from . import inventory as inv
 from .adhoc import _adhoc_kind
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
-    COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
+    ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
 )
 from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
@@ -173,8 +173,8 @@ def _payments(raw, errors):
         f.date("due_date")
         f.date("paid_date")
         f.text("comments", 2000)
-        if isinstance(item, dict) and item.get("mode") not in (None, "", *PAYMENT_MODES):
-            f.errors["mode"] = "Choose one of the payment modes"
+        if isinstance(item, dict) and item.get("mode") not in (None, "", *ACCEPTED_PAYMENT_MODES):
+            f.errors["mode"] = "Choose one of the accounts"
         problems = dict(f.errors)
         amount = parse_money(item.get("amount", 0) if isinstance(item, dict) else 0, problems, "amount")
         if problems:
