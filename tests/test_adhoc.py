@@ -112,3 +112,74 @@ def test_only_people_with_clients_or_projects_can_use_it(client):
     """The plain test user (field sales) has neither module."""
     assert client.get("/api/adhoc/clients").status_code == 403
     assert client.post("/api/adhoc/orders", json={}).status_code == 403
+
+
+# ---------- materials for an adhoc project, from inventory (kohal, 2026-10-30) ----------
+
+def _stock_item(name="ABC 4 kg"):
+    from app.models import Material
+    m = Material(name=name, is_active=True, avg_rate=100, stock_qty=5)
+    db.session.add(m)
+    db.session.commit()
+    return m.id
+
+
+def test_only_admin_project_manager_or_accountant_can_request_material_for_an_adhoc_project(app, admin_client, manager_client, accounts_client):
+    from conftest import make_user, signed_in
+    pid = order(admin_client).get_json()["project_id"]
+    mid = _stock_item()
+    body = {"material_id": mid, "quantity": 2}
+    ok = admin_client.post(f"/api/projects/{pid}/material-requests", json=body)
+    assert ok.status_code == 201, ok.get_json()
+    assert manager_client.post(f"/api/projects/{pid}/material-requests", json=body).status_code in (201, 404)   # a manager sees it if it is theirs
+    director = signed_in(app, make_user("Dee Director", role="company_director"))
+    assert director.get(f"/api/projects/{pid}/material-requests").get_json()["can_request"] is False
+    assert director.post(f"/api/projects/{pid}/material-requests", json=body).status_code == 403
+    assert admin_client.get(f"/api/projects/{pid}/material-requests").get_json()["can_request"] is True
+
+
+def test_the_request_form_gets_the_orders_items_to_choose_from(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    items = admin_client.get(f"/api/projects/{pid}/material-requests").get_json()["adhoc_items"]
+    assert [(i["fe_type"], i["qty"]) for i in items] == [("ABC 4 kg", 3)]
+
+
+def test_a_normal_project_is_unchanged_anyone_who_can_see_it_may_request(admin_client):
+    c = Client(name="Normal Co")
+    db.session.add(c)
+    db.session.flush()
+    p = Project(client=c, title="Install", site_name="Plant")
+    db.session.add(p)
+    db.session.commit()
+    data = admin_client.get(f"/api/projects/{p.id}/material-requests").get_json()
+    assert data["can_request"] is True and data["adhoc_items"] == []
+
+
+def test_nobody_is_offered_an_adhoc_project_at_check_in(app):
+    from conftest import make_user, signed_in
+    order(signed_in(app, make_user("Admin Two", is_admin=True)))
+    who = signed_in(app, make_user("Plain Staff", role="helper"))
+    assert who.get("/api/attendance/state").get_json()["projects"] == []
+
+
+def test_the_projects_list_marks_adhoc_ones_so_they_get_their_own_subtab(admin_client):
+    order(admin_client)
+    normal = Client(name="Normal Co")
+    db.session.add(normal)
+    db.session.flush()
+    db.session.add(Project(client=normal, title="Install", site_name="Plant"))
+    db.session.commit()
+    kinds = {p["title"]: p["is_adhoc"] for p in admin_client.get("/api/projects").get_json()["projects"]}
+    assert sorted(kinds.values()) == [False, True]
+
+
+def test_an_adhoc_project_can_only_ask_for_the_items_on_its_own_order(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    other = _stock_item("Cement")
+    assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": other, "quantity": 1}).status_code == 422
+    assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "Anything else", "quantity": 1}).status_code == 422
+    # The order's own item by name, even when it is not stocked yet: allowed, and added to inventory for restock.
+    ok = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "abc 4 kg", "quantity": 3})
+    assert ok.status_code == 201, ok.get_json()
+    from app.models import Material
+    assert Material.query.filter_by(name="abc 4 kg").count() == 1 and float(Material.query.filter_by(name="abc 4 kg").one().stock_qty) == 0

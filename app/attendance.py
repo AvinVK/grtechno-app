@@ -19,7 +19,7 @@ from .auth import (
     _is_daily_wage,
 )
 from .extensions import db
-from .models import AbsenceRequest, Attendance, PetrolEntry, Project, User, utcnow
+from .models import AbsenceRequest, Attendance, Client, PetrolEntry, Project, User, utcnow
 from .modules import check_module, has_module
 from .petrol import odometer_file, parse_reading, petrol_on, purge_old_photos, save_odometer
 from .timeutil import today_local, to_local
@@ -35,7 +35,11 @@ def _attendance_service():
 
 
 def _open_projects():
-    return Project.query.filter(Project.status.in_(["planned", "running"])).order_by(Project.title).all()
+    # Adhoc projects (a supply or refill of extinguishers) are not somewhere anyone works a shift, so they are not
+    # offered at check-in.
+    return (Project.query.join(Client, Project.client_id == Client.id)
+            .filter(Project.status.in_(["planned", "running"]), Client.is_adhoc.is_(False))
+            .order_by(Project.title).all())
 
 
 def _open_session():

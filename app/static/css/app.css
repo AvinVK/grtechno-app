@@ -1890,3 +1890,8 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .adhoc-total { margin: 0; font-weight: 600; }
 button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: pointer; text-align: left; padding: 14px 16px; }
 .chooser-row .approval-main { gap: 2px; }
+.project-form > .stage-filter { margin: 0 0 8px; }
+.order-material-row { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line); }
+.order-material-name { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; font-weight: 600; }
+.order-material-name .hint { grid-column: 2; font-weight: 400; }
+.adhoc-back { display: inline-block; margin: 4px 0 2px; font-size: 15px; }

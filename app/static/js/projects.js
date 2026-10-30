@@ -15,7 +15,7 @@
   };
   const view = $('#view');
   const canOpenClients = view.dataset.clients === '1';
-  const filter = { q: '', status: '' };
+  const filter = { q: '', status: '', kind: 'normal' };
 
   const statusChip = (s) => {
     const [label, tone] = STATUS[s] || [s, 'planned'];
@@ -33,10 +33,11 @@
   // here (kohal, 2026-10-22: "visible only to admin and client role") - a client's own read-only view of
   // it is a completely separate page (app/client_portal.py), not reached through this tab bar at all.
   const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['expense', 'Expense'], ['details', 'More details'], ['attendance', 'Attendance'], ['progress', 'Progress']];
-  // An adhoc project (a supply or refill of extinguishers, see app/adhoc.js) only has Overview, Payment and More
-  // details (kohal, 2026-10-30) - no installation Progress, Materials, Expense or Attendance.
+  // An adhoc project (a supply or refill of extinguishers, see app/adhoc.js) has Overview, Payment, Materials
+  // (requested from inventory, by a project manager, the accountant or the admin - kohal, 2026-10-30) and More
+  // details - no installation Progress, Expense or Attendance.
   let adhocProject = false;
-  const ADHOC_TABS = ['', 'payments', 'details'];
+  const ADHOC_TABS = ['', 'payments', 'materials', 'details'];
   const projectTabs = (id, active, showProgress) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
     PROJECT_TABS.filter(([slug]) => (slug !== 'progress' || showProgress) && (!adhocProject || ADHOC_TABS.includes(slug))).map(([slug, label]) => h('a', {
       class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
@@ -61,7 +62,18 @@
     const cur = data.currency;
 
     const wrap = h('div', {});
+    const kindTabs = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Kind of project' });
     const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Filter by status' });
+    // Normal projects and adhoc projects are two lists (kohal, 2026-10-30: "adhoc projects should also be under
+    // adhoc projects subtab"), the status chips below counting whichever one is showing.
+    const ofKind = () => data.projects.filter((p) => !!p.is_adhoc === (filter.kind === 'adhoc'));
+    function renderKindTabs() {
+      clear(kindTabs);
+      [['normal', 'Projects'], ['adhoc', 'Adhoc projects']].forEach(([key, label]) => kindTabs.append(h('button', {
+        class: 'filter-chip', type: 'button', 'aria-pressed': String((filter.kind || 'normal') === key),
+        onclick: () => { filter.kind = key; filter.status = ''; renderKindTabs(); renderChips(); refresh(); },
+      }, label, h('span', { class: 'n' }, data.projects.filter((p) => !!p.is_adhoc === (key === 'adhoc')).length))));
+    }
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
     const results = h('div', {});
     const search = h('input', {
@@ -71,8 +83,8 @@
 
     function renderChips() {
       clear(chips);
-      const options = [['', 'All', data.projects.length],
-        ...data.statuses.map((s) => [s, STATUS[s][0], data.projects.filter((p) => p.status === s).length])];
+      const options = [['', 'All', ofKind().length],
+        ...data.statuses.map((s) => [s, STATUS[s][0], ofKind().filter((p) => p.status === s).length])];
       for (const [value, label, n] of options) {
         chips.append(h('button', {
           class: 'filter-chip', type: 'button', 'aria-pressed': String(filter.status === value),
@@ -101,16 +113,18 @@
 
     function refresh() {
       const q = filter.q.trim().toLowerCase();
-      const items = data.projects.filter((p) => {
+      const items = ofKind().filter((p) => {
         if (filter.status && p.status !== filter.status) return false;
         return !q || [p.title, p.client_name, p.code, p.work_category].some((v) => (v || '').toLowerCase().includes(q));
       });
       count.textContent = plural(items.length, 'project', 'projects');
       clear(results);
       if (!items.length) {
-        results.append(h('p', { class: 'empty-state' }, data.projects.length
+        results.append(h('p', { class: 'empty-state' }, ofKind().length
           ? 'No projects match this search.'
-          : 'No projects yet. Tap Add project, or win a lead and tap Create project on it.'));
+          : (filter.kind === 'adhoc'
+            ? 'No adhoc projects yet. Add an adhoc client from the Clients tab and its order appears here.'
+            : 'No projects yet. Tap Add project, or win a lead and tap Create project on it.')));
         return;
       }
       // Grouped by status, in the pipeline's own order, each under a sticky header - same pattern as
@@ -123,8 +137,9 @@
     }
 
     wrap.append(
-      h('div', { class: 'filters' }, search, chips), count, results);
+      kindTabs, h('div', { class: 'filters' }, search, chips), count, results);
     clear(view).append(wrap);
+    renderKindTabs();
     renderChips();
     refresh();
   }
@@ -579,6 +594,9 @@
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, '', data.dashboard.can_see_progress),
+      // The Projects page has no back arrow in its top bar (its bottom tab is the way out), so the way back to
+      // the project's Overview is right here (kohal, 2026-10-30: "no back button to go back to overview").
+      h('a', { class: 'back-link adhoc-back', href: `#p${P.id}` }, '← Back to overview'),
       h('h3', {}, `Edit items · ${window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''}`),
       form));
     window.scrollTo(0, 0);
@@ -1573,11 +1591,12 @@
     clear(box).append(
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Material requests'),
-        h('div', { class: 'btn-pair' },
+        data.can_request === false ? null : h('div', { class: 'btn-pair' },
           returnable.length
             ? h('button', { class: 'btn small', type: 'button', onclick: () => openReturnMaterial(projectId, returnable, reload) }, '+ Return material')
             : null,
-          h('button', { class: 'btn small', type: 'button', onclick: () => openRequestMaterial(projectId, data.materials, reload) }, '+ Request material'))),
+          h('button', { class: 'btn small', type: 'button', onclick: () => openRequestMaterial(projectId, data.materials, reload, data.adhoc_items || []) }, '+ Request material'))),
+      data.can_request === false ? h('p', { class: 'hint' }, 'Only a project manager, the accountant or the admin can request material for an adhoc project.') : null,
       pending.length
         ? h('ul', { class: 'card-group' }, rows)
         : h('p', { class: 'hint' }, 'No pending requests.'));
@@ -1607,7 +1626,8 @@
   // inventory restock") - material_name rides along as a fallback for whatever's typed but never picked
   // from the dropdown, and the server adds it to the catalog on the spot rather than refusing the request
   // (see app/projects.py's request_material).
-  function openRequestMaterial(projectId, materials, reload) {
+  function openRequestMaterial(projectId, materials, reload, orderItems = []) {
+    if (orderItems.length) return openRequestOrderMaterial(projectId, materials, reload, orderItems);
     const materialSel = materialSearchField(materials, '');
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Quantity' });
     const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
@@ -1649,6 +1669,74 @@
     const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) overlay.remove(); } }, card);
     document.body.append(overlay);
     materialSel.focus?.();
+  }
+
+  /* An adhoc project's request (kohal, 2026-10-30: "material should be already filled and should not be able to
+     change here"): one row per item on the order, its material fixed and its quantity filled in from the order -
+     the quantity can be lowered, the material cannot be changed. A material that is stocked in inventory is sent
+     by id; one that isn't goes in by name and lands on Restock like any other shortfall. Tick the items to ask
+     for; one request is sent for each. */
+  function openRequestOrderMaterial(projectId, materials, reload, orderItems) {
+    const rows = orderItems.map((i) => {
+      const stocked = materials.find((m) => m.name.trim().toLowerCase() === (i.fe_type || '').trim().toLowerCase());
+      const tick = h('input', { type: 'checkbox', checked: true, 'aria-label': `Request ${i.fe_type}` });
+      const qty = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(i.qty), 'aria-label': `Quantity of ${i.fe_type}` });
+      const err = h('p', { class: 'err', role: 'alert' });
+      const node = h('div', { class: 'order-material-row' },
+        h('label', { class: 'check-row order-material-name' }, tick, h('span', {}, i.fe_type),
+          h('span', { class: 'hint' }, stocked ? `${stocked.stock_qty} ${stocked.unit || ''} in stock`.trim() : 'Not stocked - will be flagged for restock')),
+        h('div', { class: 'field' }, h('label', {}, 'Quantity'), qty, err));
+      return { item: i, stocked, tick, qty, err, node };
+    });
+    const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Send request');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        rows.forEach((r) => { r.err.textContent = ''; });
+        const chosen = rows.filter((r) => r.tick.checked);
+        if (!chosen.length) { errorBox.textContent = 'Tick at least one item'; errorBox.hidden = false; return; }
+        saveBtn.disabled = true;
+        let sent = 0;
+        try {
+          for (const r of chosen) {
+            try {
+              await api(`/api/projects/${projectId}/material-requests`, {
+                method: 'POST', body: {
+                  ...(r.stocked ? { material_id: r.stocked.id } : { material_name: r.item.fe_type }),
+                  quantity: r.qty.value, note: noteInput.value,
+                },
+              });
+              sent += 1;
+              r.tick.checked = false;
+            } catch (err) {
+              r.err.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+              throw err;
+            }
+          }
+          toast(sent === 1 ? 'Request sent for approval' : `${sent} requests sent for approval`);
+          overlay.remove();
+          reload();
+        } catch (err) {
+          errorBox.textContent = sent ? `${sent} sent. ${err.message}` : err.message;
+          errorBox.hidden = false;
+          saveBtn.disabled = false;
+          if (sent) reload();
+        }
+      } },
+      errorBox,
+      h('p', { class: 'hint' }, 'The items on this order. Untick any you do not need.'),
+      ...rows.map((r) => r.node),
+      field('note', 'Note', noteInput, { wide: true }),
+      h('div', { class: 'confirm-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => overlay.remove() }, 'Cancel'),
+        saveBtn));
+    const card = h('div', { class: 'confirm-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Request material' },
+      h('h2', {}, 'Request material'), form);
+    const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) overlay.remove(); } }, card);
+    document.body.append(overlay);
   }
 
   // The mirror of openRequestMaterial above, for sending material back (kohal, 2026-10-20: "whatever is
