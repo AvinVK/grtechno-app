@@ -33,8 +33,12 @@
   // here (kohal, 2026-10-22: "visible only to admin and client role") - a client's own read-only view of
   // it is a completely separate page (app/client_portal.py), not reached through this tab bar at all.
   const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['expense', 'Expense'], ['details', 'More details'], ['attendance', 'Attendance'], ['progress', 'Progress']];
+  // An adhoc project (a supply or refill of extinguishers, see app/adhoc.js) only has Overview, Payment and More
+  // details (kohal, 2026-10-30) - no installation Progress, Materials, Expense or Attendance.
+  let adhocProject = false;
+  const ADHOC_TABS = ['', 'payments', 'details'];
   const projectTabs = (id, active, showProgress) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
-    PROJECT_TABS.filter(([slug]) => slug !== 'progress' || showProgress).map(([slug, label]) => h('a', {
+    PROJECT_TABS.filter(([slug]) => (slug !== 'progress' || showProgress) && (!adhocProject || ADHOC_TABS.includes(slug))).map(([slug, label]) => h('a', {
       class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
       'aria-current': active === slug ? 'page' : null,
     }, label)));
@@ -492,7 +496,9 @@
       sub ? h('span', { class: 'dash-info-sub' }, sub) : null);
 
     let closeArea = null;
-    if (P.status === 'completed') {
+    if (P.is_adhoc) {
+      closeArea = null;                    // nothing to measure or hand over - its status is set in More details
+    } else if (P.status === 'completed') {
       closeArea = h('p', { class: 'hint' }, D.completed_at ? `Closed on ${longDate(new Date(D.completed_at))}.` : 'This project is closed.');
     } else if (D.can_close) {
       const closeBtn = h('button', { class: 'btn danger dash-close', type: 'button' }, 'Close project');
@@ -535,8 +541,46 @@
         info('Client',
           canOpenClients ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
           [c.contact_name, c.phone].filter(Boolean).join(' · ') || null)),
+      P.is_adhoc ? h('section', { class: 'p-section' },
+        h('div', { class: 'p-section-head' },
+          h('h3', {}, `Items · ${window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''}`),
+          h('a', { class: 'btn small', href: `#p${P.id}/items` }, 'Edit items')),
+        window.ADHOC.itemsList(P.adhoc_items || [], data.adhoc_kind, cur)) : null,
       closeArea,
       deleteBtn));
+    window.scrollTo(0, 0);
+  }
+
+  /* An adhoc project's items, edited - the same boxes as when the order was taken, with Add more. */
+  function renderAdhocEdit(data) {
+    const P = data.project;
+    const c = data.client;
+    const editor = window.ADHOC.itemsEditor(data.adhoc_kind, P.adhoc_items, data.currency);
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save items');
+    const form = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errorBox.hidden = true;
+        editor.showErrors({});
+        saveBtn.disabled = true;
+        try {
+          await api(`/api/adhoc/projects/${P.id}/items`, { method: 'PUT', body: { items: editor.getItems() } });
+          toast('Items saved');
+          window.location.hash = `#p${P.id}`;
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          (editor.showErrors(err.fields) || errorBox).scrollIntoView?.({ block: 'center' });
+          saveBtn.disabled = false;
+        }
+      } },
+      errorBox, editor.node, h('div', { class: 'form-actions' }, saveBtn));
+    clear(view).append(h('div', { class: 'project-detail' },
+      ...projectHead(P, c),
+      projectTabs(P.id, '', data.dashboard.can_see_progress),
+      h('h3', {}, `Edit items · ${window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''}`),
+      form));
     window.scrollTo(0, 0);
   }
 
@@ -550,7 +594,10 @@
       clear(view).append(h('p', { class: 'empty-state' }, err.message, ' ', h('a', { href: '#' }, 'Back to projects')));
       return;
     }
-    if (section === 'payments') renderPayments(data);
+    adhocProject = !!data.project.is_adhoc;
+    if (adhocProject && section === 'items') renderAdhocEdit(data);
+    else if (adhocProject && !ADHOC_TABS.includes(section)) renderDashboard(data);
+    else if (section === 'payments') renderPayments(data);
     else if (section === 'materials') { renderMaterials(data); loadMaterialRequests(id); }
     else if (section === 'expense') renderExpense(data);
     else if (section === 'details') renderDetails(data);
@@ -1649,7 +1696,7 @@
   }
 
   function route() {
-    const m = /^#p(\d+)(\/(payments|materials|expense|details|attendance|progress))?$/.exec(window.location.hash);
+    const m = /^#p(\d+)(\/(payments|materials|expense|details|attendance|progress|items))?$/.exec(window.location.hash);
     if (m) return showDetail(Number(m[1]), m[3] || '');
     const add = /^#new(?:\/c(\d+))?$/.exec(window.location.hash);
     if (add) return showNew(add[1] ? Number(add[1]) : null);

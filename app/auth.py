@@ -413,7 +413,9 @@ def visible_clients():
         states = g.user.state_names
         return query.filter(Client.state.in_(states)) if states else query.filter(sa_false())
     managed = db.session.query(Project.client_id).filter(Project.manager_code == g.user.code)
-    return query.filter(or_(Client.owner_code == g.user.code, Client.id.in_(managed)))
+    # Adhoc clients are one shared list, found by contact number (kohal, 2026-10-30), so a repeat order can be
+    # taken by whoever is at the counter, not only whoever added the client first.
+    return query.filter(or_(Client.owner_code == g.user.code, Client.id.in_(managed), Client.is_adhoc.is_(True)))
 
 
 def visible_attendance():

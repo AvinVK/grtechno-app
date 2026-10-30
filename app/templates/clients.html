@@ -8,10 +8,12 @@
 {% block hub_back %}{% if not bottom_nav %}{{ super() }}{% endif %}{% endblock %}
 
 {% block actions %}
-  <a class="btn primary appbar-primary" href="/clients#new">+ Client</a>
+  {# Normal or adhoc client? (kohal, 2026-10-30) - a small chooser, see clients.js #}
+  <button class="btn primary appbar-primary" id="add-client-btn" type="button">+ Client</button>
 {% endblock %}
 
 {% block content %}
 <main id="view" class="view" tabindex="-1" data-projects="{{ 1 if nav_modules|selectattr('key', 'equalto', 'projects')|list else 0 }}"><p class="loading">Loading clients…</p></main>
+<script src="{{ asset('js/adhoc.js') }}" defer></script>
 <script src="{{ asset('js/clients.js') }}" defer></script>
 {% endblock %}
