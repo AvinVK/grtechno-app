@@ -24,6 +24,10 @@ PROJECT_DOCUMENT_TYPES = [
 # The two things an adhoc client can buy (kohal, 2026-10-30: "in adhoc client, there will only be supply of
 # extinguisher and refilling of extinguisher as service. single choice"): the key the form uses, the label it
 # shows, and the name of the Service row (see Service in models.py) the adhoc project is filed under.
+# An adhoc project is not "running": it waits Unbilled until the stock for its items has been issued from
+# inventory, then it is Billed and closed (kohal, 2026-10-31).
+ADHOC_STATUSES = ["unbilled", "billed"]
+
 ADHOC_SERVICES = [
     ("supply", "Supply of FE and Retail sale", "Supply of extinguishers"),
     ("refilling", "Refilling of FE", "Refilling of fire extinguishers"),

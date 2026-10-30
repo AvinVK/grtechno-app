@@ -12,6 +12,9 @@
     on_hold: ['On hold', 'hold'],
     final_estimate_sent: ['Final estimate sent', 'sent'],
     completed: ['Completed', 'done'],
+    // Adhoc projects (kohal, 2026-10-31): Unbilled until the stock for the order is issued, then Billed and closed.
+    unbilled: ['Unbilled', 'hold'],
+    billed: ['Billed', 'done'],
   };
   const view = $('#view');
   const canOpenClients = view.dataset.clients === '1';
@@ -25,7 +28,9 @@
   // One project's tabs (dashboard, payments, details, attendance) all lead back to the same nearer place:
   // its client if this role can open Clients & Projects, otherwise the project list itself.
   function setProjectAppbarBack(c) {
-    LD.setAppbarBack?.(canOpenClients ? c.name : 'Projects', canOpenClients ? `/clients#c${c.id}` : '#');
+    // An adhoc customer is not on the Clients list, so an adhoc project goes back to Projects.
+    const toClient = canOpenClients && !c.is_adhoc;
+    LD.setAppbarBack?.(toClient ? c.name : 'Projects', toClient ? `/clients#c${c.id}` : '#');
   }
 
   // The sections of one project - a horizontally-scrolling chip row, same pattern as the stage filters
@@ -67,6 +72,10 @@
     // Normal projects and adhoc projects are two lists (kohal, 2026-10-30: "adhoc projects should also be under
     // adhoc projects subtab"), the status chips below counting whichever one is showing.
     const ofKind = () => data.projects.filter((p) => !!p.is_adhoc === (filter.kind === 'adhoc'));
+    // Adhoc projects are Unbilled or Billed (any older adhoc project left in another status still gets its chip).
+    const statusList = () => (filter.kind === 'adhoc'
+      ? ['unbilled', 'billed', ...data.statuses.filter((s) => ofKind().some((p) => p.status === s))]
+      : data.statuses);
     function renderKindTabs() {
       clear(kindTabs);
       [['normal', 'Projects'], ['adhoc', 'Adhoc projects']].forEach(([key, label]) => kindTabs.append(h('button', {
@@ -84,7 +93,7 @@
     function renderChips() {
       clear(chips);
       const options = [['', 'All', ofKind().length],
-        ...data.statuses.map((s) => [s, STATUS[s][0], ofKind().filter((p) => p.status === s).length])];
+        ...statusList().map((s) => [s, STATUS[s][0], ofKind().filter((p) => p.status === s).length])];
       for (const [value, label, n] of options) {
         chips.append(h('button', {
           class: 'filter-chip', type: 'button', 'aria-pressed': String(filter.status === value),
@@ -123,13 +132,13 @@
         results.append(h('p', { class: 'empty-state' }, ofKind().length
           ? 'No projects match this search.'
           : (filter.kind === 'adhoc'
-            ? 'No adhoc projects yet. Add an adhoc client from the Clients tab and its order appears here.'
+            ? 'No adhoc projects yet. Tap + Project, then Adhoc project.'
             : 'No projects yet. Tap Add project, or win a lead and tap Create project on it.')));
         return;
       }
       // Grouped by status, in the pipeline's own order, each under a sticky header - same pattern as
       // the Leads list's follow-up groups.
-      const groups = data.statuses.map((s) => ({ key: s, label: STATUS[s][0] === 'Completed' ? 'Done' : STATUS[s][0],
+      const groups = statusList().map((s) => ({ key: s, label: STATUS[s][0] === 'Completed' ? 'Done' : STATUS[s][0],
         items: items.filter((p) => p.status === s) }));
       groups.filter((g) => g.items.length).forEach((g) => results.append(h('section', { class: 'p-group lead-group' },
         h('h3', { class: 'group-head' }, g.label, h('span', { class: 'group-count' }, g.items.length)),
@@ -145,6 +154,14 @@
   }
 
   /* ---------- add a project that did not come from a lead ---------- */
+
+  // Normal project or adhoc project (kohal, 2026-10-31: "same form but in add projects") - two chips at the top of
+  // either form; the other one is a link to its own form.
+  const kindChips = (current) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Kind of project' },
+    [['normal', 'Normal project', '#new'], ['adhoc', 'Adhoc project', '#adhoc']].map(([key, label, hash]) => h('button', {
+      class: 'filter-chip', type: 'button', 'aria-pressed': String(key === current),
+      onclick: () => { if (key !== current) window.location.hash = hash; },
+    }, label)));
 
   async function showNew(presetClientId = null) {
     LD.setAppbarBack?.(presetClientId ? 'Client' : 'Clients', presetClientId ? `/clients#c${presetClientId}` : '/clients');
@@ -270,6 +287,7 @@
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, 'Add project')),
+      presetClientId ? null : kindChips('normal'),
       form));
   }
 
@@ -551,10 +569,10 @@
           h('span', { class: 'stat-value' }, P.net_amount != null ? money(P.net_amount, cur) : '—'),
           h('span', { class: 'stat-note' }, valueNote))),
       h('div', { class: 'dash-info' },
-        info('Brought by', D.brought_by ? D.brought_by.name : 'Not recorded', D.brought_by ? D.brought_by.how : null),
+        P.is_adhoc ? null : info('Brought by', D.brought_by ? D.brought_by.name : 'Not recorded', D.brought_by ? D.brought_by.how : null),
         info('Project manager', P.manager_name || 'Not assigned'),
         info('Client',
-          canOpenClients ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
+          canOpenClients && !c.is_adhoc ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
           [c.contact_name, c.phone].filter(Boolean).join(' · ') || null)),
       P.is_adhoc ? h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
@@ -1786,6 +1804,7 @@
   function route() {
     const m = /^#p(\d+)(\/(payments|materials|expense|details|attendance|progress|items))?$/.exec(window.location.hash);
     if (m) return showDetail(Number(m[1]), m[3] || '');
+    if (window.location.hash === '#adhoc') return window.ADHOC.showOrder(view, { kindChips: () => kindChips('adhoc'), onSaved: (id) => { window.location.hash = `#p${id}`; } });
     const add = /^#new(?:\/c(\d+))?$/.exec(window.location.hash);
     if (add) return showNew(add[1] ? Number(add[1]) : null);
     return showList();

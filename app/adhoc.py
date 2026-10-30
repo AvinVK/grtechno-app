@@ -21,9 +21,9 @@ from flask import Blueprint, abort, g, jsonify, request
 from sqlalchemy import func
 
 from .auth import visible_clients, visible_projects
-from .constants import ADHOC_SERVICES
+from .constants import ADHOC_SERVICES, ADHOC_STATUSES
 from .extensions import db
-from .models import AdhocItem, Client, Project, Service, settings_for_client
+from .models import AdhocItem, Client, Material, MaterialMovement, Project, Service, settings_for_client, utcnow
 from .modules import has_module
 from .timeutil import today_local
 from .validation import Fields, api_errors
@@ -130,6 +130,44 @@ def _fill(project, items):
     project.estimated_amount = sum((item["qty"] * item["rate"] for item in items), Decimal("0")).quantize(Decimal("0.01"))
 
 
+def _request_stock(project, items):
+    """Ask inventory for every item on the order (kohal, 2026-10-31: "it will be autorequested") - one pending
+    issue request per material, going through the usual approval and, where stock is short, the Restock list. A
+    material not in inventory yet is added with nothing on hand, exactly as a typed-in material is on a normal
+    project."""
+    wanted = {}
+    for item in items:
+        key = item["fe_type"].strip().lower()
+        name, qty = wanted.get(key, (item["fe_type"].strip(), 0))
+        wanted[key] = (name, qty + item["qty"])
+    for key, (name, qty) in wanted.items():
+        material = Material.query.filter(func.lower(Material.name) == key).first()
+        if material is None:
+            material = Material(name=name, is_active=True, avg_rate=Decimal("0"), stock_qty=Decimal("0"))
+            db.session.add(material)
+        else:
+            material.is_active = True
+        rate = material.avg_rate or Decimal("0")
+        db.session.add(MaterialMovement(
+            material=material, kind="out", quantity=Decimal(qty), rate=rate, amount=Decimal(qty) * rate,
+            project=project, note="Adhoc order", entry_date=today_local(), created_by_code=g.user.code,
+            requested=True, status="pending"))
+
+
+def refresh_billing(project):
+    """An unbilled adhoc project becomes Billed - and closed - once its stock has been issued (kohal, 2026-10-31:
+    "as soon as the request is approved and material is deducted from inventory, it will be billed"): none of its
+    stock requests is still waiting (a shortfall carries on as a new waiting request) and at least one was
+    approved. The caller commits."""
+    if project is None or not project.client.is_adhoc or project.status != "unbilled":
+        return
+    asked = MaterialMovement.query.filter_by(project_id=project.id, kind="out", requested=True).all()
+    if not asked or any(m.status == "pending" for m in asked) or not any(m.status == "approved" for m in asked):
+        return
+    project.status = "billed"
+    project.completed_at = utcnow()
+
+
 def _adhoc_kind(project):
     """'refilling' or 'supply' - which of the two services this adhoc project is filed under."""
     names = {s.name.lower() for s in project.services}
@@ -145,7 +183,8 @@ def list_adhoc_clients():
     rows = Client.query.filter_by(is_adhoc=True).order_by(Client.name).all()
     return jsonify(clients=[{"id": c.id, "name": c.name, "phone": _digits(c.phone) or c.phone, "address": c.address,
                               "orders": len(c.projects)} for c in rows],
-                   services=[{"key": k, "label": label} for k, label, _ in ADHOC_SERVICES])
+                   services=[{"key": k, "label": label} for k, label, _ in ADHOC_SERVICES],
+                   currency=settings_for_client()["currency"])
 
 
 @bp.post("/api/adhoc/orders")
@@ -195,11 +234,13 @@ def create_order():
     label, _service_name = SERVICE_BY_KEY[service_key]
     project = Project(
         client=client, title=f"{label} · {today_local().strftime('%d %b %Y')}", site_name=client.name,
-        site_address=client.address, status="running", owner_code=g.user.code,
+        site_address=client.address, status=ADHOC_STATUSES[0], owner_code=g.user.code,
         work_category=_service_name, services=[_service_for(service_key)],
     )
     _fill(project, items)
     db.session.add(project)
+    db.session.flush()
+    _request_stock(project, items)
     db.session.commit()
     return jsonify(client_id=client.id, project_id=project.id), 201
 

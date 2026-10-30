@@ -19,6 +19,7 @@ from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
+from .constants import ADHOC_STATUSES
 from .timeutil import to_local, today_local
 from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, copy_upload, delete_upload, save_upload
 from .validation import Fields, api_errors, parse_money
@@ -420,7 +421,7 @@ def update_project(project_id):
     f = Fields(payload)
     f.text("title", 160, required=True, label="a project title")
     f.text("site_name", 160, required=True, label="the site name")
-    f.choice("status", PROJECT_STATUSES)
+    f.choice("status", PROJECT_STATUSES + (ADHOC_STATUSES if project.client.is_adhoc else []))
     f.text("work_category", 120)
     f.text("work_order_no", 60)
     f.date("work_order_date")
@@ -498,7 +499,7 @@ def update_project(project_id):
         setattr(project, key, value)
     if project.status == "completed" and project.completed_at is None:
         project.completed_at = utcnow()
-    elif project.status != "completed":
+    elif project.status not in ("completed", "billed"):
         project.completed_at = None
     if payments is not None:
         project.payments = [

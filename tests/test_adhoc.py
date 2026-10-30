@@ -22,7 +22,7 @@ def test_a_new_adhoc_client_and_its_project_are_created_together(admin_client):
     c = db.session.get(Client, body["client_id"])
     assert c.is_adhoc and c.name == "Ravi Traders" and c.phone == "9876543210" and c.address == "Shop 4, Sitabuldi"
     p = db.session.get(Project, body["project_id"])
-    assert p.client_id == c.id and p.status == "running" and p.service_names == ["Refilling of fire extinguishers"]
+    assert p.client_id == c.id and p.status == "unbilled" and p.service_names == ["Refilling of fire extinguishers"]
     assert float(p.estimated_amount) == 1350.0                     # 3 x 450
     item = p.adhoc_items[0]
     assert item.qty == 3 and item.refill_date.isoformat() == "2026-10-20" and item.expiry_date.isoformat() == "2027-10-20"
@@ -97,8 +97,9 @@ def test_adhoc_clients_stay_out_of_the_normal_client_pickers(admin_client):
     names = [c["name"] for c in admin_client.get("/api/projects/options").get_json()["clients"]] if admin_client.get("/api/projects/options").status_code == 200 else None
     if names is not None:
         assert "Ravi Traders" not in names and "Normal Co" in names
+    # An adhoc customer is not a client: only the normal one is on the Clients list.
     listing = admin_client.get("/api/clients").get_json()["clients"]
-    assert {c["name"]: c["is_adhoc"] for c in listing} == {"Ravi Traders": True, "Normal Co": False}
+    assert {c["name"]: c["is_adhoc"] for c in listing} == {"Normal Co": False}
 
 
 def test_project_detail_marks_an_adhoc_project_and_carries_its_items(admin_client):
@@ -118,8 +119,12 @@ def test_only_people_with_clients_or_projects_can_use_it(client):
 
 def _stock_item(name="ABC 4 kg"):
     from app.models import Material
-    m = Material(name=name, is_active=True, avg_rate=100, stock_qty=5)
-    db.session.add(m)
+    from sqlalchemy import func
+    m = Material.query.filter(func.lower(Material.name) == name.lower()).first()
+    if m is None:
+        m = Material(name=name, is_active=True)
+        db.session.add(m)
+    m.avg_rate, m.stock_qty = 100, 5
     db.session.commit()
     return m.id
 
@@ -182,4 +187,48 @@ def test_an_adhoc_project_can_only_ask_for_the_items_on_its_own_order(admin_clie
     ok = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "abc 4 kg", "quantity": 3})
     assert ok.status_code == 201, ok.get_json()
     from app.models import Material
-    assert Material.query.filter_by(name="abc 4 kg").count() == 1 and float(Material.query.filter_by(name="abc 4 kg").one().stock_qty) == 0
+    assert Material.query.filter_by(name="ABC 4 kg").count() == 1 and float(Material.query.filter_by(name="ABC 4 kg").one().stock_qty) == 0
+
+
+# ---------- unbilled -> billed (kohal, 2026-10-31) ----------
+
+def _asked(pid):
+    from app.models import MaterialMovement
+    return MaterialMovement.query.filter_by(project_id=pid, kind="out", requested=True).all()
+
+
+def test_saving_an_order_starts_unbilled_and_requests_every_item_from_inventory(admin_client):
+    pid = order(admin_client, service="supply", items=[SUPPLY, {**SUPPLY, "qty": 3}, {**SUPPLY, "fe_type": "Fire blanket", "qty": 1}]).get_json()["project_id"]
+    assert db.session.get(Project, pid).status == "unbilled"
+    got = {m.material.name: (float(m.quantity), m.status) for m in _asked(pid)}
+    assert got == {"CO2": (5.0, "pending"), "Fire blanket": (1.0, "pending")}      # the two CO2 lines are one request
+
+
+def test_the_project_is_billed_and_closed_once_its_stock_is_issued(admin_client):
+    from app.adhoc import refresh_billing
+    pid = order(admin_client).get_json()["project_id"]
+    p = db.session.get(Project, pid)
+    refresh_billing(p)
+    assert p.status == "unbilled"                                   # still waiting on the request
+    mv = _asked(pid)[0]
+    mv.status = "approved"
+    refresh_billing(p)
+    assert p.status == "billed" and p.completed_at is not None
+
+
+def test_a_shortfall_keeps_it_unbilled_until_the_rest_is_issued(admin_client):
+    from app.adhoc import refresh_billing
+    from app.models import MaterialMovement
+    pid = order(admin_client).get_json()["project_id"]
+    p = db.session.get(Project, pid)
+    first = _asked(pid)[0]
+    first.status = "approved"
+    rest = MaterialMovement(material=first.material, kind="out", quantity=1, rate=0, amount=0, project_id=pid,
+                            entry_date=first.entry_date, requested=True, status="pending")
+    db.session.add(rest)
+    db.session.commit()
+    refresh_billing(p)
+    assert p.status == "unbilled"
+    rest.status = "rejected"
+    refresh_billing(p)
+    assert p.status == "billed"
