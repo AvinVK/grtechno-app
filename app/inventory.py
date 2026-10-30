@@ -19,6 +19,7 @@ from werkzeug.exceptions import abort
 from .auth import can_approve_stock_in, visible_projects
 from .extensions import db
 from .modules import check_module
+from .constants import PAYMENT_ACCOUNTS
 from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client, utcnow
 from .timeutil import to_local, today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
@@ -116,6 +117,7 @@ def _supply_fields(payload, *, require_quantity):
     f.text("note", 200)
     f.text("bill_no", 60)
     f.choice("payment_mode", ("credit", "cash"))
+    f.choice("payment_account", ["", *PAYMENT_ACCOUNTS])
     f.money("gst_percent", nullable=True)
     has_qty = f.data.get("quantity") is not None
     has_rate = f.data.get("rate") is not None
@@ -129,6 +131,12 @@ def _supply_fields(payload, *, require_quantity):
             f.errors.setdefault("rate", "Enter a cost per unit")
     if f.data.get("gst_percent") is not None and f.data["gst_percent"] > 100:
         f.errors["gst_percent"] = "Enter a percentage from 0 to 100"
+    # A cash purchase says which account it was paid from (kohal, 2026-10-31); a credit one has nothing paid yet.
+    if f.data.get("payment_mode") == "cash":
+        if not f.data.get("payment_account"):
+            f.errors.setdefault("payment_account", "Choose the account it was paid from")
+    else:
+        f.data["payment_account"] = ""
     if not f.data.get("entry_date") and "entry_date" not in f.errors:
         f.data["entry_date"] = today_local()
     supplier_id = payload.get("supplier_id")
@@ -165,7 +173,7 @@ def _apply_stock_in(material, data):
         material=material, kind="in", quantity=qty, rate=rate, amount=amount,
         note=data.get("note", ""), entry_date=data["entry_date"], created_by_code=g.user.code,
         supplier_id=data.get("supplier_id"), bill_no=data.get("bill_no", ""),
-        payment_mode=data.get("payment_mode", ""), gst_percent=gst_percent, gst_amount=gst_amount,
+        payment_mode=data.get("payment_mode", ""), payment_account=data.get("payment_account", ""), gst_percent=gst_percent, gst_amount=gst_amount,
         total_cost=amount + gst_amount,
         **_status_fields(can_approve_stock_in(g.user)),
     )
@@ -323,6 +331,7 @@ def list_materials():
         materials=[m.to_dict() for m in materials],
         projects=[{"id": p.id, "code": p.code, "title": p.title} for p in _current_projects()],
         suppliers=_suppliers_for_client(),
+        payment_accounts=list(PAYMENT_ACCOUNTS),
         workers=_workers_for_client(),
         units=_units_for_client(),
         material_names=_material_names(),
@@ -365,6 +374,7 @@ def get_material(material_id):
         movements=[mv.to_dict() for mv in material.movements],
         projects=[{"id": p.id, "code": p.code, "title": p.title} for p in _current_projects()],
         suppliers=_suppliers_for_client(),
+        payment_accounts=list(PAYMENT_ACCOUNTS),
         workers=_workers_for_client(),
         units=_units_for_client(),
         material_names=_material_names(),
@@ -478,6 +488,7 @@ def update_movement(material_id, movement_id):
         movement.supplier_id = f.data.get("supplier_id")
         movement.bill_no = f.data.get("bill_no", "")
         movement.payment_mode = f.data.get("payment_mode", "")
+        movement.payment_account = f.data.get("payment_account", "")
         movement.gst_percent = gst_percent
         movement.gst_amount = gst_amount
         movement.total_cost = amount + gst_amount
