@@ -635,6 +635,14 @@ class PetrolEntry(db.Model):
     approved_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    # Getting paid for it (kohal, 2026-10-30): once approved, the employee can ask for that amount in cash;
+    # the admin or accountant approves it and records how it was paid. "" = not asked | requested | paid |
+    # rejected (a rejected one can be asked for again).
+    cash_status = db.Column(db.String(10), nullable=False, default="", server_default="")
+    cash_requested_at = db.Column(db.DateTime, nullable=True)
+    cash_decided_by_code = db.Column(db.String(4), nullable=True)
+    cash_decided_at = db.Column(db.DateTime, nullable=True)
+    cash_mode = db.Column(db.String(20), nullable=False, default="", server_default="")
 
     attendance = db.relationship("Attendance", backref=db.backref("petrol", uselist=False, cascade="all, delete-orphan", passive_deletes=True))
     user = db.relationship("User", foreign_keys=[user_code])
@@ -659,6 +667,10 @@ class PetrolEntry(db.Model):
             "km": self.km, "amount": float(self.amount) if self.amount is not None else None,
             "status": self.status,
             "approved_by_name": self.approved_by.name if self.approved_by else None,
+            "cash_status": self.cash_status, "cash_mode": self.cash_mode,
+            "cash_requested_at": _iso(self.cash_requested_at), "cash_decided_at": _iso(self.cash_decided_at),
+            "cash_decided_by_name": (db.session.get(User, self.cash_decided_by_code).name
+                                     if self.cash_decided_by_code and db.session.get(User, self.cash_decided_by_code) else None),
         }
 
 

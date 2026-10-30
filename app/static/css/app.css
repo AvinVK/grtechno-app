@@ -1880,3 +1880,4 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .p-main .chip { align-self: flex-start; justify-self: start; width: fit-content; margin-top: 4px; }
 .p-section + .p-section { margin-top: 18px; }
 .stage-filter + .p-section { margin-top: 16px; }
+.petrol-cash { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
