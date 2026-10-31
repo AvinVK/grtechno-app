@@ -5,7 +5,14 @@ LOST = "Lost"
 CLOSED_STAGES = (WON, LOST)
 
 # How a payment (the advance, or a project's own payment steps) actually came in.
-PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other"]
+# The accounts money moves through (kohal, 2026-10-31): whoever approves a payment out, records one received from a
+# client, or pays wages or salary, picks one of these. It replaces the old Cash / Cheque / UPI list (same stored
+# column, so nothing is migrated); entries already saved with an old mode keep it and are still accepted when a
+# schedule is saved again.
+PAYMENT_ACCOUNTS = ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
+PAYMENT_MODES = PAYMENT_ACCOUNTS
+LEGACY_PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other", "Online/UPI"]
+ACCEPTED_PAYMENT_MODES = PAYMENT_ACCOUNTS + LEGACY_PAYMENT_MODES
 
 # Who earns commission on a project's negotiated amount (kohal, 2026-10-18) - a role the admin already
 # added on prod via Users & roles, same as any custom role; this is just the one key everything else
@@ -24,6 +31,10 @@ PROJECT_DOCUMENT_TYPES = [
 # The two things an adhoc client can buy (kohal, 2026-10-30: "in adhoc client, there will only be supply of
 # extinguisher and refilling of extinguisher as service. single choice"): the key the form uses, the label it
 # shows, and the name of the Service row (see Service in models.py) the adhoc project is filed under.
+# An adhoc project is not "running": it waits Unbilled until the stock for its items has been issued from
+# inventory, then it is Billed and closed (kohal, 2026-10-31).
+ADHOC_STATUSES = ["unbilled", "billed"]
+
 ADHOC_SERVICES = [
     ("supply", "Supply of FE and Retail sale", "Supply of extinguishers"),
     ("refilling", "Refilling of FE", "Refilling of fire extinguishers"),

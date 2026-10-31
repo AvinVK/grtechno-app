@@ -148,7 +148,7 @@ def win_lead(client, admin_client, lead_id, client_id=None):
     advance_to_negotiation(client, lead_id)
     client.patch(f"/api/leads/{lead_id}", json={
         "work_order_no": "WO-1001", "work_order_date": "2026-09-23",
-        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "Bank transfer",
+        "advance_amount": 100000, "advance_date": "2026-09-23", "advance_mode": "GR BB",
     })
     body = {"stage": "Won"}
     if client_id is not None:

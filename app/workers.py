@@ -23,7 +23,7 @@ from flask import Blueprint, g, jsonify, redirect, render_template, request
 from sqlalchemy import func
 from werkzeug.exceptions import HTTPException, abort
 
-from .constants import PAYMENT_MODES
+from .constants import ACCEPTED_PAYMENT_MODES, PAYMENT_MODES
 from .extensions import db
 from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
 from .modules import can_write, check_module, has_module
@@ -372,8 +372,8 @@ def _payments(raw, errors):
         f.date("paid_date")
         f.date("period_start")
         f.text("comments", 2000)
-        if isinstance(item, dict) and item.get("mode") not in (None, "", *PAYMENT_MODES):
-            f.errors["mode"] = "Choose one of the payment modes"
+        if isinstance(item, dict) and item.get("mode") not in (None, "", *ACCEPTED_PAYMENT_MODES):
+            f.errors["mode"] = "Choose one of the accounts"
         # A pay period always starts on the 1st or the 16th (see app/payroll.py) - anything else can't be
         # matched back to a real slot, so it's rejected rather than silently kept as an orphan date.
         if f.data.get("period_start") is not None and f.data["period_start"].day not in (1, 16):

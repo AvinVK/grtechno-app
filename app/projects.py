@@ -10,15 +10,16 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
-from .adhoc import _adhoc_kind
+from .adhoc import _adhoc_kind, stage_info
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
-    COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
+    ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
 )
 from .extensions import db
 from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
+from .constants import ADHOC_STATUSES
 from .timeutil import to_local, today_local
 from .uploads import DOCUMENT_TYPES, IMAGE_TYPES, UploadError, copy_upload, delete_upload, save_upload
 from .validation import Fields, api_errors, parse_money
@@ -172,8 +173,8 @@ def _payments(raw, errors):
         f.date("due_date")
         f.date("paid_date")
         f.text("comments", 2000)
-        if isinstance(item, dict) and item.get("mode") not in (None, "", *PAYMENT_MODES):
-            f.errors["mode"] = "Choose one of the payment modes"
+        if isinstance(item, dict) and item.get("mode") not in (None, "", *ACCEPTED_PAYMENT_MODES):
+            f.errors["mode"] = "Choose one of the accounts"
         problems = dict(f.errors)
         amount = parse_money(item.get("amount", 0) if isinstance(item, dict) else 0, problems, "amount")
         if problems:
@@ -371,6 +372,7 @@ def _detail(project):
         # An adhoc project (app/adhoc.py) says which of its two services it is, so the items form shows the
         # right boxes (refilling has the three dates); empty for every normal project.
         "adhoc_kind": _adhoc_kind(project) if client.is_adhoc else "",
+        "adhoc": stage_info(project) if client.is_adhoc else None,
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,
@@ -420,7 +422,7 @@ def update_project(project_id):
     f = Fields(payload)
     f.text("title", 160, required=True, label="a project title")
     f.text("site_name", 160, required=True, label="the site name")
-    f.choice("status", PROJECT_STATUSES)
+    f.choice("status", PROJECT_STATUSES + (ADHOC_STATUSES if project.client.is_adhoc else []))
     f.text("work_category", 120)
     f.text("work_order_no", 60)
     f.date("work_order_date")
@@ -498,7 +500,7 @@ def update_project(project_id):
         setattr(project, key, value)
     if project.status == "completed" and project.completed_at is None:
         project.completed_at = utcnow()
-    elif project.status != "completed":
+    elif project.status not in ("completed", "billed"):
         project.completed_at = None
     if payments is not None:
         project.payments = [

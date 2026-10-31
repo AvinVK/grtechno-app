@@ -128,8 +128,8 @@
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const workerSel = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), prefill?.worker_id ?? '', { placeholder: 'Choose an employee' });
     const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: prefill?.amount ?? '' });
-    const modeSel = selectField([{ value: '', label: 'Mode of payment' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
-      '', { title: 'How was it paid', placeholder: 'Mode of payment' });
+    const modeSel = selectField([{ value: '', label: 'Account' }, ...data.payment_modes.map((m) => ({ value: m, label: m }))],
+      '', { title: 'Account', placeholder: 'Account' });
     const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -160,7 +160,7 @@
       h('h2', {}, 'Give cash'),
       field('worker_id', 'Employee', workerSel),
       field('amount', 'Amount', amountInput),
-      field('payment_mode', 'Mode of payment', modeSel),
+      field('payment_mode', 'Account', modeSel),
       field('note', 'Note', noteInput),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));

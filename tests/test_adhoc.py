@@ -1,6 +1,8 @@
 """Adhoc clients (kohal, 2026-10-30): supply or refilling of extinguishers, one project per order, the contact
 number identifying the admin_client. See app/adhoc.py."""
 
+from datetime import date
+
 from app.extensions import db
 from app.models import AdhocItem, Client, Project
 
@@ -22,7 +24,7 @@ def test_a_new_adhoc_client_and_its_project_are_created_together(admin_client):
     c = db.session.get(Client, body["client_id"])
     assert c.is_adhoc and c.name == "Ravi Traders" and c.phone == "9876543210" and c.address == "Shop 4, Sitabuldi"
     p = db.session.get(Project, body["project_id"])
-    assert p.client_id == c.id and p.status == "running" and p.service_names == ["Refilling of fire extinguishers"]
+    assert p.client_id == c.id and p.status == "unbilled" and p.service_names == ["Refilling of fire extinguishers"]
     assert float(p.estimated_amount) == 1350.0                     # 3 x 450
     item = p.adhoc_items[0]
     assert item.qty == 3 and item.refill_date.isoformat() == "2026-10-20" and item.expiry_date.isoformat() == "2027-10-20"
@@ -97,8 +99,9 @@ def test_adhoc_clients_stay_out_of_the_normal_client_pickers(admin_client):
     names = [c["name"] for c in admin_client.get("/api/projects/options").get_json()["clients"]] if admin_client.get("/api/projects/options").status_code == 200 else None
     if names is not None:
         assert "Ravi Traders" not in names and "Normal Co" in names
+    # An adhoc customer is not a client: only the normal one is on the Clients list.
     listing = admin_client.get("/api/clients").get_json()["clients"]
-    assert {c["name"]: c["is_adhoc"] for c in listing} == {"Ravi Traders": True, "Normal Co": False}
+    assert {c["name"]: c["is_adhoc"] for c in listing} == {"Normal Co": False}
 
 
 def test_project_detail_marks_an_adhoc_project_and_carries_its_items(admin_client):
@@ -118,8 +121,12 @@ def test_only_people_with_clients_or_projects_can_use_it(client):
 
 def _stock_item(name="ABC 4 kg"):
     from app.models import Material
-    m = Material(name=name, is_active=True, avg_rate=100, stock_qty=5)
-    db.session.add(m)
+    from sqlalchemy import func
+    m = Material.query.filter(func.lower(Material.name) == name.lower()).first()
+    if m is None:
+        m = Material(name=name, is_active=True)
+        db.session.add(m)
+    m.avg_rate, m.stock_qty = 100, 5
     db.session.commit()
     return m.id
 
@@ -183,3 +190,103 @@ def test_an_adhoc_project_can_only_ask_for_the_items_on_its_own_order(admin_clie
     assert ok.status_code == 201, ok.get_json()
     from app.models import Material
     assert Material.query.filter_by(name="abc 4 kg").count() == 1 and float(Material.query.filter_by(name="abc 4 kg").one().stock_qty) == 0
+
+
+# ---------- the four stages (kohal, 2026-10-31) ----------
+
+def _stages(admin_client, pid):
+    return admin_client.get(f"/api/projects/{pid}").get_json()["adhoc"]
+
+
+def test_saving_the_details_is_stage_one_and_requests_nothing(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    assert db.session.get(Project, pid).status == "unbilled"
+    a = _stages(admin_client, pid)
+    assert [(x["key"], x["done"]) for x in a["stages"]] == [("details", True), ("material", False), ("payment", False), ("billed", False)]
+    assert _asked(pid) == [] and a["can_bill"] is False
+    assert [(m["name"], m["needed"], m["to_request"]) for m in a["materials"]] == [("ABC 4 kg", 3, 3.0)]
+
+
+def _asked(pid):
+    from app.models import MaterialMovement
+    return MaterialMovement.query.filter_by(project_id=pid, kind="out").all()
+
+
+def test_a_request_pauses_the_material_stage_until_it_is_issued(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    _stock_item("ABC 4 kg")
+    assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "ABC 4 kg", "quantity": 3}).status_code == 201
+    a = _stages(admin_client, pid)
+    assert a["stages"][1]["done"] is False and a["waiting_on_stock"] is True
+    assert a["materials"][0]["pending"] == 3 and a["materials"][0]["to_request"] == 0
+    _asked(pid)[0].status = "approved"
+    db.session.commit()
+    a = _stages(admin_client, pid)
+    assert a["stages"][1]["done"] is True and a["waiting_on_stock"] is False and a["materials"][0]["issued"] == 3
+
+
+def _issue_and_pay(admin_client, pid, paid=1350):
+    from app.models import ProjectPayment
+    _stock_item("ABC 4 kg")
+    admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "ABC 4 kg", "quantity": 3})
+    _asked(pid)[0].status = "approved"
+    if paid:
+        p = db.session.get(Project, pid)
+        p.payments.append(ProjectPayment(label="Received", amount=paid, mode="GR BB", paid_date=date(2026, 10, 31), position=1))
+    db.session.commit()
+
+
+def test_it_stays_unbilled_until_marked_billed_and_only_once_the_first_three_stages_are_done(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    too_early = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
+    assert too_early.status_code == 422 and "material" in too_early.get_json()["error"].lower()
+    _issue_and_pay(admin_client, pid, paid=500)                       # material issued, but only part paid
+    part = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
+    assert part.status_code == 422 and "payment" in part.get_json()["error"].lower()
+    assert db.session.get(Project, pid).status == "unbilled"
+    from app.models import ProjectPayment
+    p = db.session.get(Project, pid)
+    p.payments[0].amount = 1350
+    db.session.commit()
+    a = _stages(admin_client, pid)
+    assert [x["done"] for x in a["stages"]] == [True, True, True, False] and a["can_bill"] is True
+    assert db.session.get(Project, pid).status == "unbilled"          # everything is in place, but nobody has billed it
+    ok = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
+    assert ok.status_code == 200 and db.session.get(Project, pid).status == "billed"
+    assert db.session.get(Project, pid).completed_at is not None
+    assert admin_client.post(f"/api/adhoc/projects/{pid}/bill").status_code == 409
+
+
+def test_a_normal_project_has_no_stages(admin_client):
+    c = Client(name="Normal Co")
+    db.session.add(c)
+    db.session.flush()
+    p = Project(client=c, title="Install", site_name="Plant")
+    db.session.add(p)
+    db.session.commit()
+    assert admin_client.get(f"/api/projects/{p.id}").get_json()["adhoc"] is None
+    assert admin_client.post(f"/api/adhoc/projects/{p.id}/bill").status_code == 404
+
+
+def test_payments_are_recorded_on_the_order_into_one_of_the_accounts(admin_client):
+    pid = order(admin_client).get_json()["project_id"]                  # worth 1350
+    url = f"/api/adhoc/projects/{pid}/payments"
+    assert admin_client.post(url, json={"amount": "500", "mode": "Cheque"}).status_code == 422       # not one of the accounts
+    assert admin_client.post(url, json={"amount": "0", "mode": "GR BB"}).status_code == 422
+    assert admin_client.post(url, json={"amount": "2000", "mode": "GR BB"}).status_code == 422      # more than is owed
+    ok = admin_client.post(url, json={"amount": "500", "mode": "GR BB", "paid_date": "2026-10-31"})
+    assert ok.status_code == 201
+    a = ok.get_json()["adhoc"]
+    assert a["paid"] == 500 and a["stages"][2]["done"] is False
+    assert [(x["amount"], x["mode"], x["paid_date"]) for x in a["payments"]] == [(500, "GR BB", "2026-10-31")]
+    done = admin_client.post(url, json={"amount": "850", "mode": "CASH"}).get_json()["adhoc"]
+    assert done["stages"][2]["done"] is True
+    gone = admin_client.delete(f"{url}/{done['payments'][0]['id']}").get_json()["adhoc"]
+    assert gone["paid"] == 850 and gone["stages"][2]["done"] is False
+
+
+def test_a_billed_order_takes_no_more_payments(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    db.session.get(Project, pid).status = "billed"
+    db.session.commit()
+    assert admin_client.post(f"/api/adhoc/projects/{pid}/payments", json={"amount": "1", "mode": "GR BB"}).status_code == 409

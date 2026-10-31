@@ -25,6 +25,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
+from .constants import PAYMENT_ACCOUNTS
 from .auth import can_manage_cash_purchases
 from .extensions import db
 from .models import CashAccount, CashPurchase, CashRequest, CashTopup, Worker, settings_for_client, utcnow
@@ -37,7 +38,7 @@ api_errors(bp)
 
 # Same fixed pair fooding uses (kohal, 2026-10-18, reused here 2026-10-21) - handing over cash or a UPI
 # transfer in person, not the general PAYMENT_MODES list (Cheque/Bank transfer/Other don't apply).
-PAYMENT_MODES = ("Cash", "Online/UPI")
+PAYMENT_MODES = tuple(PAYMENT_ACCOUNTS)       # the same accounts as everywhere else (kohal, 2026-10-31)
 
 
 def _manage_only():

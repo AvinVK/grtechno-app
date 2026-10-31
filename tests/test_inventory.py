@@ -109,7 +109,7 @@ def test_adding_a_material_with_a_quantity_logs_its_first_purchase(admin_client)
     sid = add_supplier(admin_client)
     res = admin_client.post("/api/inventory/materials", json={
         "name": "TMT Bars", "unit": "kg", "quantity": 100, "rate": 60, "supplier_id": sid,
-        "bill_no": "INV-1", "payment_mode": "cash", "gst_percent": 18, "note": "Opening stock",
+        "bill_no": "INV-1", "payment_mode": "cash", "payment_account": "GR BB", "gst_percent": 18, "note": "Opening stock",
     })
     assert res.status_code == 201, res.get_json()
     body = res.get_json()
@@ -955,3 +955,26 @@ def test_restock_count_badge_appears_on_the_materials_and_requests_responses(app
     requests_data = admin_client.get("/api/inventory/material-requests").get_json()
     assert materials_data["restock_count"] == 1
     assert requests_data["restock_count"] == 1
+
+
+def test_a_cash_purchase_says_which_account_it_was_paid_from(admin_client):
+    """kohal, 2026-10-31: "if its cash selected then show the bank options"."""
+    sid = add_supplier(admin_client)
+    base = {"name": "Angles", "unit": "kg", "quantity": 10, "rate": 5, "supplier_id": sid}
+    no_account = admin_client.post("/api/inventory/materials", json={**base, "payment_mode": "cash"})
+    assert no_account.status_code == 422 and "payment_account" in no_account.get_json()["fields"]
+    assert Material.query.filter_by(name="Angles").first() is None
+    wrong = admin_client.post("/api/inventory/materials", json={**base, "payment_mode": "cash", "payment_account": "Nowhere"})
+    assert wrong.status_code == 422 and "payment_account" in wrong.get_json()["fields"]
+    ok = admin_client.post("/api/inventory/materials", json={**base, "payment_mode": "cash", "payment_account": "GR BOB"})
+    assert ok.status_code == 201 and ok.get_json()["movement"]["payment_account"] == "GR BOB"
+
+
+def test_a_credit_purchase_has_no_account_and_the_list_is_served(admin_client):
+    sid = add_supplier(admin_client)
+    res = admin_client.post("/api/inventory/materials", json={
+        "name": "Pipes", "unit": "m", "quantity": 4, "rate": 9, "supplier_id": sid, "payment_mode": "credit", "payment_account": "GR BB"})
+    assert res.status_code == 201 and res.get_json()["movement"]["payment_account"] == ""
+    mid = res.get_json()["material"]["id"]
+    assert admin_client.get("/api/inventory/materials").get_json()["payment_accounts"][-1] == "GR BOB"
+    assert "GR BB" in admin_client.get(f"/api/inventory/materials/{mid}").get_json()["payment_accounts"]

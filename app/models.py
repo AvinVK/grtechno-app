@@ -1211,6 +1211,8 @@ class MaterialMovement(db.Model):
     supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
     bill_no = db.Column(db.String(60), nullable=False, default="", server_default="")
     payment_mode = db.Column(db.String(10), nullable=False, default="", server_default="")  # credit | cash
+    # Which account a cash purchase was paid from (constants.PAYMENT_ACCOUNTS) - empty for credit and for older entries.
+    payment_account = db.Column(db.String(30), nullable=False, default="", server_default="")
     gst_percent = db.Column(db.Numeric(5, 2), nullable=False, default=0, server_default="0")
     gst_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount * gst_percent / 100
     total_cost = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")    # amount + gst_amount
@@ -1248,7 +1250,7 @@ class MaterialMovement(db.Model):
             "project_code": self.project.code if self.project else None,
             "note": self.note, "entry_date": self.entry_date.isoformat(),
             "supplier_id": self.supplier_id, "supplier_name": self.supplier.name if self.supplier else None,
-            "bill_no": self.bill_no, "payment_mode": self.payment_mode,
+            "bill_no": self.bill_no, "payment_mode": self.payment_mode, "payment_account": self.payment_account,
             "gst_percent": float(self.gst_percent), "gst_amount": float(self.gst_amount),
             "total_cost": float(self.total_cost),
             "bill_url": f"/uploads/materials/{self.bill_filename}" if self.bill_filename else None,

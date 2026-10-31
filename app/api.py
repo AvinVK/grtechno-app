@@ -11,7 +11,7 @@ from . import categories
 from .auth import visible_clients, visible_leads
 from .modules import check_module, modules_for
 from .projects import ProjectError, create_project_from_lead
-from .constants import CLOSED_STAGES, LOST, OPEN_STAGES, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, STAGES, WON
+from .constants import ACCEPTED_PAYMENT_MODES, CLOSED_STAGES, LOST, OPEN_STAGES, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, STAGES, WON
 from .extensions import db
 from .models import (
     Activity, Client, Lead, LeadDocument, LeadNegotiation, LeadSurvey, Pincode, Service, SurveyPhoto,
@@ -153,7 +153,7 @@ def _validate(payload: dict, current_enquired_by_id: int | None = None) -> tuple
         raw = payload["advance_mode"]
         if raw in (None, ""):
             data["advance_mode"] = ""
-        elif raw in PAYMENT_MODES:
+        elif raw in ACCEPTED_PAYMENT_MODES:
             data["advance_mode"] = raw
         else:
             errors["advance_mode"] = "Choose one of the payment modes"

@@ -64,7 +64,7 @@ def test_only_admin_or_accountant_can_manage_fooding(client, accounts_client, ad
     assert client.get("/api/fooding").status_code == 403
     assert accounts_client.get("/api/fooding").status_code == 200
     assert admin_client.get("/api/fooding").status_code == 200
-    assert client.post(f"/api/fooding/{with_wid}/allot", json={"amount": 100, "payment_mode": "Cash"}).status_code == 403
+    assert client.post(f"/api/fooding/{with_wid}/allot", json={"amount": 100, "payment_mode": "CASH"}).status_code == 403
 
 
 def test_fooding_lists_every_daily_wage_worker_starting_at_zero(admin_client):
@@ -83,7 +83,7 @@ def test_fooding_lists_every_daily_wage_worker_starting_at_zero(admin_client):
 
 def test_allotting_money_creates_the_account(accounts_client):
     wid = daily_wage_worker()
-    res = allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
+    res = allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
     assert res.status_code == 200
     body = res.get_json()["fooding"]
     assert body["allotted_total"] == 1000.0 and body["remaining"] == 1000.0
@@ -92,8 +92,8 @@ def test_allotting_money_creates_the_account(accounts_client):
 def test_a_second_allotment_adds_to_the_balance_not_replaces_it(accounts_client):
     """kohal, 2026-10-18 (answered): "Adds to the remaining balance"."""
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
-    res = allot(accounts_client, wid, {"amount": "500", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
+    res = allot(accounts_client, wid, {"amount": "500", "payment_mode": "CASH"})
     body = res.get_json()["fooding"]
     assert body["allotted_total"] == 1500.0 and body["remaining"] == 1500.0
 
@@ -101,7 +101,7 @@ def test_a_second_allotment_adds_to_the_balance_not_replaces_it(accounts_client)
 def test_allot_amount_must_be_a_positive_number(accounts_client):
     wid = daily_wage_worker()
     for bad in ("0", "-5", "abc", ""):
-        res = allot(accounts_client, wid, {"amount": bad, "payment_mode": "Cash"})
+        res = allot(accounts_client, wid, {"amount": bad, "payment_mode": "CASH"})
         assert res.status_code == 422 and "amount" in res.get_json()["fields"], bad
 
 
@@ -112,7 +112,7 @@ def test_allot_requires_a_valid_payment_mode(accounts_client):
     assert res.status_code == 422 and "payment_mode" in res.get_json()["fields"]
     res = allot(accounts_client, wid, {"amount": "500", "payment_mode": "Cheque"})
     assert res.status_code == 422 and "payment_mode" in res.get_json()["fields"]
-    res = allot(accounts_client, wid, {"amount": "500", "payment_mode": "Online/UPI"})
+    res = allot(accounts_client, wid, {"amount": "500", "payment_mode": "GR BB"})
     assert res.status_code == 200
 
 
@@ -120,7 +120,7 @@ def test_allot_pause_and_resume_only_work_on_a_daily_wage_worker(accounts_client
     salary_worker = Worker(name="Sanjay Salary", category="staff", employment_type="regular")
     db.session.add(salary_worker)
     db.session.commit()
-    assert allot(accounts_client, salary_worker.id, {"amount": "100", "payment_mode": "Cash"}).status_code == 404
+    assert allot(accounts_client, salary_worker.id, {"amount": "100", "payment_mode": "CASH"}).status_code == 404
     assert accounts_client.post(f"/api/fooding/{salary_worker.id}/pause").status_code == 404
 
 
@@ -128,7 +128,7 @@ def test_the_daily_amount_is_deducted_without_a_cron(app, accounts_client):
     """No scheduled job applies the 200/day (see FoodingAccount.settle's own docstring) - it's caught up
     live, the moment the account is next read or changed."""
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
     with app.app_context():
         account = db.session.get(Worker, wid).fooding_account
         account.anchor_date = date.today() - timedelta(days=3)
@@ -141,7 +141,7 @@ def test_the_daily_amount_is_deducted_without_a_cron(app, accounts_client):
 
 def test_pausing_stops_the_daily_deduction(app, accounts_client):
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
     accounts_client.post(f"/api/fooding/{wid}/pause")
     with app.app_context():
         account = db.session.get(Worker, wid).fooding_account
@@ -155,7 +155,7 @@ def test_pausing_stops_the_daily_deduction(app, accounts_client):
 
 def test_resuming_picks_up_the_daily_deduction_again(app, accounts_client):
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
     accounts_client.post(f"/api/fooding/{wid}/pause")
     res = accounts_client.post(f"/api/fooding/{wid}/resume")
     assert res.status_code == 200 and res.get_json()["fooding"]["is_paused"] is False
@@ -170,7 +170,7 @@ def test_resuming_picks_up_the_daily_deduction_again(app, accounts_client):
 
 def test_remaining_never_goes_below_zero(app, accounts_client):
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": "250", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "250", "payment_mode": "CASH"})
     with app.app_context():
         account = db.session.get(Worker, wid).fooding_account
         account.anchor_date = date.today() - timedelta(days=10)   # 10 * 200 = 2000, way more than the 250 allotted
@@ -185,14 +185,14 @@ def test_topping_up_after_running_dry_does_not_retroactively_owe_the_zero_days(a
     """settle() always re-anchors to today, so the gap while the balance sat at zero is never counted
     again once it's topped up - see FoodingAccount.settle's own docstring."""
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": "200", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "200", "payment_mode": "CASH"})
     with app.app_context():
         account = db.session.get(Worker, wid).fooding_account
         account.anchor_date = date.today() - timedelta(days=10)
         db.session.commit()
     accounts_client.get("/api/fooding")   # settles it to 0 remaining, re-anchors to today
 
-    res = allot(accounts_client, wid, {"amount": "100", "payment_mode": "Cash"})
+    res = allot(accounts_client, wid, {"amount": "100", "payment_mode": "CASH"})
     assert res.get_json()["fooding"]["remaining"] == 100.0   # not silently clobbered by the stale gap
 
 
@@ -209,7 +209,7 @@ def test_fooding_page_needs_a_daily_wage_worker_or_manage_access(client, admin_c
 
 def test_a_daily_wage_worker_sees_their_own_balance(app, accounts_client):
     who, wid = daily_wage_user(app)
-    allot(accounts_client, wid, {"amount": "750", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "750", "payment_mode": "CASH"})
 
     res = who.get("/fooding")
     assert res.status_code == 200 and 'data-mode="own"' in res.get_data(as_text=True)
@@ -219,10 +219,10 @@ def test_a_daily_wage_worker_sees_their_own_balance(app, accounts_client):
 
 def test_an_allotment_shows_up_as_its_own_entry(app, accounts_client):
     who, wid = daily_wage_user(app)
-    allot(accounts_client, wid, {"amount": "750", "payment_mode": "Online/UPI"})
+    allot(accounts_client, wid, {"amount": "750", "payment_mode": "GR BB"})
     entries = who.get("/api/fooding/me").get_json()["entries"]
     assert len(entries) == 1
-    assert entries[0]["kind"] == "allot" and entries[0]["amount"] == 750.0 and entries[0]["payment_mode"] == "Online/UPI"
+    assert entries[0]["kind"] == "allot" and entries[0]["amount"] == 750.0 and entries[0]["payment_mode"] == "GR BB"
 
 
 # ---------- a daily-wage worker's own "+ Add expense" (kohal, 2026-10-18) ----------
@@ -231,15 +231,15 @@ def test_a_worker_can_log_an_expense_against_their_own_balance(app, accounts_cli
     """"the daily wages employee can also use the money for travelling or for any reason... the amount,
     how was it paid and for what was it used"."""
     who, wid = daily_wage_user(app)
-    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
 
-    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "Cash", "purpose": "Auto fare to site"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "CASH", "purpose": "Auto fare to site"})
     assert res.status_code == 201
     body = res.get_json()
     assert body["fooding"]["remaining"] == 850.0
     assert len(body["entries"]) == 2   # the allot entry, plus this one
     expense = next(e for e in body["entries"] if e["kind"] == "expense")
-    assert expense["amount"] == 150.0 and expense["payment_mode"] == "Cash" and expense["purpose"] == "Auto fare to site"
+    assert expense["amount"] == 150.0 and expense["payment_mode"] == "CASH" and expense["purpose"] == "Auto fare to site"
 
     data = who.get("/api/fooding/me").get_json()["fooding"]
     assert data["remaining"] == 850.0
@@ -247,28 +247,28 @@ def test_a_worker_can_log_an_expense_against_their_own_balance(app, accounts_cli
 
 def test_an_expense_needs_amount_payment_mode_and_purpose(app, accounts_client):
     who, wid = daily_wage_user(app)
-    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
 
-    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "Cash", "purpose": ""})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "CASH", "purpose": ""})
     assert res.status_code == 422 and "purpose" in res.get_json()["fields"]
     res = who.post("/api/fooding/me/expenses", json={"amount": "150", "purpose": "Food"})
     assert res.status_code == 422 and "payment_mode" in res.get_json()["fields"]
-    res = who.post("/api/fooding/me/expenses", json={"amount": "0", "payment_mode": "Cash", "purpose": "Food"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "0", "payment_mode": "CASH", "purpose": "Food"})
     assert res.status_code == 422 and "amount" in res.get_json()["fields"]
 
 
 def test_an_expense_cannot_exceed_whats_remaining(app, accounts_client):
     who, wid = daily_wage_user(app)
-    allot(accounts_client, wid, {"amount": "100", "payment_mode": "Cash"})
-    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "Cash", "purpose": "Travel"})
+    allot(accounts_client, wid, {"amount": "100", "payment_mode": "CASH"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "CASH", "purpose": "Travel"})
     assert res.status_code == 422 and "amount" in res.get_json()["fields"]
     # exactly the remaining balance is fine
-    res = who.post("/api/fooding/me/expenses", json={"amount": "100", "payment_mode": "Cash", "purpose": "Travel"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "100", "payment_mode": "CASH", "purpose": "Travel"})
     assert res.status_code == 201 and res.get_json()["fooding"]["remaining"] == 0.0
 
 
 def test_only_a_daily_wage_worker_can_log_their_own_expense(client):
-    res = client.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "Cash", "purpose": "Travel"})
+    res = client.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "CASH", "purpose": "Travel"})
     assert res.status_code == 403
 
 
@@ -276,7 +276,7 @@ def test_an_expense_still_works_even_with_nothing_allotted_yet(app):
     """Logging an expense creates the account on the spot (same as allot does) - but with nothing allotted,
     there's nothing to spend, so it's still capped at 0."""
     who, wid = daily_wage_user(app)
-    res = who.post("/api/fooding/me/expenses", json={"amount": "10", "payment_mode": "Cash", "purpose": "Travel"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "10", "payment_mode": "CASH", "purpose": "Travel"})
     assert res.status_code == 422 and "amount" in res.get_json()["fields"]
 
 
@@ -320,7 +320,7 @@ def test_a_paused_daily_wage_worker_sees_paused(app, accounts_client):
     """kohal, 2026-10-18: "if paused by admin or accountant, the daily wages user should see paused in
     fooding tab"."""
     who, wid = daily_wage_user(app)
-    allot(accounts_client, wid, {"amount": "500", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "500", "payment_mode": "CASH"})
     accounts_client.post(f"/api/fooding/{wid}/pause")
 
     data = who.get("/api/fooding/me").get_json()["fooding"]
@@ -376,7 +376,7 @@ def test_ticking_fooding_opt_in_in_employee_management_makes_them_eligible(app, 
     assert wid in ids
 
     # same life as a daily-wage worker from here: allot, see it, pause, expense
-    allot(accounts_client, wid, {"amount": "900", "payment_mode": "Cash"})
+    allot(accounts_client, wid, {"amount": "900", "payment_mode": "CASH"})
     data = who.get("/api/fooding/me").get_json()["fooding"]
     assert data["allotted_total"] == 900.0 and data["remaining"] == 900.0
 
@@ -384,7 +384,7 @@ def test_ticking_fooding_opt_in_in_employee_management_makes_them_eligible(app, 
     assert who.get("/api/fooding/me").get_json()["fooding"]["is_paused"] is True
     accounts_client.post(f"/api/fooding/{wid}/resume")
 
-    res = who.post("/api/fooding/me/expenses", json={"amount": "200", "payment_mode": "Online/UPI", "purpose": "Travel"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "200", "payment_mode": "GR BB", "purpose": "Travel"})
     assert res.status_code == 201 and res.get_json()["fooding"]["remaining"] == 700.0
 
 
@@ -439,12 +439,12 @@ def test_wages_with_no_rate_set_shows_none_not_an_error(app):
 
 def test_a_persons_fooding_register_lists_credits_and_expenses_with_date_and_who(app, accounts_client, admin_client):
     wid = daily_wage_worker()
-    allot(accounts_client, wid, {"amount": 3000, "payment_mode": "Cash"})
-    allot(admin_client, wid, {"amount": 500, "payment_mode": "Online/UPI"})
+    allot(accounts_client, wid, {"amount": 3000, "payment_mode": "CASH"})
+    allot(admin_client, wid, {"amount": 500, "payment_mode": "GR BB"})
 
     reg = accounts_client.get(f"/api/fooding/{wid}").get_json()
     assert [(e["kind"], e["amount"], e["payment_mode"]) for e in reg["entries"]] == [
-        ("allot", 500.0, "Online/UPI"), ("allot", 3000.0, "Cash")]
+        ("allot", 500.0, "GR BB"), ("allot", 3000.0, "CASH")]
     assert all(e["entry_date"] and e["created_by_name"] for e in reg["entries"])
     assert {e["created_by_name"] for e in reg["entries"]} == {"Anil Accounts", "grtechno"}
     assert reg["fooding"]["allotted_total"] == 3500.0 and reg["auto_deducted"] == 0.0
@@ -457,7 +457,7 @@ def test_only_admin_or_accountant_can_open_a_fooding_register(client):
 
 # ---------- allotments are requests the other of admin / accountant approves (kohal, 2026-10-27) ----------
 
-def _ask(who, wid, amount=1000, mode="Cash"):
+def _ask(who, wid, amount=1000, mode="CASH"):
     res = who.post(f"/api/fooding/{wid}/allot", json={"amount": amount, "payment_mode": mode})
     assert res.status_code == 200, res.get_json()
     return res.get_json()["request"]["id"]
@@ -514,7 +514,7 @@ def test_the_requester_can_withdraw_a_waiting_request(app, accounts_client, admi
 def test_active_requests_and_history_are_listed_with_who_can_decide(app, accounts_client, admin_client):
     wid = daily_wage_worker("Listed Worker")
     waiting = _ask(accounts_client, wid, 200)
-    done = _ask(admin_client, wid, 900, "Online/UPI")
+    done = _ask(admin_client, wid, 900, "GR BB")
     accounts_client.post(f"/api/fooding/requests/{done}/approve")
 
     mine = accounts_client.get("/api/fooding/requests").get_json()

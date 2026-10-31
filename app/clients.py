@@ -89,7 +89,9 @@ def page():
 
 @bp.get("/api/clients")
 def list_clients():
-    clients = visible_clients().order_by(Client.name).all()
+    # Adhoc customers are not clients (kohal, 2026-10-31: "this adhoc thing wont be a client, it will be adhoc
+    # project") - they live on their project, so they stay out of the Clients list.
+    clients = visible_clients().filter(Client.is_adhoc.is_(False)).order_by(Client.name).all()
     settings = settings_for_client()
     return jsonify(clients=[c.to_dict() for c in clients], site_categories=settings["site_categories"], currency=settings["currency"])
 
