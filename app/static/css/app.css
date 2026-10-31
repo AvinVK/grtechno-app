@@ -1909,3 +1909,6 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .adhoc-stage-body { display: grid; gap: 8px; justify-items: start; }
 .adhoc-stage-head h3 { margin: 0; }
 .adhoc-stage-body { justify-items: stretch; }
+.acct-row { text-decoration: none; color: inherit; }
+.acct-credit { color: #1b7a3d; }
+.acct-debit { color: #a3281c; }
