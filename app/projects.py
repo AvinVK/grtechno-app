@@ -10,7 +10,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
-from .adhoc import _adhoc_kind, stage_info
+from .adhoc import _adhoc_kind, requested_names, stage_info, stock_options
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
     ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
@@ -373,6 +373,9 @@ def _detail(project):
         # right boxes (refilling has the three dates); empty for every normal project.
         "adhoc_kind": _adhoc_kind(project) if client.is_adhoc else "",
         "adhoc": stage_info(project) if client.is_adhoc else None,
+        "adhoc_stock": stock_options() if client.is_adhoc else [],
+        "adhoc_locked": sorted(requested_names(project)) if client.is_adhoc else [],
+        "adhoc_charges": {"installation": float(project.installation_charge or 0), "transport": float(project.transport_charge or 0)},
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,
@@ -946,8 +949,14 @@ def request_material(project_id):
     qty = f.data.get("quantity")
     if qty is None:
         errors.setdefault("quantity", "Enter a quantity greater than 0")
-    elif qty <= 0:
+    elif qty == 0:
+        errors["quantity"] = "Quantity can't be zero"
+    elif qty < 0:
         errors["quantity"] = "Enter a quantity greater than 0"
+    elif kind == "out" and project.client.is_adhoc and material is not None and qty > material.stock_qty:
+        # An adhoc order can only ask for what is in stock (kohal, 2026-10-31: "if the quantity tried is not present
+        # in stock, it should throw error and not request").
+        errors["quantity"] = " ".join(f"Only {float(material.stock_qty):g} {material.unit or ''} in stock".split())
     elif kind == "in" and material is not None:
         # Unlike an issue - asking for more than what's in stock is fine there, that's the point of a
         # request someone else has to approve (kohal, 2026-10-17) - a return can't claim more than the
