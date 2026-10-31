@@ -40,6 +40,7 @@ def create_app(config_object=Config):
     from .fooding import bp as fooding_bp
     from .petrol import bp as petrol_bp
     from .adhoc import bp as adhoc_bp
+    from .accounts import bp as accounts_bp
     from .cash_purchases import bp as cash_purchases_bp
     from .wages import bp as wages_bp
     from .payroll import bp as payroll_bp
@@ -72,6 +73,7 @@ def create_app(config_object=Config):
     app.register_blueprint(fooding_bp)
     app.register_blueprint(petrol_bp)
     app.register_blueprint(adhoc_bp)
+    app.register_blueprint(accounts_bp)
     app.register_blueprint(cash_purchases_bp)
     app.register_blueprint(wages_bp)
     app.register_blueprint(payroll_bp)
