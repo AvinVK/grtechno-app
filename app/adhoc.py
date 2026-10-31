@@ -130,42 +130,48 @@ def _fill(project, items):
     project.estimated_amount = sum((item["qty"] * item["rate"] for item in items), Decimal("0")).quantize(Decimal("0.01"))
 
 
-def _request_stock(project, items):
-    """Ask inventory for every item on the order (kohal, 2026-10-31: "it will be autorequested") - one pending
-    issue request per material, going through the usual approval and, where stock is short, the Restock list. A
-    material not in inventory yet is added with nothing on hand, exactly as a typed-in material is on a normal
-    project."""
+def stage_info(project):
+    """Where an adhoc order stands, in four stages (kohal, 2026-10-31):
+    1 Details - the customer and the items are filled in.
+    2 Material - every item has been issued from inventory. An item that is short waits here: its request sits in
+      inventory's Material requests and, for the shortfall, on Restock - the same flow as any project's request.
+    3 Payment - what the order is worth has been received.
+    4 Billed - marked by hand once 1-3 are done; until then the order is Unbilled.
+    Worked out from the order itself, so nothing about the stages is stored but the final status."""
     wanted = {}
-    for item in items:
-        key = item["fe_type"].strip().lower()
-        name, qty = wanted.get(key, (item["fe_type"].strip(), 0))
-        wanted[key] = (name, qty + item["qty"])
-    for key, (name, qty) in wanted.items():
+    for item in project.adhoc_items:
+        key = item.fe_type.strip().lower()
+        name, qty = wanted.get(key, (item.fe_type.strip(), 0))
+        wanted[key] = (name, qty + item.qty)
+    moves = MaterialMovement.query.filter_by(project_id=project.id, kind="out").all()
+    rows = []
+    for key, (name, needed) in wanted.items():
+        issued = sum((m.quantity for m in moves if m.status == "approved" and m.material.name.strip().lower() == key), Decimal("0"))
+        pending = sum((m.quantity for m in moves if m.status == "pending" and m.material.name.strip().lower() == key), Decimal("0"))
         material = Material.query.filter(func.lower(Material.name) == key).first()
-        if material is None:
-            material = Material(name=name, is_active=True, avg_rate=Decimal("0"), stock_qty=Decimal("0"))
-            db.session.add(material)
-        else:
-            material.is_active = True
-        rate = material.avg_rate or Decimal("0")
-        db.session.add(MaterialMovement(
-            material=material, kind="out", quantity=Decimal(qty), rate=rate, amount=Decimal(qty) * rate,
-            project=project, note="Adhoc order", entry_date=today_local(), created_by_code=g.user.code,
-            requested=True, status="pending"))
-
-
-def refresh_billing(project):
-    """An unbilled adhoc project becomes Billed - and closed - once its stock has been issued (kohal, 2026-10-31:
-    "as soon as the request is approved and material is deducted from inventory, it will be billed"): none of its
-    stock requests is still waiting (a shortfall carries on as a new waiting request) and at least one was
-    approved. The caller commits."""
-    if project is None or not project.client.is_adhoc or project.status != "unbilled":
-        return
-    asked = MaterialMovement.query.filter_by(project_id=project.id, kind="out", requested=True).all()
-    if not asked or any(m.status == "pending" for m in asked) or not any(m.status == "approved" for m in asked):
-        return
-    project.status = "billed"
-    project.completed_at = utcnow()
+        rows.append({
+            "name": name, "needed": needed, "issued": float(issued), "pending": float(pending),
+            "in_stock": float(material.stock_qty) if material else 0.0, "unit": material.unit if material else "",
+            "to_request": max(0.0, float(Decimal(needed) - issued - pending)),
+            "done": issued >= needed,
+        })
+    net = project.net_amount
+    details_done = bool(project.adhoc_items)
+    material_done = bool(rows) and all(r["done"] for r in rows)
+    payment_done = net is not None and net > 0 and project.paid_amount >= net
+    billed = project.status == "billed"
+    return {
+        "materials": rows,
+        "waiting_on_stock": any(not r["done"] and r["pending"] > 0 for r in rows),
+        "paid": float(project.paid_amount), "total": float(net) if net is not None else None,
+        "stages": [
+            {"key": "details", "label": "Fill details", "done": details_done},
+            {"key": "material", "label": "Request material", "done": material_done},
+            {"key": "payment", "label": "Payment details", "done": payment_done},
+            {"key": "billed", "label": "Mark as billed", "done": billed},
+        ],
+        "can_bill": details_done and material_done and payment_done and not billed,
+    }
 
 
 def _adhoc_kind(project):
@@ -239,8 +245,6 @@ def create_order():
     )
     _fill(project, items)
     db.session.add(project)
-    db.session.flush()
-    _request_stock(project, items)
     db.session.commit()
     return jsonify(client_id=client.id, project_id=project.id), 201
 
@@ -261,3 +265,23 @@ def replace_items(project_id):
     db.session.commit()
     return jsonify(items=[i.to_dict() for i in project.adhoc_items], estimated_amount=float(project.estimated_amount),
                    kind=_adhoc_kind(project), currency=settings_for_client()["currency"])
+
+
+@bp.post("/api/adhoc/projects/<int:project_id>/bill")
+def mark_billed(project_id):
+    """The last stage: mark the order Billed (and closed). Only once the details, material and payment stages are
+    done - the order stays Unbilled until then."""
+    project = visible_projects().filter(Project.id == project_id).first()
+    if project is None or not project.client.is_adhoc:
+        abort(404)
+    if project.status == "billed":
+        return jsonify(error="This order is already billed."), 409
+    info = stage_info(project)
+    if not info["stages"][1]["done"]:
+        abort(422, "Issue the material from inventory first.")
+    if not info["stages"][2]["done"]:
+        abort(422, "The payment has not been fully received yet.")
+    project.status = "billed"
+    project.completed_at = utcnow()
+    db.session.commit()
+    return jsonify(status=project.status, adhoc=stage_info(project))

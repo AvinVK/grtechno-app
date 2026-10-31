@@ -574,6 +574,7 @@
         info('Client',
           canOpenClients && !c.is_adhoc ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
           [c.contact_name, c.phone].filter(Boolean).join(' · ') || null)),
+      P.is_adhoc ? adhocStages(data) : null,
       P.is_adhoc ? h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
           h('h3', {}, `Items · ${window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''}`),
@@ -582,6 +583,67 @@
       closeArea,
       deleteBtn));
     window.scrollTo(0, 0);
+  }
+
+  /* An adhoc order's four stages (kohal, 2026-10-31: "stage 1 - fill details, stage 2 - request material (if not in
+     stock then pause at this step and raise request to inventory), stage 3 - payment details, stage 4 - mark as
+     billed. till its marked as billed, it should be unbilled"). Where each one stands comes from the server
+     (adhoc_stages in app/adhoc.py); the buttons here are the only things that move an order along. */
+  function adhocStages(data) {
+    const P = data.project;
+    const A = data.adhoc;
+    const cur = data.currency;
+    const billed = P.status === 'billed';
+    const reload = () => showDetail(P.id, '');
+    const current = billed ? null : (A.stages.find((s) => !s.done) || {}).key;
+    const qty = (n) => String(Number(n.toFixed(2)));
+
+    const requestMaterial = async () => {
+      try {
+        const res = await api(`/api/projects/${P.id}/material-requests`);
+        const todo = A.materials.filter((m) => m.to_request > 0).map((m) => ({ fe_type: m.name, qty: m.to_request }));
+        openRequestOrderMaterial(P.id, res.materials, reload, todo);
+      } catch (err) { toast(err.message); }
+    };
+    const markBilled = async () => {
+      if (!(await confirm('Mark this order as billed? It will be closed.', { ok: 'Mark as billed', title: 'Mark as billed' }))) return;
+      try {
+        await api(`/api/adhoc/projects/${P.id}/bill`, { method: 'POST', body: {} });
+        toast('Marked as billed');
+        reload();
+      } catch (err) { toast(err.message); }
+    };
+
+    const body = {
+      details: () => [
+        h('p', { class: 'hint' }, `${plural(P.adhoc_items.length, 'item', 'items')} \u00b7 ${money(P.estimated_amount || 0, cur)}`),
+        billed ? null : h('a', { class: 'btn small', href: `#p${P.id}/items` }, 'Edit details and items')],
+      material: () => [
+        h('ul', { class: 'card-group adhoc-list' }, A.materials.map((m) => h('li', { class: 'p-row' },
+          h('span', { class: 'p-main' },
+            h('span', { class: 'row-title' }, m.name),
+            h('span', { class: 'row-sub' }, `Need ${qty(m.needed)} \u00b7 issued ${qty(m.issued)} \u00b7 waiting ${qty(m.pending)} \u00b7 in stock ${qty(m.in_stock)}`)),
+          h('span', { class: 'chip ' + (m.done ? 'chip-role' : 'chip-off') }, m.done ? 'Issued' : (m.pending ? 'Requested' : 'To request'))))),
+        A.waiting_on_stock ? h('p', { class: 'hint' }, 'Paused here: the request is with inventory. What is short shows on its Restock list, and the order moves on once the stock is issued.') : null,
+        billed || !A.materials.some((m) => m.to_request > 0) ? null
+          : h('button', { class: 'btn small primary', type: 'button', onclick: requestMaterial }, 'Request material'),
+        h('a', { class: 'btn small', href: `#p${P.id}/materials` }, 'See requests')],
+      payment: () => [
+        h('p', { class: 'hint' }, `Received ${money(A.paid, cur)} of ${money(A.total || 0, cur)}`),
+        h('a', { class: 'btn small', href: `#p${P.id}/payments` }, 'Payment details')],
+      billed: () => [
+        billed ? h('p', { class: 'hint' }, 'This order is billed and closed.')
+          : h('p', { class: 'hint' }, A.can_bill ? 'Everything is in place.' : 'Available once the material is issued and the payment is fully received.'),
+        billed ? null : h('button', { class: 'btn small primary', type: 'button', disabled: !A.can_bill, onclick: markBilled }, 'Mark as billed')],
+    };
+
+    return h('section', { class: 'p-section adhoc-stages' },
+      h('h3', {}, billed ? 'Billed' : 'Unbilled'),
+      A.stages.map((s, i) => h('div', { class: `adhoc-stage card${s.key === current ? ' is-current' : ''}${s.done ? ' is-done' : ''}` },
+        h('div', { class: 'adhoc-stage-head' },
+          h('span', { class: 'adhoc-stage-n' }, s.done ? '\u2713' : String(i + 1)),
+          h('strong', {}, s.label)),
+        h('div', { class: 'adhoc-stage-body' }, body[s.key]()))));
   }
 
   /* An adhoc project's items, edited - the same boxes as when the order was taken, with Add more. */

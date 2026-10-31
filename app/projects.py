@@ -10,7 +10,7 @@ from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
-from .adhoc import _adhoc_kind
+from .adhoc import _adhoc_kind, stage_info
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
     ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
@@ -372,6 +372,7 @@ def _detail(project):
         # An adhoc project (app/adhoc.py) says which of its two services it is, so the items form shows the
         # right boxes (refilling has the three dates); empty for every normal project.
         "adhoc_kind": _adhoc_kind(project) if client.is_adhoc else "",
+        "adhoc": stage_info(project) if client.is_adhoc else None,
         "can_assign_manager": can_assign,
         "materials": materials,
         "total_material_cost": total_material_cost,

@@ -173,7 +173,7 @@ window.ADHOC = (() => {
     const itemsBox = h('div', {});
     let editor = null;
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save order');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save and continue');
     const whoTabs = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'New or earlier customer' });
 
     function renderWho() {
@@ -207,7 +207,7 @@ window.ADHOC = (() => {
       editor = itemsEditor(state.service, state.draftItems || [], cur);
       state.draftItems = null;
       itemsBox.append(h('h3', {}, state.service === 'refilling' ? 'Items to refill' : 'Items supplied'), editor.node,
-        h('p', { class: 'hint' }, 'Saving asks inventory for these items. The project stays Unbilled until the stock is issued, then it is Billed.'));
+        h('p', { class: 'hint' }, 'Next: request the material, then the payment details, then mark it billed. It stays Unbilled until then.'));
     }
 
     const form = h('form', { novalidate: true, class: 'project-form',
@@ -223,7 +223,7 @@ window.ADHOC = (() => {
         try {
           const res = await api('/api/adhoc/orders', { method: 'POST', body });
           clearDraft();
-          toast('Adhoc project added');
+          toast('Details saved');
           opts.onSaved(res.project_id);
         } catch (err) {
           errorBox.textContent = err.message;
@@ -261,6 +261,7 @@ window.ADHOC = (() => {
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, 'Add project')),
       opts.kindChips(),
+      h('p', { class: 'hint' }, 'Stage 1 of 4 \u00b7 Fill details'),
       restored ? h('p', { class: 'hint' }, 'What you had typed has been put back. ',
         h('button', { class: 'link-btn', type: 'button', onclick: () => { clearDraft(); showOrder(view, opts); } }, 'Start over')) : null,
       form));

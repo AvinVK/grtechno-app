@@ -755,8 +755,6 @@ def approve_material_request(movement_id):
         msg = _negative_stock_message(material, exc.movement)
         db.session.rollback()
         return jsonify(error=msg), 422
-    from .adhoc import refresh_billing     # an adhoc order is billed once its stock has been issued
-    refresh_billing(movement.project)
     db.session.commit()
     return jsonify(material=material.to_dict(), movement=_material_request_dict(movement),
                     remainder=_material_request_dict(remainder) if remainder else None)
@@ -772,8 +770,6 @@ def reject_material_request(movement_id):
     if movement.created_by_code == g.user.code:
         abort(403, "Someone else needs to decide this - not whoever asked for it.")
     reject_movement(movement, g.user)
-    from .adhoc import refresh_billing
-    refresh_billing(movement.project)
     db.session.commit()
     return jsonify(movement=_material_request_dict(movement))
 

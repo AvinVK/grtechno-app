@@ -1,6 +1,8 @@
 """Adhoc clients (kohal, 2026-10-30): supply or refilling of extinguishers, one project per order, the contact
 number identifying the admin_client. See app/adhoc.py."""
 
+from datetime import date
+
 from app.extensions import db
 from app.models import AdhocItem, Client, Project
 
@@ -187,48 +189,80 @@ def test_an_adhoc_project_can_only_ask_for_the_items_on_its_own_order(admin_clie
     ok = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "abc 4 kg", "quantity": 3})
     assert ok.status_code == 201, ok.get_json()
     from app.models import Material
-    assert Material.query.filter_by(name="ABC 4 kg").count() == 1 and float(Material.query.filter_by(name="ABC 4 kg").one().stock_qty) == 0
+    assert Material.query.filter_by(name="abc 4 kg").count() == 1 and float(Material.query.filter_by(name="abc 4 kg").one().stock_qty) == 0
 
 
-# ---------- unbilled -> billed (kohal, 2026-10-31) ----------
+# ---------- the four stages (kohal, 2026-10-31) ----------
+
+def _stages(admin_client, pid):
+    return admin_client.get(f"/api/projects/{pid}").get_json()["adhoc"]
+
+
+def test_saving_the_details_is_stage_one_and_requests_nothing(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    assert db.session.get(Project, pid).status == "unbilled"
+    a = _stages(admin_client, pid)
+    assert [(x["key"], x["done"]) for x in a["stages"]] == [("details", True), ("material", False), ("payment", False), ("billed", False)]
+    assert _asked(pid) == [] and a["can_bill"] is False
+    assert [(m["name"], m["needed"], m["to_request"]) for m in a["materials"]] == [("ABC 4 kg", 3, 3.0)]
+
 
 def _asked(pid):
     from app.models import MaterialMovement
-    return MaterialMovement.query.filter_by(project_id=pid, kind="out", requested=True).all()
+    return MaterialMovement.query.filter_by(project_id=pid, kind="out").all()
 
 
-def test_saving_an_order_starts_unbilled_and_requests_every_item_from_inventory(admin_client):
-    pid = order(admin_client, service="supply", items=[SUPPLY, {**SUPPLY, "qty": 3}, {**SUPPLY, "fe_type": "Fire blanket", "qty": 1}]).get_json()["project_id"]
-    assert db.session.get(Project, pid).status == "unbilled"
-    got = {m.material.name: (float(m.quantity), m.status) for m in _asked(pid)}
-    assert got == {"CO2": (5.0, "pending"), "Fire blanket": (1.0, "pending")}      # the two CO2 lines are one request
-
-
-def test_the_project_is_billed_and_closed_once_its_stock_is_issued(admin_client):
-    from app.adhoc import refresh_billing
+def test_a_request_pauses_the_material_stage_until_it_is_issued(admin_client):
     pid = order(admin_client).get_json()["project_id"]
-    p = db.session.get(Project, pid)
-    refresh_billing(p)
-    assert p.status == "unbilled"                                   # still waiting on the request
-    mv = _asked(pid)[0]
-    mv.status = "approved"
-    refresh_billing(p)
-    assert p.status == "billed" and p.completed_at is not None
-
-
-def test_a_shortfall_keeps_it_unbilled_until_the_rest_is_issued(admin_client):
-    from app.adhoc import refresh_billing
-    from app.models import MaterialMovement
-    pid = order(admin_client).get_json()["project_id"]
-    p = db.session.get(Project, pid)
-    first = _asked(pid)[0]
-    first.status = "approved"
-    rest = MaterialMovement(material=first.material, kind="out", quantity=1, rate=0, amount=0, project_id=pid,
-                            entry_date=first.entry_date, requested=True, status="pending")
-    db.session.add(rest)
+    _stock_item("ABC 4 kg")
+    assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "ABC 4 kg", "quantity": 3}).status_code == 201
+    a = _stages(admin_client, pid)
+    assert a["stages"][1]["done"] is False and a["waiting_on_stock"] is True
+    assert a["materials"][0]["pending"] == 3 and a["materials"][0]["to_request"] == 0
+    _asked(pid)[0].status = "approved"
     db.session.commit()
-    refresh_billing(p)
-    assert p.status == "unbilled"
-    rest.status = "rejected"
-    refresh_billing(p)
-    assert p.status == "billed"
+    a = _stages(admin_client, pid)
+    assert a["stages"][1]["done"] is True and a["waiting_on_stock"] is False and a["materials"][0]["issued"] == 3
+
+
+def _issue_and_pay(admin_client, pid, paid=1350):
+    from app.models import ProjectPayment
+    _stock_item("ABC 4 kg")
+    admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "ABC 4 kg", "quantity": 3})
+    _asked(pid)[0].status = "approved"
+    if paid:
+        p = db.session.get(Project, pid)
+        p.payments.append(ProjectPayment(label="Received", amount=paid, mode="GR BB", paid_date=date(2026, 10, 31), position=1))
+    db.session.commit()
+
+
+def test_it_stays_unbilled_until_marked_billed_and_only_once_the_first_three_stages_are_done(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    too_early = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
+    assert too_early.status_code == 422 and "material" in too_early.get_json()["error"].lower()
+    _issue_and_pay(admin_client, pid, paid=500)                       # material issued, but only part paid
+    part = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
+    assert part.status_code == 422 and "payment" in part.get_json()["error"].lower()
+    assert db.session.get(Project, pid).status == "unbilled"
+    from app.models import ProjectPayment
+    p = db.session.get(Project, pid)
+    p.payments[0].amount = 1350
+    db.session.commit()
+    a = _stages(admin_client, pid)
+    assert [x["done"] for x in a["stages"]] == [True, True, True, False] and a["can_bill"] is True
+    assert db.session.get(Project, pid).status == "unbilled"          # everything is in place, but nobody has billed it
+    ok = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
+    assert ok.status_code == 200 and db.session.get(Project, pid).status == "billed"
+    assert db.session.get(Project, pid).completed_at is not None
+    assert admin_client.post(f"/api/adhoc/projects/{pid}/bill").status_code == 409
+
+
+def test_a_normal_project_has_no_stages(admin_client):
+    c = Client(name="Normal Co")
+    db.session.add(c)
+    db.session.flush()
+    p = Project(client=c, title="Install", site_name="Plant")
+    db.session.add(p)
+    db.session.commit()
+    assert admin_client.get(f"/api/projects/{p.id}").get_json()["adhoc"] is None
+    assert admin_client.post(f"/api/adhoc/projects/{p.id}/bill").status_code == 404
