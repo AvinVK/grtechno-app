@@ -266,3 +266,27 @@ def test_a_normal_project_has_no_stages(admin_client):
     db.session.commit()
     assert admin_client.get(f"/api/projects/{p.id}").get_json()["adhoc"] is None
     assert admin_client.post(f"/api/adhoc/projects/{p.id}/bill").status_code == 404
+
+
+def test_payments_are_recorded_on_the_order_into_one_of_the_accounts(admin_client):
+    pid = order(admin_client).get_json()["project_id"]                  # worth 1350
+    url = f"/api/adhoc/projects/{pid}/payments"
+    assert admin_client.post(url, json={"amount": "500", "mode": "Cheque"}).status_code == 422       # not one of the accounts
+    assert admin_client.post(url, json={"amount": "0", "mode": "GR BB"}).status_code == 422
+    assert admin_client.post(url, json={"amount": "2000", "mode": "GR BB"}).status_code == 422      # more than is owed
+    ok = admin_client.post(url, json={"amount": "500", "mode": "GR BB", "paid_date": "2026-10-31"})
+    assert ok.status_code == 201
+    a = ok.get_json()["adhoc"]
+    assert a["paid"] == 500 and a["stages"][2]["done"] is False
+    assert [(x["amount"], x["mode"], x["paid_date"]) for x in a["payments"]] == [(500, "GR BB", "2026-10-31")]
+    done = admin_client.post(url, json={"amount": "850", "mode": "CASH"}).get_json()["adhoc"]
+    assert done["stages"][2]["done"] is True
+    gone = admin_client.delete(f"{url}/{done['payments'][0]['id']}").get_json()["adhoc"]
+    assert gone["paid"] == 850 and gone["stages"][2]["done"] is False
+
+
+def test_a_billed_order_takes_no_more_payments(admin_client):
+    pid = order(admin_client).get_json()["project_id"]
+    db.session.get(Project, pid).status = "billed"
+    db.session.commit()
+    assert admin_client.post(f"/api/adhoc/projects/{pid}/payments", json={"amount": "1", "mode": "GR BB"}).status_code == 409

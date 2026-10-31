@@ -21,9 +21,9 @@ from flask import Blueprint, abort, g, jsonify, request
 from sqlalchemy import func
 
 from .auth import visible_clients, visible_projects
-from .constants import ADHOC_SERVICES, ADHOC_STATUSES
+from .constants import ADHOC_SERVICES, ADHOC_STATUSES, PAYMENT_ACCOUNTS
 from .extensions import db
-from .models import AdhocItem, Client, Material, MaterialMovement, Project, Service, settings_for_client, utcnow
+from .models import AdhocItem, Client, Material, MaterialMovement, Project, ProjectPayment, Service, settings_for_client, utcnow
 from .modules import has_module
 from .timeutil import today_local
 from .validation import Fields, api_errors
@@ -164,6 +164,9 @@ def stage_info(project):
         "materials": rows,
         "waiting_on_stock": any(not r["done"] and r["pending"] > 0 for r in rows),
         "paid": float(project.paid_amount), "total": float(net) if net is not None else None,
+        "payments": [{"id": p.id, "amount": float(p.amount), "mode": p.mode,
+                      "paid_date": p.paid_date.isoformat() if p.paid_date else None}
+                     for p in project.payments if p.paid_date is not None],
         "stages": [
             {"key": "details", "label": "Fill details", "done": details_done},
             {"key": "material", "label": "Request material", "done": material_done},
@@ -285,3 +288,53 @@ def mark_billed(project_id):
     project.completed_at = utcnow()
     db.session.commit()
     return jsonify(status=project.status, adhoc=stage_info(project))
+
+
+def _open_adhoc_or_404(project_id):
+    project = visible_projects().filter(Project.id == project_id).first()
+    if project is None or not project.client.is_adhoc:
+        abort(404)
+    if project.status == "billed":
+        abort(409, "This order is billed and closed.")
+    return project
+
+
+@bp.post("/api/adhoc/projects/<int:project_id>/payments")
+def add_payment(project_id):
+    """Stage 3: record money received on the order - how much, into which account, and when. It can't be more
+    than what is still owed."""
+    project = _open_adhoc_or_404(project_id)
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    f = Fields(payload)
+    f.money("amount", nullable=False)
+    f.date("paid_date")
+    errors = dict(f.errors)
+    amount = f.data.get("amount")
+    owed = (project.net_amount or Decimal("0")) - project.paid_amount
+    if "amount" not in errors:
+        if amount is None or amount <= 0:
+            errors["amount"] = "Enter an amount greater than 0"
+        elif amount > owed:
+            errors["amount"] = f"Only {owed} is still to be received"
+    if payload.get("mode") not in PAYMENT_ACCOUNTS:
+        errors["mode"] = "Choose the account it was received in"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    project.payments.append(ProjectPayment(
+        label="Received", amount=amount, mode=payload["mode"], paid_date=f.data.get("paid_date") or today_local(),
+        position=len(project.payments) + 1))
+    db.session.commit()
+    return jsonify(adhoc=stage_info(project)), 201
+
+
+@bp.delete("/api/adhoc/projects/<int:project_id>/payments/<int:payment_id>")
+def remove_payment(project_id, payment_id):
+    project = _open_adhoc_or_404(project_id)
+    payment = next((p for p in project.payments if p.id == payment_id), None)
+    if payment is None:
+        abort(404)
+    project.payments.remove(payment)
+    db.session.commit()
+    return jsonify(adhoc=stage_info(project))

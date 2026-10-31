@@ -1895,10 +1895,12 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .order-material-name { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; font-weight: 600; }
 .order-material-name .hint { grid-column: 2; font-weight: 400; }
 .adhoc-back { display: inline-block; margin: 4px 0 2px; font-size: 15px; }
-.adhoc-stage { padding: 12px 14px; margin-bottom: 10px; display: grid; gap: 8px; opacity: .7; }
+.adhoc-stage { padding: 4px 0 12px; margin-bottom: 8px; display: grid; gap: 8px; opacity: .65; }
 .adhoc-stage.is-current { opacity: 1; border-color: var(--accent, #c8341f); }
 .adhoc-stage.is-done { opacity: 1; }
 .adhoc-stage-head { display: flex; align-items: center; gap: 10px; }
 .adhoc-stage-n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--line); font-weight: 700; font-size: .9rem; }
 .adhoc-stage.is-done .adhoc-stage-n { background: var(--accent, #c8341f); color: #fff; }
 .adhoc-stage-body { display: grid; gap: 8px; justify-items: start; }
+.adhoc-stage-head h3 { margin: 0; }
+.adhoc-stage-body { justify-items: stretch; }

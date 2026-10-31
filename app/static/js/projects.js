@@ -38,13 +38,11 @@
   // here (kohal, 2026-10-22: "visible only to admin and client role") - a client's own read-only view of
   // it is a completely separate page (app/client_portal.py), not reached through this tab bar at all.
   const PROJECT_TABS = [['', 'Overview'], ['payments', 'Payment'], ['materials', 'Materials'], ['expense', 'Expense'], ['details', 'More details'], ['attendance', 'Attendance'], ['progress', 'Progress']];
-  // An adhoc project (a supply or refill of extinguishers, see app/adhoc.js) has Overview, Payment, Materials
-  // (requested from inventory, by a project manager, the accountant or the admin - kohal, 2026-10-30) and More
-  // details - no installation Progress, Expense or Attendance.
+  // An adhoc order (a supply or refill of extinguishers, see app/adhoc.js) has no tabs - it is one page of four
+  // stages (renderAdhocPage).
   let adhocProject = false;
-  const ADHOC_TABS = ['', 'payments', 'materials', 'details'];
   const projectTabs = (id, active, showProgress) => h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Project section' },
-    PROJECT_TABS.filter(([slug]) => (slug !== 'progress' || showProgress) && (!adhocProject || ADHOC_TABS.includes(slug))).map(([slug, label]) => h('a', {
+    PROJECT_TABS.filter(([slug]) => slug !== 'progress' || showProgress).map(([slug, label]) => h('a', {
       class: 'filter-chip', href: slug ? `#p${id}/${slug}` : `#p${id}`,
       'aria-current': active === slug ? 'page' : null,
     }, label)));
@@ -574,30 +572,60 @@
         info('Client',
           canOpenClients && !c.is_adhoc ? h('a', { href: `/clients#c${c.id}` }, c.name) : c.name,
           [c.contact_name, c.phone].filter(Boolean).join(' · ') || null)),
-      P.is_adhoc ? adhocStages(data) : null,
-      P.is_adhoc ? h('section', { class: 'p-section' },
-        h('div', { class: 'p-section-head' },
-          h('h3', {}, `Items · ${window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''}`),
-          h('a', { class: 'btn small', href: `#p${P.id}/items` }, 'Edit items')),
-        window.ADHOC.itemsList(P.adhoc_items || [], data.adhoc_kind, cur)) : null,
       closeArea,
       deleteBtn));
     window.scrollTo(0, 0);
   }
 
-  /* An adhoc order's four stages (kohal, 2026-10-31: "stage 1 - fill details, stage 2 - request material (if not in
-     stock then pause at this step and raise request to inventory), stage 3 - payment details, stage 4 - mark as
-     billed. till its marked as billed, it should be unbilled"). Where each one stands comes from the server
-     (adhoc_stages in app/adhoc.py); the buttons here are the only things that move an order along. */
-  function adhocStages(data) {
+  /* An adhoc order is one page, the form it was started in (kohal, 2026-10-31: "all should be in this form only, no
+     separate project tab should be configured for adhoc projects"): stage 1 the details, stage 2 request material (if
+     it is not in stock the stage pauses and the request goes to inventory, same flow as any project), stage 3
+     payment details, stage 4 mark as billed - and it stays Unbilled until then. Where each stage stands comes from
+     the server (stage_info in app/adhoc.py); the buttons below are the only things that move an order along. */
+  function renderAdhocPage(data) {
     const P = data.project;
     const A = data.adhoc;
+    const c = data.client;
     const cur = data.currency;
     const billed = P.status === 'billed';
     const reload = () => showDetail(P.id, '');
     const current = billed ? null : (A.stages.find((s) => !s.done) || {}).key;
+    const stageNo = billed ? 4 : A.stages.findIndex((s) => !s.done) + 1;
     const qty = (n) => String(Number(n.toFixed(2)));
+    LD.setAppbarBack?.('Projects', '#');
 
+    // ----- stage 1: the details
+    const editor = window.ADHOC.itemsEditor(data.adhoc_kind, P.adhoc_items, cur);
+    const detailsErr = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit', disabled: billed }, 'Save changes');
+    const detailsForm = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        detailsErr.hidden = true;
+        editor.showErrors({});
+        saveBtn.disabled = true;
+        try {
+          await api(`/api/adhoc/projects/${P.id}/items`, { method: 'PUT', body: { items: editor.getItems() } });
+          toast('Details saved');
+          reload();
+        } catch (err) {
+          detailsErr.textContent = err.message;
+          detailsErr.hidden = false;
+          (editor.showErrors(err.fields) || detailsErr).scrollIntoView?.({ block: 'center' });
+          saveBtn.disabled = false;
+        }
+      } },
+      detailsErr,
+      h('div', { class: 'form-grid' },
+        h('div', { class: 'field' }, h('label', {}, 'Client name'), h('input', { type: 'text', value: c.name, disabled: true })),
+        h('div', { class: 'field' }, h('label', {}, 'Contact no'), h('input', { type: 'text', value: c.phone || '', disabled: true })),
+        h('div', { class: 'field wide' }, h('label', {}, 'Address'), h('textarea', { rows: 2, disabled: true }, P.site_address || ''))),
+      h('h3', {}, window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''),
+      editor.node,
+      billed ? null : h('div', { class: 'form-actions' }, saveBtn));
+    if (billed) detailsForm.querySelectorAll('input, textarea, button').forEach((el) => { el.disabled = true; });
+
+    // ----- stage 2: material
     const requestMaterial = async () => {
       try {
         const res = await api(`/api/projects/${P.id}/material-requests`);
@@ -605,6 +633,58 @@
         openRequestOrderMaterial(P.id, res.materials, reload, todo);
       } catch (err) { toast(err.message); }
     };
+    const materialBody = [
+      h('ul', { class: 'card-group adhoc-list' }, A.materials.map((m) => h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, m.name),
+          h('span', { class: 'row-sub' }, `Need ${qty(m.needed)} \u00b7 issued ${qty(m.issued)} \u00b7 waiting ${qty(m.pending)} \u00b7 in stock ${qty(m.in_stock)}`)),
+        h('span', { class: 'chip ' + (m.done ? 'chip-role' : 'chip-off') }, m.done ? 'Issued' : (m.pending ? 'Requested' : 'To request'))))),
+      A.waiting_on_stock ? h('p', { class: 'hint' }, 'Paused here: the request is with inventory. What is short shows on its Restock list, and the order moves on once the stock is issued.') : null,
+      billed || !A.materials.some((m) => m.to_request > 0) ? null
+        : h('button', { class: 'btn small primary', type: 'button', onclick: requestMaterial }, 'Request material'),
+    ];
+
+    // ----- stage 3: payment
+    const owed = Math.max(0, (A.total || 0) - A.paid);
+    const amountIn = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: owed ? String(owed) : '' });
+    const accountSel = selectField(data.payment_modes.map((m) => ({ value: m, label: m })), '', { title: 'Account', placeholder: 'Choose an account' });
+    const dateIn = dateField(todayIsoLocal(), { placeholder: 'Date' });
+    const payErr = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const payForm = h('form', { novalidate: true, class: 'project-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        payErr.hidden = true;
+        showFieldErrors(payForm, {});
+        try {
+          await api(`/api/adhoc/projects/${P.id}/payments`, { method: 'POST', body: { amount: amountIn.value, mode: accountSel.value, paid_date: dateIn.value } });
+          toast('Payment recorded');
+          reload();
+        } catch (err) {
+          payErr.textContent = err.message;
+          payErr.hidden = false;
+          showFieldErrors(payForm, err.fields);
+        }
+      } },
+      payErr,
+      h('div', { class: 'form-grid' },
+        field('amount', `Amount received (${cur})`, amountIn),
+        field('mode', 'Account', accountSel),
+        field('paid_date', 'Date', dateIn)),
+      h('div', { class: 'form-actions' }, h('button', { class: 'btn small primary', type: 'submit' }, 'Add payment')));
+    const removePayment = async (id) => {
+      try { await api(`/api/adhoc/projects/${P.id}/payments/${id}`, { method: 'DELETE' }); reload(); } catch (err) { toast(err.message); }
+    };
+    const paymentBody = [
+      h('p', { class: 'hint' }, `Received ${money(A.paid, cur)} of ${money(A.total || 0, cur)}`),
+      A.payments.length ? h('ul', { class: 'card-group adhoc-list' }, A.payments.map((p) => h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, money(p.amount, cur)),
+          h('span', { class: 'row-sub' }, `${p.mode} \u00b7 ${fmtDate(p.paid_date)}`)),
+        billed ? null : h('button', { class: 'btn small', type: 'button', onclick: () => removePayment(p.id) }, 'Remove')))) : null,
+      billed || !owed ? null : payForm,
+    ];
+
+    // ----- stage 4: billed
     const markBilled = async () => {
       if (!(await confirm('Mark this order as billed? It will be closed.', { ok: 'Mark as billed', title: 'Mark as billed' }))) return;
       try {
@@ -613,72 +693,36 @@
         reload();
       } catch (err) { toast(err.message); }
     };
+    const billedBody = [
+      billed ? h('p', { class: 'hint' }, 'This order is billed and closed.')
+        : h('p', { class: 'hint' }, A.can_bill ? 'Everything is in place.' : 'Available once the material is issued and the payment is fully received.'),
+      billed ? null : h('button', { class: 'btn primary', type: 'button', disabled: !A.can_bill, onclick: markBilled }, 'Mark as billed'),
+    ];
 
-    const body = {
-      details: () => [
-        h('p', { class: 'hint' }, `${plural(P.adhoc_items.length, 'item', 'items')} \u00b7 ${money(P.estimated_amount || 0, cur)}`),
-        billed ? null : h('a', { class: 'btn small', href: `#p${P.id}/items` }, 'Edit details and items')],
-      material: () => [
-        h('ul', { class: 'card-group adhoc-list' }, A.materials.map((m) => h('li', { class: 'p-row' },
-          h('span', { class: 'p-main' },
-            h('span', { class: 'row-title' }, m.name),
-            h('span', { class: 'row-sub' }, `Need ${qty(m.needed)} \u00b7 issued ${qty(m.issued)} \u00b7 waiting ${qty(m.pending)} \u00b7 in stock ${qty(m.in_stock)}`)),
-          h('span', { class: 'chip ' + (m.done ? 'chip-role' : 'chip-off') }, m.done ? 'Issued' : (m.pending ? 'Requested' : 'To request'))))),
-        A.waiting_on_stock ? h('p', { class: 'hint' }, 'Paused here: the request is with inventory. What is short shows on its Restock list, and the order moves on once the stock is issued.') : null,
-        billed || !A.materials.some((m) => m.to_request > 0) ? null
-          : h('button', { class: 'btn small primary', type: 'button', onclick: requestMaterial }, 'Request material'),
-        h('a', { class: 'btn small', href: `#p${P.id}/materials` }, 'See requests')],
-      payment: () => [
-        h('p', { class: 'hint' }, `Received ${money(A.paid, cur)} of ${money(A.total || 0, cur)}`),
-        h('a', { class: 'btn small', href: `#p${P.id}/payments` }, 'Payment details')],
-      billed: () => [
-        billed ? h('p', { class: 'hint' }, 'This order is billed and closed.')
-          : h('p', { class: 'hint' }, A.can_bill ? 'Everything is in place.' : 'Available once the material is issued and the payment is fully received.'),
-        billed ? null : h('button', { class: 'btn small primary', type: 'button', disabled: !A.can_bill, onclick: markBilled }, 'Mark as billed')],
-    };
+    let deleteBtn = null;
+    if (data.dashboard.can_delete) {
+      deleteBtn = h('button', { class: 'btn danger dash-close', type: 'button' }, 'Delete order');
+      deleteBtn.onclick = async () => {
+        if (!(await confirm(`Delete ${P.code}? This cannot be undone.`, { ok: 'Delete', danger: true, title: 'Delete order' }))) return;
+        try { await api(`/api/projects/${P.id}`, { method: 'DELETE' }); toast('Order deleted'); location.hash = ''; } catch (err) { toast(err.message, true); }
+      };
+    }
 
-    return h('section', { class: 'p-section adhoc-stages' },
-      h('h3', {}, billed ? 'Billed' : 'Unbilled'),
-      A.stages.map((s, i) => h('div', { class: `adhoc-stage card${s.key === current ? ' is-current' : ''}${s.done ? ' is-done' : ''}` },
-        h('div', { class: 'adhoc-stage-head' },
-          h('span', { class: 'adhoc-stage-n' }, s.done ? '\u2713' : String(i + 1)),
-          h('strong', {}, s.label)),
-        h('div', { class: 'adhoc-stage-body' }, body[s.key]()))));
-  }
+    const stage = (i, label, content) => h('section', { class: `p-section adhoc-stage${A.stages[i].key === current ? ' is-current' : ''}${A.stages[i].done ? ' is-done' : ''}` },
+      h('div', { class: 'adhoc-stage-head' },
+        h('span', { class: 'adhoc-stage-n' }, A.stages[i].done ? '\u2713' : String(i + 1)),
+        h('h3', {}, label)),
+      h('div', { class: 'adhoc-stage-body' }, content));
 
-  /* An adhoc project's items, edited - the same boxes as when the order was taken, with Add more. */
-  function renderAdhocEdit(data) {
-    const P = data.project;
-    const c = data.client;
-    const editor = window.ADHOC.itemsEditor(data.adhoc_kind, P.adhoc_items, data.currency);
-    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save items');
-    const form = h('form', { novalidate: true, class: 'project-form',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        errorBox.hidden = true;
-        editor.showErrors({});
-        saveBtn.disabled = true;
-        try {
-          await api(`/api/adhoc/projects/${P.id}/items`, { method: 'PUT', body: { items: editor.getItems() } });
-          toast('Items saved');
-          window.location.hash = `#p${P.id}`;
-        } catch (err) {
-          errorBox.textContent = err.message;
-          errorBox.hidden = false;
-          (editor.showErrors(err.fields) || errorBox).scrollIntoView?.({ block: 'center' });
-          saveBtn.disabled = false;
-        }
-      } },
-      errorBox, editor.node, h('div', { class: 'form-actions' }, saveBtn));
     clear(view).append(h('div', { class: 'project-detail' },
-      ...projectHead(P, c),
-      projectTabs(P.id, '', data.dashboard.can_see_progress),
-      // The Projects page has no back arrow in its top bar (its bottom tab is the way out), so the way back to
-      // the project's Overview is right here (kohal, 2026-10-30: "no back button to go back to overview").
-      h('a', { class: 'back-link adhoc-back', href: `#p${P.id}` }, '← Back to overview'),
-      h('h3', {}, `Edit items · ${window.ADHOC.KIND_LABEL[data.adhoc_kind] || ''}`),
-      form));
+      h('a', { class: 'back-link adhoc-back', href: '#' }, '\u2190 Back to projects'),
+      h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
+      h('p', { class: 'hint' }, billed ? 'Billed and closed' : `Stage ${stageNo} of 4 \u00b7 ${A.stages[stageNo - 1].label}`),
+      stage(0, 'Fill details', detailsForm),
+      stage(1, 'Request material', materialBody),
+      stage(2, 'Payment details', paymentBody),
+      stage(3, 'Mark as billed', billedBody),
+      deleteBtn));
     window.scrollTo(0, 0);
   }
 
@@ -693,8 +737,7 @@
       return;
     }
     adhocProject = !!data.project.is_adhoc;
-    if (adhocProject && section === 'items') renderAdhocEdit(data);
-    else if (adhocProject && !ADHOC_TABS.includes(section)) renderDashboard(data);
+    if (adhocProject) renderAdhocPage(data);
     else if (section === 'payments') renderPayments(data);
     else if (section === 'materials') { renderMaterials(data); loadMaterialRequests(id); }
     else if (section === 'expense') renderExpense(data);
