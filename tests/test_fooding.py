@@ -541,3 +541,12 @@ def test_the_me_tile_counts_requests_waiting_on_you(app, accounts_client, admin_
     mine = accounts_client.get("/me").get_data(as_text=True)
     assert "1 to approve" in theirs and "1 to approve" not in mine
 
+
+def test_the_approver_chooses_the_account_the_money_is_debited_from(app, accounts_client, admin_client):
+    who, wid = daily_wage_user(app)
+    rid = _ask(accounts_client, wid)
+    bad = admin_client.post(f"/api/fooding/requests/{rid}/approve", json={"payment_mode": "Made up"})
+    assert bad.status_code == 422 and "payment_mode" in bad.get_json()["fields"]
+    assert admin_client.post(f"/api/fooding/requests/{rid}/approve", json={"payment_mode": "GR BOB"}).status_code == 200
+    entry = who.get("/api/fooding/me").get_json()["entries"][0]
+    assert entry["kind"] == "allot" and entry["payment_mode"] == "GR BOB"

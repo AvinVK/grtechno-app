@@ -6,11 +6,11 @@
 window.ADHOC = (() => {
   'use strict';
 
-  const { h, clear, api, toast, money, dateField, field, selectField, showFieldErrors } = window.LD;
+  const { h, clear, api, toast, money, dateField, field, selectField, searchField, showFieldErrors } = window.LD;
 
   const LABELS = {
     refilling: { type: 'FE type', weight: 'Weight' },
-    supply: { type: 'FE type or fire material', weight: 'Weight / spec' },
+    supply: { type: 'FE type or fire material' },
   };
   const KIND_LABEL = { refilling: 'Refilling of FE', supply: 'Supply of FE and Retail sale' };
 
@@ -28,31 +28,51 @@ window.ADHOC = (() => {
 
   /* The editable list. `initial` is the items to start with (an adhoc project's, when editing); a new order
      starts with one empty item. Returns { node, getItems(), showErrors(fields) }. */
-  function itemsEditor(kind, initial, currency) {
+  // `stock` is inventory's item list: a supplied item is picked from it, with a search (kohal, 2026-10-31: "the FE
+  // is already 4kg or 6kg in stock name in inventory, so just give a dropdown and search option from inventory").
+  // `gstRates` are the GST slabs to choose from; `charges` the order's installation / transportation charges.
+  function itemsEditor(kind, initial, currency, stock = [], gstRates = [0, 5, 12, 18, 28], charges = {}, locked = []) {
     const lab = LABELS[kind];
     const list = h('div', { class: 'adhoc-items' });
     const total = h('p', { class: 'adhoc-total' });
     const listErr = h('p', { class: 'err', role: 'alert' });
     const rows = [];
+    const num = (el) => Number(el.value) || 0;
+    const chargeBoxes = {
+      installation_charge: box('Installation charges', h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: charges.installation || '' }), false),
+      transport_charge: box('Transportation charges', h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: charges.transport || '' }), false),
+    };
+    const lineTotal = (r) => {
+      const base = num(r.c.qty.control) * num(r.c.rate.control);
+      return base + Math.round(base * num(r.c.gst_percent.control)) / 100;
+    };
 
     function recompute() {
-      const sum = rows.reduce((n, r) => n + (Number(r.c.qty.control.value) || 0) * (Number(r.c.rate.control.value) || 0), 0);
+      rows.forEach((r) => { r.sum.textContent = `Item total ${money(lineTotal(r), currency)}`; });
+      const sum = rows.reduce((n, r) => n + lineTotal(r), 0)
+        + num(chargeBoxes.installation_charge.control) + num(chargeBoxes.transport_charge.control);
       total.textContent = `Total ${money(sum, currency)}`;
     }
 
     function renumber() {
       rows.forEach((r, i) => {
         r.title.textContent = `Item ${i + 1}`;
-        r.remove.hidden = rows.length < 2;
+        r.remove.hidden = rows.length < 2 || !!r.locked;
       });
     }
 
     function addRow(v = {}) {
+      const picked = kind === 'supply' ? stock.find((m) => m.name.trim().toLowerCase() === (v.fe_type || '').trim().toLowerCase()) : null;
       const c = {
-        fe_type: box(lab.type, h('input', { type: 'text', value: v.fe_type || '', maxlength: 120, autocomplete: 'off' })),
-        weight: box(lab.weight, h('input', { type: 'text', value: v.weight || '', maxlength: 60, autocomplete: 'off' })),
+        fe_type: kind === 'supply'
+          ? box(lab.type, searchField(stock.map((m) => ({ value: m.id, label: `${m.name} (${m.stock_qty} ${m.unit || ''} in stock)`.trim() })),
+            picked ? picked.id : '', { placeholder: 'Search inventory\u2026' }))
+          : box(lab.type, h('input', { type: 'text', value: v.fe_type || '', maxlength: 120, autocomplete: 'off' })),
+        ...(kind === 'refilling' ? { weight: box(lab.weight, h('input', { type: 'text', value: v.weight || '', maxlength: 60, autocomplete: 'off' })) } : {}),
         qty: box('Qty', h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', value: v.qty ?? '' })),
-        rate: box('Rate', h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: v.rate ?? '' })),
+        rate: box('Selling price', h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: v.rate ?? '' })),
+        gst_percent: box('GST %', selectField(gstRates.map((r) => ({ value: String(r), label: `${r}%` })),
+          String(v.gst_percent ?? (v.fe_type ? 0 : 18)), { title: 'GST %', placeholder: 'Choose GST' })),
       };
       if (kind === 'refilling') {
         c.refill_date = box('Refilling date', dateField(v.refill_date || ''));
@@ -64,14 +84,15 @@ window.ADHOC = (() => {
       }
       const title = h('strong', {}, 'Item');
       const remove = h('button', { class: 'btn small', type: 'button' }, 'Remove');
-      const row = { c, title, remove };
+      const sum = h('p', { class: 'adhoc-total' });
+      const row = { c, title, remove, sum };
       const grid = h('div', { class: 'form-grid' },
         ...Object.entries(c).map(([key, b]) => {
-          if (key === 'remark') b.node.classList.add('wide');
-          if (key === 'fe_type') b.node.classList.add('wide');
+          // Qty and Selling price sit side by side (kohal, 2026-10-31); every other box takes the full width.
+          if (key !== 'qty' && key !== 'rate') b.node.classList.add('wide');
           return b.node;
         }));
-      row.node = h('section', { class: 'adhoc-item card' }, h('div', { class: 'adhoc-item-head' }, title, remove), grid);
+      row.node = h('section', { class: 'adhoc-item card' }, h('div', { class: 'adhoc-item-head' }, title, remove), grid, sum);
       remove.onclick = () => {
         rows.splice(rows.indexOf(row), 1);
         row.node.remove();
@@ -79,6 +100,14 @@ window.ADHOC = (() => {
         recompute();
       };
       row.node.addEventListener('input', recompute);
+      row.node.addEventListener('change', recompute);
+      // An item whose material has been requested is locked: nothing in it can change, and it can't be removed.
+      if (locked.includes((v.fe_type || '').trim().toLowerCase())) {
+        row.node.querySelectorAll('input, select, textarea, button').forEach((el) => { el.disabled = true; });
+        row.node.querySelectorAll('.name-suggest, .select-field, [role=combobox]').forEach((el) => el.setAttribute('aria-disabled', 'true'));
+        title.after(h('span', { class: 'chip chip-off' }, 'Requested · locked'));
+        row.locked = true;
+      }
       rows.push(row);
       list.append(row.node);
       renumber();
@@ -86,21 +115,36 @@ window.ADHOC = (() => {
     }
 
     (initial && initial.length ? initial : [{}]).forEach(addRow);
-    const addBtn = h('button', { class: 'btn', type: 'button', onclick: () => addRow() }, '+ Add more');
+    const addBtn = h('button', { class: 'btn', type: 'button', onclick: () => addRow() }, '+ Add more items');
 
     return {
-      node: h('div', { class: 'adhoc-editor' }, list, listErr, h('div', { class: 'adhoc-add' }, addBtn, total)),
+      node: h('div', { class: 'adhoc-editor' }, list, listErr, h('div', { class: 'adhoc-add' }, addBtn),
+        h('div', { class: 'adhoc-charges' },
+          h('h3', {}, 'Other charges'),
+          h('div', { class: 'form-grid', onchange: recompute, oninput: recompute }, chargeBoxes.installation_charge.node, chargeBoxes.transport_charge.node)),
+        h('div', { class: 'adhoc-add' }, total)),
       getItems: () => rows.map((r) => {
         const out = {};
         Object.entries(r.c).forEach(([key, b]) => { out[key] = b.control.value; });
+        if (kind === 'supply') {
+          // The inventory pick is held as an id; what is saved is the item's name (what is typed, if nothing was picked).
+          const m = stock.find((s) => String(s.id) === String(r.c.fe_type.control.value));
+          out.fe_type = m ? m.name : r.c.fe_type.control.querySelector('input').value;
+        }
         return out;
+      }),
+      getCharges: () => ({
+        installation_charge: chargeBoxes.installation_charge.control.value,
+        transport_charge: chargeBoxes.transport_charge.control.value,
       }),
       showErrors(fields) {
         rows.forEach((r) => Object.values(r.c).forEach((b) => { b.err.textContent = ''; }));
+        Object.values(chargeBoxes).forEach((b) => { b.err.textContent = ''; });
         listErr.textContent = '';
         let first = null;
         for (const [name, message] of Object.entries(fields || {})) {
           if (name === 'items') { listErr.textContent = message; first = first || listErr; continue; }
+          if (chargeBoxes[name]) { chargeBoxes[name].err.textContent = message; first = first || chargeBoxes[name].node; continue; }
           const m = /^items\.(\d+)\.(\w+)$/.exec(name);
           if (!m || !rows[Number(m[1])] || !rows[Number(m[1])].c[m[2]]) continue;
           const b = rows[Number(m[1])].c[m[2]];
@@ -118,7 +162,7 @@ window.ADHOC = (() => {
     return h('ul', { class: 'card-group adhoc-list' }, items.map((i) => h('li', { class: 'p-row' },
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, [i.fe_type, i.weight].filter(Boolean).join(' · ')),
-        h('span', { class: 'row-sub' }, `${i.qty} × ${money(i.rate, currency)}`),
+        h('span', { class: 'row-sub' }, `${i.qty} × ${money(i.rate, currency)}${i.gst_percent ? ` + ${i.gst_percent}% GST` : ''}`),
         kind === 'refilling' && (i.refill_date || i.hpt_date || i.expiry_date)
           ? h('span', { class: 'row-sub' }, [i.refill_date ? `Refilled ${fmtDate(i.refill_date)}` : null, i.hpt_date ? `HPT ${fmtDate(i.hpt_date)}` : null,
             i.expiry_date ? `Expires ${fmtDate(i.expiry_date)}` : null].filter(Boolean).join(' · ')) : null,
@@ -162,6 +206,7 @@ window.ADHOC = (() => {
       state.who = saved.who === 'existing' ? 'existing' : state.who;
       state.service = data.services.some((x) => x.key === saved.service) ? saved.service : '';
       state.draftItems = saved.items || [];
+      state.draftCharges = { installation: saved.charges && saved.charges.installation_charge, transport: saved.charges && saved.charges.transport_charge };
       nameIn.value = saved.name || '';
       addressIn.value = saved.address || '';
       phoneIn.value = saved.phone || '';
@@ -204,7 +249,8 @@ window.ADHOC = (() => {
       clear(itemsBox);
       editor = null;
       if (!state.service) { itemsBox.append(h('p', { class: 'hint' }, 'Choose what this order is for.')); return; }
-      editor = itemsEditor(state.service, state.draftItems || [], cur);
+      editor = itemsEditor(state.service, state.draftItems || [], cur, data.materials, data.gst_rates, state.draftCharges || {});
+      state.draftCharges = null;
       state.draftItems = null;
       itemsBox.append(h('h3', {}, state.service === 'refilling' ? 'Items to refill' : 'Items supplied'), editor.node,
         h('p', { class: 'hint' }, 'Next: request the material, then the payment details, then mark it billed. It stays Unbilled until then.'));
@@ -217,7 +263,7 @@ window.ADHOC = (() => {
         showFieldErrors(form, {});
         editor?.showErrors({});
         saveBtn.disabled = true;
-        const body = { service: state.service, items: editor ? editor.getItems() : [] };
+        const body = { service: state.service, items: editor ? editor.getItems() : [], ...(editor ? editor.getCharges() : {}) };
         if (state.who === 'existing') body.client_id = existingSel.value;
         else Object.assign(body, { name: nameIn.value, address: addressIn.value, phone: phoneIn.value });
         try {
@@ -230,7 +276,7 @@ window.ADHOC = (() => {
           errorBox.hidden = false;
           // The items' errors ('items.0.qty'...) belong to the editor's own boxes; the plain form fields go through
           // showFieldErrors (which looks them up by id, and an id with dots in it isn't a valid selector).
-          const plain = Object.fromEntries(Object.entries(err.fields || {}).filter(([k]) => !k.startsWith('items')));
+          const plain = Object.fromEntries(Object.entries(err.fields || {}).filter(([k]) => !k.startsWith('items') && !k.endsWith('_charge')));
           const first = showFieldErrors(form, plain);
           const firstItem = editor ? editor.showErrors(err.fields) : null;
           (first || firstItem || errorBox).scrollIntoView?.({ block: 'center' });
@@ -248,6 +294,7 @@ window.ADHOC = (() => {
         localStorage.setItem(DRAFT_KEY, JSON.stringify({
           who: state.who, service: state.service, name: nameIn.value, address: addressIn.value,
           phone: phoneIn.value, existingId: existingSel.value, items: editor ? editor.getItems() : [],
+          charges: editor ? editor.getCharges() : {},
         }));
       } catch (e) { /* storage full or blocked - the form still works, it just won't survive a refresh */ }
     }
@@ -261,7 +308,7 @@ window.ADHOC = (() => {
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, 'Add project')),
       opts.kindChips(),
-      h('p', { class: 'hint' }, 'Stage 1 of 4 \u00b7 Fill details'),
+      h('p', { class: 'hint' }, 'Stage 1 of 3 \u00b7 Fill details and request material'),
       restored ? h('p', { class: 'hint' }, 'What you had typed has been put back. ',
         h('button', { class: 'link-btn', type: 'button', onclick: () => { clearDraft(); showOrder(view, opts); } }, 'Start over')) : null,
       form));

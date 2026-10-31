@@ -390,6 +390,9 @@ class Project(db.Model):
     completion_days = db.Column(db.Integer, nullable=True)
     estimated_amount = db.Column(db.Numeric(14, 2), nullable=True)
     discount_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    # An adhoc order's installation and transportation charges (kohal, 2026-10-31) - added to its items in the value.
+    installation_charge = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    transport_charge = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     # Set at closing time, from the final on-site measurement - once present it's the figure that counts,
     # not the negotiated estimate (the work actually done can come in more or less than what was quoted).
     final_amount = db.Column(db.Numeric(14, 2), nullable=True)
@@ -543,18 +546,29 @@ class AdhocItem(db.Model):
     hpt_date = db.Column(db.Date, nullable=True)
     expiry_date = db.Column(db.Date, nullable=True)
     remark = db.Column(db.String(400), nullable=False, default="", server_default="")
+    # kohal, 2026-10-31: each item has a selling price (rate) and a GST slab; its total is qty x rate plus the GST.
+    gst_percent = db.Column(db.Numeric(5, 2), nullable=False, default=0, server_default="0")
 
     project = db.relationship("Project", back_populates="adhoc_items")
 
     @property
-    def amount(self):
+    def base_amount(self):
         return Decimal(self.qty) * self.rate
+
+    @property
+    def gst_amount(self):
+        return (self.base_amount * (self.gst_percent or 0) / Decimal("100")).quantize(Decimal("0.01"))
+
+    @property
+    def amount(self):
+        return self.base_amount + self.gst_amount
 
     def to_dict(self) -> dict:
         def day(d):
             return d.isoformat() if d else None
         return {
             "id": self.id, "fe_type": self.fe_type, "weight": self.weight, "qty": self.qty, "rate": float(self.rate),
+            "gst_percent": float(self.gst_percent or 0), "gst_amount": float(self.gst_amount),
             "amount": float(self.amount), "refill_date": day(self.refill_date), "hpt_date": day(self.hpt_date),
             "expiry_date": day(self.expiry_date), "remark": self.remark,
         }

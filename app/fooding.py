@@ -252,7 +252,7 @@ def list_requests():
         d["can_decide"] = e.created_by_code != g.user.code       # someone else asked - this person may decide
         d["is_mine"] = e.created_by_code == g.user.code
         rows.append(d)
-    return jsonify(pending=rows, history=[e.to_dict() for e in history],
+    return jsonify(pending=rows, history=[e.to_dict() for e in history], payment_modes=list(PAYMENT_MODES),
                    currency=settings_for_client()["currency"])
 
 
@@ -264,6 +264,13 @@ def _decide_request(entry_id, status):
     if entry.created_by_code == g.user.code:
         abort(403, "Someone else has to approve this - you made the request.")
     if status == "approved":
+        # The approver says which account the money is debited from (kohal, 2026-10-31); the one it was asked
+        # from is the starting point, used as is when nothing is sent.
+        payload = request.get_json(silent=True) if request.is_json else None
+        mode = payload.get("payment_mode") if isinstance(payload, dict) and payload.get("payment_mode") else entry.payment_mode
+        if mode not in PAYMENT_MODES:
+            return jsonify(error="Choose the account the money is paid from", fields={"payment_mode": "Choose the account the money is paid from"}), 422
+        entry.payment_mode = mode
         account = account_for(entry.account.worker, create=True)
         account.allotted_total += entry.amount
         entry.entry_date = today_local()              # the day the money was actually credited

@@ -33,6 +33,7 @@ PROJECT_DOCUMENT_TYPES = [
 # shows, and the name of the Service row (see Service in models.py) the adhoc project is filed under.
 # An adhoc project is not "running": it waits Unbilled until the stock for its items has been issued from
 # inventory, then it is Billed and closed (kohal, 2026-10-31).
+ADHOC_GST_RATES = [0, 5, 12, 18, 28]      # the GST slabs offered on an adhoc item
 ADHOC_STATUSES = ["unbilled", "billed"]
 
 ADHOC_SERVICES = [

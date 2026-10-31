@@ -243,12 +243,44 @@
     const cur = data.currency;
     const waiting = data.pending.filter((p) => p.can_decide).length;
 
-    async function act(r, action, doneText) {
+    async function act(r, action, doneText, body) {
       try {
-        await api(`/api/fooding/requests/${r.id}/${action}`, { method: 'POST' });
+        await api(`/api/fooding/requests/${r.id}/${action}`, { method: 'POST', body: body || {} });
         toast(doneText);
         await showRequests();
       } catch (err) { toast(err.message, true); }
+    }
+
+    // The approver picks the account the money is debited from (kohal, 2026-10-31), starting from the one asked for.
+    function openApproveSheet(r) {
+      const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+      const modeSel = selectField(data.payment_modes, r.payment_mode, { title: 'Account', placeholder: 'Choose an account' });
+      const errEl = h('p', { class: 'err', role: 'alert' });
+      const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+      const okBtn = h('button', { class: 'btn primary', type: 'button' }, 'Approve');
+      const finish = closeOnBack(() => overlay.remove());
+      overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+      cancelBtn.onclick = () => finish();
+      okBtn.onclick = async () => {
+        if (!modeSel.value) { errEl.textContent = 'Choose the account the money is paid from'; return; }
+        okBtn.disabled = true;
+        try {
+          await api(`/api/fooding/requests/${r.id}/approve`, { method: 'POST', body: { payment_mode: modeSel.value } });
+          finish();
+          toast('Approved');
+          await showRequests();
+        } catch (err) {
+          errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+          okBtn.disabled = false;
+        }
+      };
+      overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+        h('h2', {}, 'Approve fooding'),
+        h('p', { class: 'hint' }, `${r.worker_name} · ${money(r.amount, cur)}`),
+        field('payment_mode', 'Paid from account', modeSel),
+        errEl,
+        h('div', { class: 'confirm-actions' }, cancelBtn, okBtn)));
+      document.body.append(overlay);
     }
 
     const activeRow = (r) => h('li', { class: 'card approval-row' },
@@ -257,7 +289,7 @@
         h('span', { class: 'hint' }, [r.payment_mode, `asked by ${r.created_by_name || 'someone'}`, fmtDate(r.entry_date)].join(' \u00b7 ')),
         r.is_mine ? h('span', { class: 'hint' }, 'Waiting for the other of admin / accountant to approve') : null),
       h('div', { class: 'approval-actions' },
-        r.can_decide ? h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve', 'Approved') }, 'Approve') : null,
+        r.can_decide ? h('button', { class: 'btn small primary', type: 'button', onclick: () => openApproveSheet(r) }, 'Approve') : null,
         r.can_decide ? h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject', 'Rejected') }, 'Reject') : null,
         r.is_mine ? h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'cancel', 'Request withdrawn') }, 'Withdraw') : null));
 

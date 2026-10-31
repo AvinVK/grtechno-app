@@ -590,14 +590,17 @@
     const billed = P.status === 'billed';
     const reload = () => showDetail(P.id, '');
     const current = billed ? null : (A.stages.find((s) => !s.done) || {}).key;
-    const stageNo = billed ? 4 : A.stages.findIndex((s) => !s.done) + 1;
+    const stageNo = billed ? 3 : A.stages.findIndex((s) => !s.done) + 1;
     const qty = (n) => String(Number(n.toFixed(2)));
     LD.setAppbarBack?.('Projects', '#');
 
     // ----- stage 1: the details
-    const editor = window.ADHOC.itemsEditor(data.adhoc_kind, P.adhoc_items, cur);
+    const editor = window.ADHOC.itemsEditor(data.adhoc_kind, P.adhoc_items, cur, data.adhoc_stock, undefined, data.adhoc_charges, data.adhoc_locked);
     const detailsErr = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit', disabled: billed }, 'Save changes');
+    // Stage 1's button saves the details and goes straight on to asking for the material (kohal, 2026-10-31: "instead
+    // of save changes button after stage 1, show request materials"); once everything is issued or requested it is just Save.
+    const allIssued = A.materials.length > 0 && A.materials.every((m) => m.to_request <= 0);
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit', disabled: billed }, allIssued ? 'Save changes' : 'Request material');
     const detailsForm = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
         e.preventDefault();
@@ -605,9 +608,14 @@
         editor.showErrors({});
         saveBtn.disabled = true;
         try {
-          await api(`/api/adhoc/projects/${P.id}/items`, { method: 'PUT', body: { items: editor.getItems() } });
+          await api(`/api/adhoc/projects/${P.id}/items`, { method: 'PUT', body: { items: editor.getItems(), ...editor.getCharges() } });
           toast('Details saved');
-          reload();
+          if (allIssued) { reload(); return; }
+          const [fresh, stock] = await Promise.all([api(`/api/projects/${P.id}`), api(`/api/projects/${P.id}/material-requests`)]);
+          const todo = fresh.adhoc.materials.filter((m) => m.to_request > 0).map((m) => ({ fe_type: m.name, qty: m.to_request }));
+          if (!todo.length) { reload(); return; }
+          openRequestOrderMaterial(P.id, stock.materials, reload, todo);
+          saveBtn.disabled = false;
         } catch (err) {
           detailsErr.textContent = err.message;
           detailsErr.hidden = false;
@@ -625,14 +633,7 @@
       billed ? null : h('div', { class: 'form-actions' }, saveBtn));
     if (billed) detailsForm.querySelectorAll('input, textarea, button').forEach((el) => { el.disabled = true; });
 
-    // ----- stage 2: material
-    const requestMaterial = async () => {
-      try {
-        const res = await api(`/api/projects/${P.id}/material-requests`);
-        const todo = A.materials.filter((m) => m.to_request > 0).map((m) => ({ fe_type: m.name, qty: m.to_request }));
-        openRequestOrderMaterial(P.id, res.materials, reload, todo);
-      } catch (err) { toast(err.message); }
-    };
+    // Where each item's material stands - shown under the details, in the same first stage.
     const materialBody = [
       h('ul', { class: 'card-group adhoc-list' }, A.materials.map((m) => h('li', { class: 'p-row' },
         h('span', { class: 'p-main' },
@@ -640,8 +641,6 @@
           h('span', { class: 'row-sub' }, `Need ${qty(m.needed)} \u00b7 issued ${qty(m.issued)} \u00b7 waiting ${qty(m.pending)} \u00b7 in stock ${qty(m.in_stock)}`)),
         h('span', { class: 'chip ' + (m.done ? 'chip-role' : 'chip-off') }, m.done ? 'Issued' : (m.pending ? 'Requested' : 'To request'))))),
       A.waiting_on_stock ? h('p', { class: 'hint' }, 'Paused here: the request is with inventory. What is short shows on its Restock list, and the order moves on once the stock is issued.') : null,
-      billed || !A.materials.some((m) => m.to_request > 0) ? null
-        : h('button', { class: 'btn small primary', type: 'button', onclick: requestMaterial }, 'Request material'),
     ];
 
     // ----- stage 3: payment
@@ -717,11 +716,18 @@
     clear(view).append(h('div', { class: 'project-detail' },
       h('a', { class: 'back-link adhoc-back', href: '#' }, '\u2190 Back to projects'),
       h('div', { class: 'p-head' }, h('h2', {}, P.code), statusChip(P.status)),
-      h('p', { class: 'hint' }, billed ? 'Billed and closed' : `Stage ${stageNo} of 4 \u00b7 ${A.stages[stageNo - 1].label}`),
-      stage(0, 'Fill details', detailsForm),
-      stage(1, 'Request material', materialBody),
-      stage(2, 'Payment details', paymentBody),
-      stage(3, 'Mark as billed', billedBody),
+      h('p', { class: 'hint' }, billed ? 'Billed and closed' : `Stage ${stageNo} of 3 \u00b7 ${A.stages[stageNo - 1].label}`),
+      stage(0, 'Fill details and request material', (() => {
+        const body = [detailsForm, A.materials.some((m) => m.issued || m.pending) ? materialBody : null];
+        // Once this stage is done the items fold away (kohal, 2026-10-31); tap to open them again.
+        return A.stages[0].done
+          ? h('details', { class: 'stage-section' },
+            h('summary', { class: 'stage-section-title' }, `${plural(P.adhoc_items.length, 'item', 'items')} · ${money(P.estimated_amount || 0, cur)}`),
+            h('div', { class: 'stage-section-body' }, body))
+          : body;
+      })()),
+      stage(1, 'Payment details', paymentBody),
+      stage(2, 'Mark as billed', billedBody),
       deleteBtn));
     window.scrollTo(0, 0);
   }
@@ -1807,7 +1813,7 @@
       const err = h('p', { class: 'err', role: 'alert' });
       const node = h('div', { class: 'order-material-row' },
         h('label', { class: 'check-row order-material-name' }, tick, h('span', {}, i.fe_type),
-          h('span', { class: 'hint' }, stocked ? `${stocked.stock_qty} ${stocked.unit || ''} in stock`.trim() : 'Not stocked - will be flagged for restock')),
+          h('span', { class: 'hint' }, stocked ? `${stocked.stock_qty} ${stocked.unit || ''} in stock`.trim() : 'Not in stock')),
         h('div', { class: 'field' }, h('label', {}, 'Quantity'), qty, err));
       return { item: i, stocked, tick, qty, err, node };
     });
@@ -1835,7 +1841,10 @@
               sent += 1;
               r.tick.checked = false;
             } catch (err) {
-              r.err.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+              // The banner says what went wrong for this item, not the server's generic "Check the highlighted fields".
+              const why = (err.fields && Object.values(err.fields)[0]) || err.message;
+              r.err.textContent = why;
+              err.message = `${r.item.fe_type}: ${why}`;
               throw err;
             }
           }

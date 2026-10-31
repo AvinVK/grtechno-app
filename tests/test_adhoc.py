@@ -8,7 +8,7 @@ from app.models import AdhocItem, Client, Project
 
 REFILL = {"fe_type": "ABC 4 kg", "weight": "4 kg", "qty": 3, "rate": "450", "refill_date": "2026-10-20",
           "hpt_date": "2026-09-01", "expiry_date": "2027-10-20", "remark": "Dented"}
-SUPPLY = {"fe_type": "CO2", "weight": "4.5 kg", "qty": 2, "rate": "3200.50"}
+SUPPLY = {"fe_type": "CO2", "qty": 2, "rate": "3200.50", "gst_percent": 0}
 
 
 def order(admin_client, **over):
@@ -31,6 +31,7 @@ def test_a_new_adhoc_client_and_its_project_are_created_together(admin_client):
 
 
 def test_supply_has_no_refill_dates_and_the_value_is_qty_times_rate(admin_client):
+    _stock_item("CO2"), _stock_item("Fire blanket")
     res = order(admin_client, service="supply", items=[SUPPLY, {**SUPPLY, "fe_type": "Fire blanket", "qty": 1, "rate": 800}])
     assert res.status_code == 201
     p = db.session.get(Project, res.get_json()["project_id"])
@@ -40,6 +41,7 @@ def test_supply_has_no_refill_dates_and_the_value_is_qty_times_rate(admin_client
 
 
 def test_the_contact_number_is_the_key_so_a_repeat_goes_through_the_existing_client(admin_client):
+    _stock_item("CO2")
     first = order(admin_client).get_json()
     dup = order(admin_client, phone="+91 9876543210")
     assert dup.status_code == 422 and "phone" in dup.get_json()["fields"]
@@ -185,11 +187,17 @@ def test_an_adhoc_project_can_only_ask_for_the_items_on_its_own_order(admin_clie
     other = _stock_item("Cement")
     assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": other, "quantity": 1}).status_code == 422
     assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "Anything else", "quantity": 1}).status_code == 422
-    # The order's own item by name, even when it is not stocked yet: allowed, and added to inventory for restock.
-    ok = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "abc 4 kg", "quantity": 3})
-    assert ok.status_code == 201, ok.get_json()
-    from app.models import Material
-    assert Material.query.filter_by(name="abc 4 kg").count() == 1 and float(Material.query.filter_by(name="abc 4 kg").one().stock_qty) == 0
+    # The order's own item, by name: refused when it is not in stock, or when more than the stock is asked for;
+    # nothing is requested then (kohal, 2026-10-31).
+    short = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "abc 4 kg", "quantity": 3})
+    assert short.status_code == 422 and "in stock" in short.get_json()["fields"]["quantity"]
+    mid = _stock_item("ABC 4 kg")                                  # 5 in stock
+    over = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mid, "quantity": 6})
+    assert over.status_code == 422 and over.get_json()["fields"]["quantity"] == "Only 5 in stock"
+    zero = admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mid, "quantity": 0})
+    assert zero.status_code == 422 and zero.get_json()["fields"]["quantity"] == "Quantity can't be zero"
+    assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mid, "quantity": 3}).status_code == 201
+    assert len(_asked(pid)) == 1
 
 
 # ---------- the four stages (kohal, 2026-10-31) ----------
@@ -202,7 +210,7 @@ def test_saving_the_details_is_stage_one_and_requests_nothing(admin_client):
     pid = order(admin_client).get_json()["project_id"]
     assert db.session.get(Project, pid).status == "unbilled"
     a = _stages(admin_client, pid)
-    assert [(x["key"], x["done"]) for x in a["stages"]] == [("details", True), ("material", False), ("payment", False), ("billed", False)]
+    assert [(x["key"], x["done"]) for x in a["stages"]] == [("details", False), ("payment", False), ("billed", False)]
     assert _asked(pid) == [] and a["can_bill"] is False
     assert [(m["name"], m["needed"], m["to_request"]) for m in a["materials"]] == [("ABC 4 kg", 3, 3.0)]
 
@@ -217,12 +225,12 @@ def test_a_request_pauses_the_material_stage_until_it_is_issued(admin_client):
     _stock_item("ABC 4 kg")
     assert admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_name": "ABC 4 kg", "quantity": 3}).status_code == 201
     a = _stages(admin_client, pid)
-    assert a["stages"][1]["done"] is False and a["waiting_on_stock"] is True
+    assert a["stages"][0]["done"] is False and a["waiting_on_stock"] is True
     assert a["materials"][0]["pending"] == 3 and a["materials"][0]["to_request"] == 0
     _asked(pid)[0].status = "approved"
     db.session.commit()
     a = _stages(admin_client, pid)
-    assert a["stages"][1]["done"] is True and a["waiting_on_stock"] is False and a["materials"][0]["issued"] == 3
+    assert a["stages"][0]["done"] is True and a["waiting_on_stock"] is False and a["materials"][0]["issued"] == 3
 
 
 def _issue_and_pay(admin_client, pid, paid=1350):
@@ -249,7 +257,7 @@ def test_it_stays_unbilled_until_marked_billed_and_only_once_the_first_three_sta
     p.payments[0].amount = 1350
     db.session.commit()
     a = _stages(admin_client, pid)
-    assert [x["done"] for x in a["stages"]] == [True, True, True, False] and a["can_bill"] is True
+    assert [x["done"] for x in a["stages"]] == [True, True, False] and a["can_bill"] is True
     assert db.session.get(Project, pid).status == "unbilled"          # everything is in place, but nobody has billed it
     ok = admin_client.post(f"/api/adhoc/projects/{pid}/bill")
     assert ok.status_code == 200 and db.session.get(Project, pid).status == "billed"
@@ -277,12 +285,12 @@ def test_payments_are_recorded_on_the_order_into_one_of_the_accounts(admin_clien
     ok = admin_client.post(url, json={"amount": "500", "mode": "GR BB", "paid_date": "2026-10-31"})
     assert ok.status_code == 201
     a = ok.get_json()["adhoc"]
-    assert a["paid"] == 500 and a["stages"][2]["done"] is False
+    assert a["paid"] == 500 and a["stages"][1]["done"] is False
     assert [(x["amount"], x["mode"], x["paid_date"]) for x in a["payments"]] == [(500, "GR BB", "2026-10-31")]
     done = admin_client.post(url, json={"amount": "850", "mode": "CASH"}).get_json()["adhoc"]
-    assert done["stages"][2]["done"] is True
+    assert done["stages"][1]["done"] is True
     gone = admin_client.delete(f"{url}/{done['payments'][0]['id']}").get_json()["adhoc"]
-    assert gone["paid"] == 850 and gone["stages"][2]["done"] is False
+    assert gone["paid"] == 850 and gone["stages"][1]["done"] is False
 
 
 def test_a_billed_order_takes_no_more_payments(admin_client):
@@ -290,3 +298,44 @@ def test_a_billed_order_takes_no_more_payments(admin_client):
     db.session.get(Project, pid).status = "billed"
     db.session.commit()
     assert admin_client.post(f"/api/adhoc/projects/{pid}/payments", json={"amount": "1", "mode": "GR BB"}).status_code == 409
+
+
+def test_supplied_items_come_from_inventory_with_gst_and_the_charges_are_added(admin_client):
+    _stock_item("ABC 4 kg"), _stock_item("ABC 6 kg")
+    # Not in inventory -> refused; a GST rate outside the slabs -> refused.
+    bad = order(admin_client, service="supply", items=[{"fe_type": "Made up", "qty": 1, "rate": "100", "gst_percent": 18},
+                                                       {"fe_type": "ABC 4 kg", "qty": 1, "rate": "100", "gst_percent": 7}])
+    f = bad.get_json()["fields"]
+    assert bad.status_code == 422 and f["items.0.fe_type"] == "Choose the item from inventory" and "items.1.gst_percent" in f
+    ok = order(admin_client, service="supply", installation_charge="250", transport_charge="100.50", items=[
+        {"fe_type": "abc 4 kg", "qty": 2, "rate": "1000", "gst_percent": 18},       # 2000 + 360
+        {"fe_type": "ABC 6 kg", "qty": 1, "rate": "500", "gst_percent": 5}])         # 500 + 25
+    assert ok.status_code == 201, ok.get_json()
+    p = db.session.get(Project, ok.get_json()["project_id"])
+    assert [float(i.amount) for i in p.adhoc_items] == [2360.0, 525.0]
+    assert float(p.installation_charge) == 250.0 and float(p.transport_charge) == 100.5
+    assert float(p.estimated_amount) == 2360 + 525 + 250 + 100.5
+    # editing keeps the same sums, and the detail carries the stock list and the charges
+    put = admin_client.put(f"/api/adhoc/projects/{p.id}/items", json={"items": [
+        {"fe_type": "ABC 4 kg", "qty": 1, "rate": "1000", "gst_percent": 18}], "installation_charge": "", "transport_charge": ""})
+    assert put.status_code == 200 and put.get_json()["estimated_amount"] == 1180.0
+    detail = admin_client.get(f"/api/projects/{p.id}").get_json()
+    assert detail["adhoc_charges"] == {"installation": 0.0, "transport": 0.0}
+    assert {m["name"] for m in detail["adhoc_stock"]} >= {"ABC 4 kg", "ABC 6 kg"}
+
+
+def test_an_item_is_locked_once_its_material_is_requested(admin_client):
+    _stock_item("ABC 4 kg"), _stock_item("ABC 6 kg")
+    a = {"fe_type": "ABC 4 kg", "qty": 2, "rate": "1000", "gst_percent": 18}
+    b = {"fe_type": "ABC 6 kg", "qty": 1, "rate": "500", "gst_percent": 5}
+    pid = order(admin_client, service="supply", items=[a, b]).get_json()["project_id"]
+    url = f"/api/adhoc/projects/{pid}/items"
+    assert admin_client.get(f"/api/projects/{pid}").get_json()["adhoc_locked"] == []
+    assert admin_client.put(url, json={"items": [{**a, "qty": 3}, b]}).status_code == 200      # nothing requested yet
+    mid = _stock_item("ABC 4 kg")
+    admin_client.post(f"/api/projects/{pid}/material-requests", json={"material_id": mid, "quantity": "3"})
+    assert admin_client.get(f"/api/projects/{pid}").get_json()["adhoc_locked"] == ["abc 4 kg"]
+    assert admin_client.put(url, json={"items": [{**a, "qty": 5}, b]}).status_code == 409       # edited
+    assert admin_client.put(url, json={"items": [b]}).status_code == 409                       # removed
+    ok = admin_client.put(url, json={"items": [{**a, "qty": 3}, {**b, "qty": 4}, b]})           # the other one is free
+    assert ok.status_code == 200

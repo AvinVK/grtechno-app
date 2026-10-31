@@ -1886,7 +1886,12 @@ details[open] > summary.stage-section-title { border-bottom: 1px solid var(--lin
 .adhoc-items { display: grid; gap: 12px; }
 .adhoc-item { padding: 12px 14px; display: grid; gap: 10px; }
 .adhoc-item-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.adhoc-add { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.adhoc-editor { display: grid; gap: 16px; }
+.adhoc-item .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }   /* two columns on a phone too, for Qty | Selling price */
+.adhoc-editor > .err:empty { display: none; }
+.adhoc-charges { display: grid; gap: 10px; }
+.adhoc-charges h3 { margin: 0; }
+.adhoc-add { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .adhoc-total { margin: 0; font-weight: 600; }
 button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: pointer; text-align: left; padding: 14px 16px; }
 .chooser-row .approval-main { gap: 2px; }

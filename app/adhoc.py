@@ -21,7 +21,7 @@ from flask import Blueprint, abort, g, jsonify, request
 from sqlalchemy import func
 
 from .auth import visible_clients, visible_projects
-from .constants import ADHOC_SERVICES, ADHOC_STATUSES, PAYMENT_ACCOUNTS
+from .constants import ADHOC_GST_RATES, ADHOC_SERVICES, ADHOC_STATUSES, PAYMENT_ACCOUNTS
 from .extensions import db
 from .models import AdhocItem, Client, Material, MaterialMovement, Project, ProjectPayment, Service, settings_for_client, utcnow
 from .modules import has_module
@@ -73,6 +73,20 @@ def _service_for(key):
     return service
 
 
+def stock_options():
+    """The inventory items an order's supply lines are picked from - same shape as the request-material list."""
+    return [{"id": m.id, "code": m.code, "name": m.name, "unit": m.unit, "stock_qty": float(m.stock_qty)}
+            for m in Material.query.filter_by(is_active=True).order_by(Material.name)]
+
+
+def _clean_charges(payload):
+    """Installation and transportation charges - optional, blank means none."""
+    f = Fields(payload)
+    f.money("installation_charge", nullable=False)
+    f.money("transport_charge", nullable=False)
+    return (f.data.get("installation_charge", Decimal("0.00")), f.data.get("transport_charge", Decimal("0.00")), f.errors)
+
+
 def _clean_items(raw, kind):
     """The order's lines, checked. Returns (items, errors) - errors keyed 'items' for the whole list or
     'items.<n>.<field>' for one box, so the form can put each message under the right field."""
@@ -82,14 +96,26 @@ def _clean_items(raw, kind):
     if len(raw) > MAX_ITEMS:
         return [], {"items": f"At most {MAX_ITEMS} items in one order"}
     items = []
+    stocked = {m["name"].strip().lower() for m in stock_options()} if kind == "supply" else set()
     for n, row in enumerate(raw):
         row = row if isinstance(row, dict) else {}
         f = Fields(row)
         f.text("fe_type", 120, required=True, label="the FE type" if kind == "refilling" else "the FE type or fire material")
-        f.text("weight", 60, required=True, label="the weight" if kind == "refilling" else "the weight or spec")
+        if kind == "refilling":
+            f.text("weight", 60, required=True, label="the weight")
         f.text("remark", 400)
         for key, message in f.errors.items():
             errors[f"items.{n}.{key}"] = message
+        # A supplied item is picked from inventory (kohal, 2026-10-31) - its name already says the size.
+        if kind == "supply" and "fe_type" not in f.errors and f.data.get("fe_type", "").strip().lower() not in stocked:
+            errors[f"items.{n}.fe_type"] = "Choose the item from inventory"
+        try:
+            gst = Decimal(str(row.get("gst_percent") if row.get("gst_percent") not in (None, "") else 0).strip())
+            if gst not in [Decimal(r) for r in ADHOC_GST_RATES]:
+                raise InvalidOperation
+        except (InvalidOperation, ValueError):
+            errors[f"items.{n}.gst_percent"] = "Choose a GST rate"
+            gst = None
         try:
             qty = int(str(row.get("qty")).strip())
             if not 1 <= qty <= MAX_QTY:
@@ -103,9 +129,9 @@ def _clean_items(raw, kind):
                 raise InvalidOperation
             rate = rate.quantize(Decimal("0.01"))
         except (InvalidOperation, TypeError, ValueError):
-            errors[f"items.{n}.rate"] = "Enter the rate as a number"
+            errors[f"items.{n}.rate"] = "Enter the selling price as a number"
             rate = None
-        item = {"fe_type": f.data.get("fe_type", ""), "weight": f.data.get("weight", ""), "qty": qty, "rate": rate,
+        item = {"fe_type": f.data.get("fe_type", ""), "weight": f.data.get("weight", ""), "qty": qty, "rate": rate, "gst_percent": gst,
                 "remark": f.data.get("remark", ""), "refill_date": None, "hpt_date": None, "expiry_date": None}
         if kind == "refilling":
             # Every box but the remark is required (kohal, 2026-10-30: "these should also be mandatory").
@@ -124,10 +150,38 @@ def _clean_items(raw, kind):
     return items, errors
 
 
-def _fill(project, items):
-    """Replace a project's lines and bring its value in line with them."""
+def requested_names(project):
+    """Lower-cased names of the order's items whose material has been requested (waiting or issued) - those lines
+    are locked (kohal, 2026-10-31: "once the material is requested, that item should be locked")."""
+    names = set()
+    for m in MaterialMovement.query.filter_by(project_id=project.id, kind="out").all():
+        if m.status in ("pending", "approved"):
+            names.add(m.material.name.strip().lower())
+    return names
+
+
+def _locked_changed(project, items):
+    """True if a requested line was edited, removed or replaced: the submitted lines must still hold each one exactly."""
+    locked = requested_names(project)
+    def sig(fe_type, qty, rate, gst):
+        return (fe_type.strip().lower(), int(qty), Decimal(rate), Decimal(gst))
+    have = [sig(i["fe_type"], i["qty"], i["rate"], i["gst_percent"]) for i in items]
+    for line in project.adhoc_items:
+        if line.fe_type.strip().lower() in locked:
+            want = sig(line.fe_type, line.qty, line.rate, line.gst_percent)
+            if want in have:
+                have.remove(want)
+            else:
+                return True
+    return False
+
+
+def _fill(project, items, installation=Decimal("0.00"), transport=Decimal("0.00")):
+    """Replace a project's lines and bring its value in line with them: every line with its GST, plus the
+    installation and transportation charges."""
     project.adhoc_items = [AdhocItem(position=i, **item) for i, item in enumerate(items, start=1)]
-    project.estimated_amount = sum((item["qty"] * item["rate"] for item in items), Decimal("0")).quantize(Decimal("0.01"))
+    project.installation_charge, project.transport_charge = installation, transport
+    project.estimated_amount = (sum((i.amount for i in project.adhoc_items), Decimal("0")) + installation + transport).quantize(Decimal("0.01"))
 
 
 def stage_info(project):
@@ -168,11 +222,13 @@ def stage_info(project):
                       "paid_date": p.paid_date.isoformat() if p.paid_date else None}
                      for p in project.payments if p.paid_date is not None],
         "stages": [
-            {"key": "details", "label": "Fill details", "done": details_done},
-            {"key": "material", "label": "Request material", "done": material_done},
+            # Requesting the material is part of stage 1 (kohal, 2026-10-31: the separate stage is not needed) - it is
+            # done once the details are in and every item has been issued.
+            {"key": "details", "label": "Fill details and request material", "done": details_done and material_done},
             {"key": "payment", "label": "Payment details", "done": payment_done},
             {"key": "billed", "label": "Mark as billed", "done": billed},
         ],
+        "material_done": material_done,
         "can_bill": details_done and material_done and payment_done and not billed,
     }
 
@@ -193,6 +249,7 @@ def list_adhoc_clients():
     return jsonify(clients=[{"id": c.id, "name": c.name, "phone": _digits(c.phone) or c.phone, "address": c.address,
                               "orders": len(c.projects)} for c in rows],
                    services=[{"key": k, "label": label} for k, label, _ in ADHOC_SERVICES],
+                   materials=stock_options(), gst_rates=ADHOC_GST_RATES,
                    currency=settings_for_client()["currency"])
 
 
@@ -210,6 +267,8 @@ def create_order():
         errors["service"] = "Choose supply or refilling"
     items, item_errors = _clean_items(payload.get("items"), service_key if service_key in SERVICE_BY_KEY else "supply")
     errors.update(item_errors)
+    installation, transport, charge_errors = _clean_charges(payload)
+    errors.update(charge_errors)
 
     client = None
     raw_id = payload.get("client_id")
@@ -246,7 +305,7 @@ def create_order():
         site_address=client.address, status=ADHOC_STATUSES[0], owner_code=g.user.code,
         work_category=_service_name, services=[_service_for(service_key)],
     )
-    _fill(project, items)
+    _fill(project, items, installation, transport)
     db.session.add(project)
     db.session.commit()
     return jsonify(client_id=client.id, project_id=project.id), 201
@@ -262,9 +321,13 @@ def replace_items(project_id):
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
     items, errors = _clean_items(payload.get("items"), _adhoc_kind(project))
+    installation, transport, charge_errors = _clean_charges(payload)
+    errors.update(charge_errors)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    _fill(project, items)
+    if _locked_changed(project, items):
+        abort(409, "An item whose material has been requested is locked - it can't be changed or removed.")
+    _fill(project, items, installation, transport)
     db.session.commit()
     return jsonify(items=[i.to_dict() for i in project.adhoc_items], estimated_amount=float(project.estimated_amount),
                    kind=_adhoc_kind(project), currency=settings_for_client()["currency"])
@@ -280,9 +343,9 @@ def mark_billed(project_id):
     if project.status == "billed":
         return jsonify(error="This order is already billed."), 409
     info = stage_info(project)
-    if not info["stages"][1]["done"]:
+    if not info["material_done"]:
         abort(422, "Issue the material from inventory first.")
-    if not info["stages"][2]["done"]:
+    if not info["stages"][1]["done"]:
         abort(422, "The payment has not been fully received yet.")
     project.status = "billed"
     project.completed_at = utcnow()
