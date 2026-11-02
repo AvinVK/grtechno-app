@@ -511,7 +511,9 @@ window.LD = (() => {
     const part = (v) => encodeURIComponent(v).replace(/%40/g, '@');
     // 'noamount' leaves the amount and note out, for when the app declines a payment that arrives with them filled in.
     const bare = via === 'noamount';
-    const q = [['pa', upi], ['pn', name], ['am', bare ? '' : Number(amount).toFixed(2)], ['cu', 'INR'], ['tn', bare ? '' : note]]
+    // mc=0000 says the payee is a person, not a business; tr is a reference that is new for every attempt (UPI links carry
+    // both, and a link without them to a personal ID is one thing UPI apps are quick to refuse - kohal, 2026-11-02).
+    const q = [['pa', upi], ['pn', name], ['am', bare ? '' : Number(amount).toFixed(2)], ['mc', '0000'], ['tr', `GT${Date.now()}`], ['cu', 'INR'], ['tn', bare ? '' : note]]
       .filter(([, v]) => v).map(([k, v]) => `${k}=${part(v)}`).join('&');
     if (via === 'upi') return `upi://pay?${q}`;
     if (/Android/i.test(navigator.userAgent) && app.androidPackage) return `intent://pay?${q}#Intent;scheme=upi;package=${app.androidPackage};end`;
