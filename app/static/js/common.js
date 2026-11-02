@@ -509,7 +509,9 @@ window.LD = (() => {
      via === 'upi' is the plain UPI link instead, which lists every UPI app on the phone to choose from. */
   function payLink(app, { upi, name, amount, note }, via) {
     const part = (v) => encodeURIComponent(v).replace(/%40/g, '@');
-    const q = [['pa', upi], ['pn', name], ['am', Number(amount).toFixed(2)], ['cu', 'INR'], ['tn', note]]
+    // 'noamount' leaves the amount and note out, for when the app declines a payment that arrives with them filled in.
+    const bare = via === 'noamount';
+    const q = [['pa', upi], ['pn', name], ['am', bare ? '' : Number(amount).toFixed(2)], ['cu', 'INR'], ['tn', bare ? '' : note]]
       .filter(([, v]) => v).map(([k, v]) => `${k}=${part(v)}`).join('&');
     if (via === 'upi') return `upi://pay?${q}`;
     if (/Android/i.test(navigator.userAgent) && app.androidPackage) return `intent://pay?${q}#Intent;scheme=upi;package=${app.androidPackage};end`;
@@ -551,7 +553,14 @@ window.LD = (() => {
     const openBtn = h('button', { class: 'btn', type: 'button' }, '');
     const upiBtn = h('button', { class: 'btn', type: 'button', hidden: true }, 'Choose from UPI apps');
     const hint = h('p', { class: 'hint' });
-    const box = h('div', {}, hint, h('div', { class: 'btn-pair' }, openBtn, upiBtn));
+    // PhonePe (like other UPI apps) sometimes refuses a payment to a person that arrives from a link, saying "declined for
+    // security reasons ... try a mobile number, UPI ID or QR code" (kohal, 2026-11-02) - so these let you do it by hand.
+    const bareBtn = h('button', { class: 'btn small', type: 'button' }, 'Open without amount');
+    const copyIdBtn = h('button', { class: 'btn small', type: 'button' }, 'Copy UPI ID');
+    const copyAmtBtn = h('button', { class: 'btn small', type: 'button' }, 'Copy amount');
+    const helpRow = h('div', {}, h('p', { class: 'hint' }, 'If PhonePe declines it, open it without the amount, or copy the details and pay from inside PhonePe:'),
+      h('div', { class: 'btn-pair' }, bareBtn, copyIdBtn, copyAmtBtn));
+    const box = h('div', {}, hint, h('div', { class: 'btn-pair' }, openBtn, upiBtn), helpRow);
     const current = () => PAY_APPS.find((a) => a.key === sel.value);
     const toPay = () => ({ upi: (val(payee) || {}).upi_id, name: val(name), amount: val(amount), note });
     const sync = () => {
@@ -565,6 +574,7 @@ window.LD = (() => {
         const to = val(payee) || {};
         const sum = money(Number(val(amount)) || 0, currency);
         openBtn.hidden = !to.upi_id;
+        helpRow.hidden = !to.upi_id;
         hint.textContent = to.upi_id ? `Pays ${who} (${to.upi_id}) ${sum}. Finish the payment in ${app.label}, come back, then tap Mark paid.`
           : to.phone ? `No UPI ID saved for ${who}, so ${app.label} can't be filled in. Open ${app.label} yourself and pay ${sum} to ${to.phone}, then come back and tap Mark paid. (Save a UPI ID in Employee management and this opens it for you.)`
             : `No UPI ID or mobile number saved for ${who} - add one in Employee management first.`;
@@ -578,8 +588,27 @@ window.LD = (() => {
       onError(opened ? '' : `Nothing opened. ${app.label} may not be installed, or this browser blocked it. Try Choose from UPI apps, or open ${app.label} yourself and pay from there.`);
       upiBtn.hidden = opened;
     };
+    const copy = async (text, btn) => {
+      const was = btn.textContent;
+      try {
+        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+        else {
+          const t = document.createElement('textarea');
+          t.value = text;
+          document.body.append(t);
+          t.select();
+          document.execCommand('copy');
+          t.remove();
+        }
+        btn.textContent = 'Copied';
+      } catch (err) { btn.textContent = 'Could not copy'; }
+      setTimeout(() => { btn.textContent = was; }, 1500);
+    };
     openBtn.onclick = () => attempt();
     upiBtn.onclick = () => attempt('upi');
+    bareBtn.onclick = () => attempt('noamount');
+    copyIdBtn.onclick = () => copy((val(payee) || {}).upi_id || '', copyIdBtn);
+    copyAmtBtn.onclick = () => copy(Number(val(amount) || 0).toFixed(2), copyAmtBtn);
     sel.addEventListener('change', sync);
     sync();
     return { nodes: [field('pay_app', 'Pay with', sel), box], app: () => (current() ? current().key : ''), refresh: sync };
