@@ -303,6 +303,8 @@ def worker_history(worker_id):
         worker={"id": worker.id, "name": worker.name},
         account=account.to_dict() if account else None,
         entries=[p.to_dict() for p in account.purchases] if account else [],
+        # Cash the admin handed over (kohal, 2026-11-02: "add cash credit approvals as well with date"), newest first.
+        topups=[t.to_dict() for t in account.topups] if account else [],
         currency=settings_for_client()["currency"],
     )
 

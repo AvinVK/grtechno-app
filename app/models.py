@@ -1006,6 +1006,25 @@ class CashRequest(db.Model):
         }
 
 
+class AccountTransfer(db.Model):
+    """Money the admin moved between two of their own accounts (kohal, 2026-11-02: "a self transfer feature so that
+    i can transfer money from one account to other ... the credit and debit should also take care of itself").
+    One row is both sides: the Accounts view shows it as a debit on from_account and a credit on to_account."""
+
+    __tablename__ = "account_transfers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    from_account = db.Column(db.String(40), nullable=False)
+    to_account = db.Column(db.String(40), nullable=False)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    note = db.Column(db.String(200), nullable=False, default="", server_default="")
+    entry_date = db.Column(db.Date, nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    created_by = db.relationship("User")
+
+
 class CashTopup(db.Model):
     """One "admin gave this employee cash" record - the human-readable ledger behind CashAccount.given_total,
     same relationship FoodingEntry has to FoodingAccount.allotted_total. Always applied immediately (the

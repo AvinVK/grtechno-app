@@ -562,3 +562,12 @@ def test_each_subtab_response_carries_both_pending_counts(app, accounts_client):
 
     accounts = accounts_client.get("/api/cash-purchases/accounts").get_json()
     assert accounts["pending_purchase_count"] == 1 and accounts["pending_request_count"] == 1
+
+
+def test_an_employees_page_lists_the_cash_given_to_them_with_dates(accounts_client, admin_client):
+    wid = add_worker()
+    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH", "note": "For site"})
+    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "GR BB"})
+    data = admin_client.get(f"/api/cash-purchases/{wid}").get_json()
+    assert [(t["amount"], t["payment_mode"]) for t in data["topups"]] == [(500.0, "GR BB"), (2000.0, "CASH")]
+    assert data["topups"][1]["note"] == "For site" and data["topups"][0]["entry_date"]

@@ -212,6 +212,16 @@
       h('span', { class: 'row-value' }, money(e.amount, cur)));
   }
 
+  // One "admin gave this employee cash" entry - always applied straight away, so no approve/reject status.
+  function topupRow(t, cur) {
+    return h('li', { class: 'p-row' },
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, 'Cash given'),
+        h('span', { class: 'row-sub' }, [fmtDate(t.entry_date), t.payment_mode, t.created_by_name ? `Given by ${t.created_by_name}` : null, t.note || null]
+          .filter(Boolean).join(' \u00b7 '))),
+      h('span', { class: 'row-value acct-credit' }, `+${money(t.amount, cur)}`));
+  }
+
   async function showPersonHistory(id) {
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
@@ -221,11 +231,18 @@
     const cur = data.currency;
     const a = data.account;
     clear(view).append(h('div', { class: 'project-detail' },
-      h('div', { class: 'att-head' }, h('h2', {}, data.worker.name), h('span', { class: 'att-head-date' }, 'Cash purchases')),
+      h('div', { class: 'att-head' }, h('h2', {}, data.worker.name), h('span', { class: 'att-head-date' }, 'Cash account')),
       a ? h('p', { class: 'wk-legend' }, `Given ${money(a.given_total, cur)} · Spent ${money(a.spent_total, cur)} · Remaining ${money(a.remaining, cur)}`) : null,
-      data.entries.length
-        ? h('ul', { class: 'card-group' }, data.entries.map((e) => historyRow(e, cur)))
-        : h('p', { class: 'empty-state' }, 'Nothing logged yet.')));
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Cash given'),
+        data.topups.length
+          ? h('ul', { class: 'card-group' }, data.topups.map((t) => topupRow(t, cur)))
+          : h('p', { class: 'hint' }, 'No cash given yet.')),
+      h('section', { class: 'p-section' },
+        h('h3', {}, 'Cash purchases'),
+        data.entries.length
+          ? h('ul', { class: 'card-group' }, data.entries.map((e) => historyRow(e, cur)))
+          : h('p', { class: 'hint' }, 'Nothing logged yet.'))));
   }
 
   function route() {

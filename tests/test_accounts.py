@@ -71,3 +71,59 @@ def test_fooding_cash_given_and_lead_advance_show_with_who_asked(admin_client):
     assert [(e["kind"], e["reason"], e["amount"]) for e in d["entries"]] == [
         ("credit", "Lead advance", 2000.0), ("debit", "Cash given for purchases", 250.0), ("debit", "Fooding", 500.0)]
     assert d["entries"][2]["requested_by"] is not None and (d["credits"], d["debits"], d["balance"]) == (2000.0, 750.0, 1250.0)
+
+
+def _fund(account, amount):
+    _payment(account, amount)
+    db.session.commit()
+
+
+def _transfer(client, **over):
+    body = {"from_account": "GR BB", "to_account": "CASH", "amount": "2500", "entry_date": "2026-11-01", "note": "For site cash"}
+    body.update(over)
+    return client.post("/api/accounts/transfers", json=body)
+
+
+def test_a_self_transfer_is_a_debit_on_one_account_and_a_credit_on_the_other(admin_client):
+    _fund("GR BB", "5000")
+    assert _transfer(admin_client).status_code == 201
+    listing = {a["name"]: a for a in admin_client.get("/api/accounts").get_json()["accounts"]}
+    assert (listing["GR BB"]["debits"], listing["GR BB"]["balance"]) == (2500.0, 2500.0)
+    assert (listing["CASH"]["credits"], listing["CASH"]["debits"]) == (2500.0, 0.0)
+
+    out = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"][0]
+    into = admin_client.get("/api/accounts/detail", query_string={"name": "CASH"}).get_json()["entries"][0]
+    assert (out["kind"], out["reason"], out["party"], out["detail"]) == ("debit", "Self transfer", "CASH", "For site cash")
+    assert (into["kind"], into["reason"], into["party"]) == ("credit", "Self transfer", "GR BB")
+    assert out["transfer_id"] == into["transfer_id"]
+
+
+def test_a_self_transfer_is_checked(admin_client, manager_client):
+    _fund("GR BB", "5000")
+    assert _transfer(admin_client, to_account="GR BB").status_code == 422
+    assert _transfer(admin_client, amount="0").status_code == 422
+    assert _transfer(admin_client, amount="").status_code == 422
+    assert _transfer(admin_client, amount="-5").status_code == 422
+    assert _transfer(admin_client, from_account="Nope").status_code == 422
+    assert _transfer(admin_client, to_account="").status_code == 422
+    assert admin_client.get("/api/accounts").get_json()["accounts"][3]["count"] == 1      # only the funding entry
+    assert _transfer(manager_client).status_code == 403
+
+
+def test_you_cannot_transfer_more_than_the_account_holds(admin_client):
+    r = _transfer(admin_client)                                       # GR BB is empty
+    assert r.status_code == 422 and r.get_json()["fields"]["amount"] == "There is no money in GR BB"
+    _fund("GR BB", "2000")
+    r = _transfer(admin_client, amount="2500")
+    assert r.status_code == 422 and "Only" in r.get_json()["fields"]["amount"] and "2,000" in r.get_json()["fields"]["amount"]
+    assert _transfer(admin_client, amount="2000").status_code == 201   # the whole balance is fine
+    assert _transfer(admin_client, amount="1").status_code == 422      # now it is empty
+    assert _transfer(admin_client, from_account="CASH", to_account="GR BB", amount="2000").status_code == 201   # money that arrived can move on
+
+
+def test_removing_a_transfer_puts_both_accounts_back(admin_client):
+    _fund("GR BB", "5000")
+    tid = _transfer(admin_client).get_json()["id"]
+    assert admin_client.delete(f"/api/accounts/transfers/{tid}").status_code == 200
+    assert {a["name"]: a["count"] for a in admin_client.get("/api/accounts").get_json()["accounts"]}["CASH"] == 0
+    assert admin_client.delete(f"/api/accounts/transfers/{tid}").status_code == 404
