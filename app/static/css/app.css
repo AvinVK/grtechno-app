@@ -1918,3 +1918,6 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .daily-food summary::-webkit-details-marker { display: none; }
 .daily-food-days { list-style: none; margin: 0; padding: 0 0 0 16px; border-top: 1px solid var(--line); }
 .daily-food .hint { padding: 8px 16px 12px; }
+.pay-box { margin: -4px 0 12px; }
+.pay-to { margin: 0 0 8px; font-size: 14px; color: var(--muted); word-break: break-all; }
+.pay-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
