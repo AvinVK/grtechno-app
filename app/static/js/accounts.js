@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, money, plural } = window.LD;
+  const { $, h, clear, api, money, plural, toast, confirm, field, selectField, dateField, closeOnBack, showFieldErrors } = window.LD;
   const view = $('#view');
 
   const fmtDate = (iso) => {
@@ -14,12 +14,55 @@
     return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
   };
 
+  /* Self transfer (kohal, 2026-11-02): move money between two of the admin's own accounts. One record - it shows as a
+     debit on the account it left and a credit on the one it reached. `from` pre-fills the "From" box. */
+  function openTransferSheet(names, from, cur, onDone) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const fromSel = selectField(names, from || '', { title: 'From account', placeholder: 'Choose an account' });
+    const toSel = selectField(names, '', { title: 'To account', placeholder: 'Choose an account' });
+    const amountInput = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal' });
+    const dateSel = dateField('', { placeholder: 'Today' });
+    const noteInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off', placeholder: 'Optional' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Transfer');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    const form = h('div', {},
+      field('from_account', 'From', fromSel), field('to_account', 'To', toSel),
+      field('amount', 'Amount', amountInput), field('entry_date', 'Date', dateSel),
+      field('note', 'Note', noteInput), errEl);
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api('/api/accounts/transfers', { method: 'POST', body: {
+          from_account: fromSel.value, to_account: toSel.value, amount: amountInput.value, entry_date: dateSel.value, note: noteInput.value } });
+        finish();
+        toast('Transferred');
+        onDone();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, 'Transfer money'), form, h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+  }
+
+  const transferButton = (names, from, cur, onDone) => h('button', {
+    class: 'btn small primary', type: 'button', onclick: () => openTransferSheet(names, from, cur, onDone) }, 'Transfer money');
+
   async function showList() {
     window.LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api('/api/accounts'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
-    clear(view).append(h('ul', { class: 'card-group' }, data.accounts.map((a) => h('li', {},
+    const names = data.accounts.map((a) => a.name);
+    clear(view).append(h('div', { class: 'acct-actions' }, transferButton(names, '', data.currency, showList)),
+      h('ul', { class: 'card-group' }, data.accounts.map((a) => h('li', {},
       h('a', { class: 'p-row acct-row', href: `#${encodeURIComponent(a.name)}` },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, a.name),
@@ -36,6 +79,12 @@
     let filter = 'all';
     const chips = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Show' });
     const list = h('div', {});
+
+    async function removeTransfer(e) {
+      if (!await confirm('Remove this transfer? Both accounts go back to how they were.', { ok: 'Remove', title: 'Remove transfer', danger: true })) return;
+      try { await api(`/api/accounts/transfers/${e.transfer_id}`, { method: 'DELETE' }); toast('Transfer removed'); showAccount(name); }
+      catch (err) { toast(err.message, true); }
+    }
 
     function entryRow(e) {
       const credit = e.kind === 'credit';
@@ -62,6 +111,7 @@
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, data.name)),
       h('p', { class: 'hint' }, `In ${money(data.credits, cur)} · Out ${money(data.debits, cur)} · Balance ${money(data.balance, cur)}`),
+      h('div', { class: 'acct-actions' }, transferButton(data.account_names, name, cur, () => showAccount(name))),
       chips, list));
     render();
   }

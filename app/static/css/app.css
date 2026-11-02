@@ -1912,3 +1912,4 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .acct-row { text-decoration: none; color: inherit; }
 .acct-credit { color: #1b7a3d; }
 .acct-debit { color: #a3281c; }
+.acct-actions { display: flex; justify-content: flex-end; margin: 0 0 12px; }

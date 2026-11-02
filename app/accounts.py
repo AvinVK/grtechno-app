@@ -5,9 +5,9 @@ was the reason (fooding, petrol, salary, wages etc)").
 Admin only. There is no ledger table of its own: every place that records money already says which account it went
 through (constants.PAYMENT_ACCOUNTS), so this page reads them all and lines them up -
 
-  Credits (money in):  project payments received, lead advances.
+  Credits (money in):  project payments received, lead advances, self transfers in.
   Debits (money out):  salary and wages paid, fooding allotted, cash handed to an employee for purchases, petrol
-                       paid out, inventory bought for cash.
+                       paid out, inventory bought for cash, self transfers out.
 
 Left out on purpose, because the money already left through one of the above: an employee's own fooding expense
 and what they buy with the cash they were handed. Entries made before the account list existed carry an older
@@ -19,10 +19,12 @@ from decimal import Decimal
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .constants import PAYMENT_ACCOUNTS
+from .extensions import db
 from .models import (
-    CashTopup, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
+    AccountTransfer, CashTopup, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
 )
-from .validation import api_errors
+from .timeutil import today_local
+from .validation import Fields, api_errors, parse_money
 
 bp = Blueprint("accounts", __name__)
 api_errors(bp)
@@ -45,9 +47,9 @@ def _name(code):
     return user.name if user else None
 
 
-def _row(kind, when, amount, reason, party, detail="", requested_by=None, approved_by=None):
+def _row(kind, when, amount, reason, party, detail="", requested_by=None, approved_by=None, transfer_id=None):
     return {"kind": kind, "date": _day(when), "amount": float(amount), "reason": reason, "party": party,
-            "detail": detail, "requested_by": requested_by, "approved_by": approved_by}
+            "detail": detail, "requested_by": requested_by, "approved_by": approved_by, "transfer_id": transfer_id}
 
 
 def _worker_reason(worker):
@@ -82,6 +84,13 @@ def ledger(account):
                          m.supplier.name if m.supplier else "", m.material.name,
                          requested_by=m.created_by.name if m.created_by else None, approved_by=_name(m.approved_by_code)))
 
+    # Self transfers: the same row is the debit of the account it left and the credit of the one it reached.
+    for t in AccountTransfer.query.filter((AccountTransfer.from_account == account) | (AccountTransfer.to_account == account)).all():
+        out = t.from_account == account
+        rows.append(_row("debit" if out else "credit", t.entry_date, t.amount, "Self transfer",
+                         t.to_account if out else t.from_account, t.note,
+                         requested_by=t.created_by.name if t.created_by else None, transfer_id=t.id))
+
     rows.sort(key=lambda r: r["date"] or "", reverse=True)
     return rows
 
@@ -109,4 +118,50 @@ def account_detail():
     if name not in PAYMENT_ACCOUNTS:
         abort(404)
     rows = ledger(name)
-    return jsonify(name=name, **_totals(rows), entries=rows, currency=settings_for_client()["currency"])
+    return jsonify(name=name, **_totals(rows), entries=rows, account_names=PAYMENT_ACCOUNTS,
+                   currency=settings_for_client()["currency"])
+
+
+@bp.post("/api/accounts/transfers")
+def add_transfer():
+    payload = request.get_json(silent=True) or {}
+    f = Fields(payload)
+    f.choice("from_account", PAYMENT_ACCOUNTS)
+    f.choice("to_account", PAYMENT_ACCOUNTS)
+    f.date("entry_date")
+    f.text("note", 200)
+    for name, label in (("from_account", "Choose the account to take it from"), ("to_account", "Choose the account to put it in")):
+        if name not in f.data and name not in f.errors:
+            f.errors[name] = label
+        elif f.errors.get(name):
+            f.errors[name] = label
+    amount = parse_money(payload.get("amount"), f.errors) if payload.get("amount") not in (None, "") else None
+    if amount is None and "amount" not in f.errors:
+        f.errors["amount"] = "Enter the amount"
+    elif amount is not None and amount <= 0:
+        f.errors["amount"] = "Enter an amount greater than 0"
+    if not f.errors and f.data["from_account"] == f.data["to_account"]:
+        f.errors["to_account"] = "Pick a different account to move it to"
+    if not f.errors:
+        have = Decimal(str(_totals(ledger(f.data["from_account"]))["balance"]))
+        if amount > have:
+            shown = f"{have:,.2f}".rstrip("0").rstrip(".")
+            f.errors["amount"] = f"Only {settings_for_client()['currency']}{shown} in {f.data['from_account']}" if have > 0                 else f"There is no money in {f.data['from_account']}"
+    if f.errors:
+        return jsonify(error="Check the highlighted fields.", fields=f.errors), 422
+    t = AccountTransfer(from_account=f.data["from_account"], to_account=f.data["to_account"], amount=amount,
+                        note=f.data.get("note", ""), entry_date=f.data.get("entry_date") or today_local(),
+                        created_by_code=g.user.code)
+    db.session.add(t)
+    db.session.commit()
+    return jsonify(ok=True, id=t.id), 201
+
+
+@bp.delete("/api/accounts/transfers/<int:transfer_id>")
+def delete_transfer(transfer_id):
+    t = db.session.get(AccountTransfer, transfer_id)
+    if t is None:
+        abort(404)
+    db.session.delete(t)
+    db.session.commit()
+    return jsonify(ok=True)
