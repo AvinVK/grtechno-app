@@ -1460,6 +1460,7 @@ a.p-client-name { color: var(--accent-dark); }
 
 .appbar-actions .att-team-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; justify-content: center; color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .appbar-actions .att-team-link:hover { text-decoration: underline; }
+.appbar-actions button.att-team-link { background: none; border: 0; padding: 0 4px; font: inherit; font-weight: 600; cursor: pointer; }
 
 .att-today {
   max-width: 480px;

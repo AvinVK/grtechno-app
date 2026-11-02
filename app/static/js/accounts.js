@@ -55,13 +55,23 @@
   const transferButton = (names, from, cur, onDone) => h('button', {
     class: 'btn small primary', type: 'button', onclick: () => openTransferSheet(names, from, cur, onDone) }, 'Transfer money');
 
+  // On the list the button sits up in the "Accounts" title row (same app-bar slot Attendance's "Team" link uses);
+  // inside one account it stays in the page, since the app bar there carries the back arrow.
+  function setTransferLink(show, onClick) {
+    document.getElementById('acct-transfer-link')?.remove();
+    const actions = document.querySelector('.appbar-actions');
+    if (show && actions) actions.append(h('button', { id: 'acct-transfer-link', class: 'att-team-link', type: 'button', onclick: onClick }, 'Transfer money'));
+  }
+
   async function showList() {
+    setTransferLink(false);
     window.LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api('/api/accounts'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     const names = data.accounts.map((a) => a.name);
-    clear(view).append(h('div', { class: 'acct-actions' }, transferButton(names, '', data.currency, showList)),
+    setTransferLink(true, () => openTransferSheet(names, '', data.currency, showList));
+    clear(view).append(
       h('ul', { class: 'card-group' }, data.accounts.map((a) => h('li', {},
       h('a', { class: 'p-row acct-row', href: `#${encodeURIComponent(a.name)}` },
         h('span', { class: 'p-main' },
@@ -71,6 +81,7 @@
   }
 
   async function showAccount(name) {
+    setTransferLink(false);
     window.LD.setAppbarBack?.('Accounts', '#');
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
