@@ -507,24 +507,19 @@ window.LD = (() => {
     { key: 'gpay', label: 'Google Pay', scheme: 'tez://upi/pay', androidPackage: 'com.google.android.apps.nbu.paisa.user' },
   ];
 
-  /* The link that opens the app for this payee. On an Android browser that is an intent link aimed at the app's own
-     package (what Chrome and Samsung Internet understand for "open exactly this app"); elsewhere the app's own scheme.
-     via === 'upi' is the plain UPI link instead, which lists every UPI app on the phone to choose from. */
-  function payLink(app, { upi, name, amount, note }, via) {
+  /* The link that opens the app for this payee: on an Android browser an intent link aimed at the app's own package (what
+     Chrome and Samsung Internet understand for "open exactly this app"), elsewhere the app's own scheme. mc=0000 says the
+     payee is a person, not a business; tr is a reference that is new for every attempt. */
+  function payLink(app, { upi, name, amount, note }) {
     const part = (v) => encodeURIComponent(v).replace(/%40/g, '@');
-    // 'noamount' leaves the amount and note out, for when the app declines a payment that arrives with them filled in.
-    const bare = via === 'noamount';
-    // mc=0000 says the payee is a person, not a business; tr is a reference that is new for every attempt (UPI links carry
-    // both, and a link without them to a personal ID is one thing UPI apps are quick to refuse - kohal, 2026-11-02).
-    const q = [['pa', upi], ['pn', name], ['am', bare ? '' : Number(amount).toFixed(2)], ['mc', '0000'], ['tr', `GT${Date.now()}`], ['cu', 'INR'], ['tn', bare ? '' : note]]
+    const q = [['pa', upi], ['pn', name], ['am', Number(amount).toFixed(2)], ['mc', '0000'], ['tr', `GT${Date.now()}`], ['cu', 'INR'], ['tn', note]]
       .filter(([, v]) => v).map(([k, v]) => `${k}=${part(v)}`).join('&');
-    if (via === 'upi') return `upi://pay?${q}`;
     if (/Android/i.test(navigator.userAgent) && app.androidPackage) return `intent://pay?${q}#Intent;scheme=upi;package=${app.androidPackage};end`;
     return `${app.scheme}?${q}`;
   }
 
   // Needs a UPI ID to fill the payment in - a bare "open the app" link is not something a browser can launch reliably.
-  function openPayApp(appKey, payee, via) {
+  function openPayApp(appKey, payee) {
     const app = PAY_APPS.find((a) => a.key === appKey);
     if (!app || !payee.upi) return Promise.resolve(false);
     return new Promise((resolve) => {
@@ -534,7 +529,7 @@ window.LD = (() => {
       document.addEventListener('visibilitychange', onHide);
       window.addEventListener('blur', onBlur);
       const a = document.createElement('a');       // a tapped link is let through by browsers more readily than a script redirect
-      a.href = payLink(app, payee, via);
+      a.href = payLink(app, payee);
       a.rel = 'noopener';
       document.body.append(a);
       a.click();
@@ -547,51 +542,38 @@ window.LD = (() => {
     });
   }
 
-  /* The "Pay with" part of a payout sheet (kohal, 2026-11-02): a picker (Not using an app / PhonePe), a line saying who is
-     being paid and how, and the buttons to open the app. Returns { nodes, app() } - append `nodes` to the sheet; app() is the
-     chosen app's key or '' (so the caller can relabel its main button, and knows whether "Mark paid" is meant). `onChange`
-     fires on every change, `onError` gets a message to show inside the sheet (a toast would sit underneath it). */
+  /* The "Pay with" part of a payout sheet (kohal, 2026-11-02): a picker (Not using an app / PhonePe / Google Pay), one line
+     saying who and how much, and a single row of actions. Returns { nodes, app(), refresh } - append `nodes` to the sheet;
+     app() is the chosen app's key or '' (so the caller can relabel its main button, and knows "Mark paid" is meant).
+     `onChange` fires on every change, `onError` gets a message to show inside the sheet (a toast would sit underneath it).
+     UPI apps often refuse a payment to a person that arrives from a link, so the copy actions are the dependable way. */
   function payAppPicker({ name, amount, payee = {}, note = '', currency, initial = '', onChange = () => {}, onError = () => {} }) {
     const val = (v) => (typeof v === 'function' ? v() : v);
     const sel = selectField([{ value: '', label: 'Not using an app' }, ...PAY_APPS.map((a) => ({ value: a.key, label: a.label }))],
       initial, { title: 'Pay with', placeholder: 'Not using an app' });
-    const openBtn = h('button', { class: 'btn', type: 'button' }, '');
-    const upiBtn = h('button', { class: 'btn', type: 'button', hidden: true }, 'Choose from UPI apps');
-    const hint = h('p', { class: 'hint' });
-    // PhonePe (like other UPI apps) sometimes refuses a payment to a person that arrives from a link, saying "declined for
-    // security reasons ... try a mobile number, UPI ID or QR code" (kohal, 2026-11-02) - so these let you do it by hand.
-    const bareBtn = h('button', { class: 'btn small', type: 'button' }, 'Open without amount');
-    const copyIdBtn = h('button', { class: 'btn small', type: 'button' }, 'Copy UPI ID');
-    const copyAmtBtn = h('button', { class: 'btn small', type: 'button' }, 'Copy amount');
-    const helpRow = h('div', {}, h('p', { class: 'hint' }, 'If PhonePe declines it, open it without the amount, or copy the details and pay from inside PhonePe:'),
-      h('div', { class: 'btn-pair' }, bareBtn, copyIdBtn, copyAmtBtn));
-    const box = h('div', {}, hint, h('div', { class: 'btn-pair' }, openBtn, upiBtn), helpRow);
+    const to = h('p', { class: 'pay-to' });
+    const openBtn = h('button', { class: 'btn small', type: 'button' }, '');
+    const copyToBtn = h('button', { class: 'link-btn', type: 'button' }, '');
+    const copyAmtBtn = h('button', { class: 'link-btn', type: 'button' }, 'Copy amount');
+    const row = h('div', { class: 'pay-row' }, openBtn, copyToBtn, copyAmtBtn);
+    const box = h('div', { class: 'pay-box' }, to, row);
     const current = () => PAY_APPS.find((a) => a.key === sel.value);
-    const toPay = () => ({ upi: (val(payee) || {}).upi_id, name: val(name), amount: val(amount), note });
     const sync = () => {
       const app = current();
       box.hidden = !app;
-      upiBtn.hidden = true;
       onError('');
       if (app) {
-        openBtn.textContent = `Open ${app.label}`;
-        const who = val(name);
-        const to = val(payee) || {};
+        const p = val(payee) || {};
         const sum = money(Number(val(amount)) || 0, currency);
-        openBtn.hidden = !to.upi_id;
-        helpRow.hidden = !to.upi_id;
-        hint.textContent = to.upi_id ? `Pays ${who} (${to.upi_id}) ${sum}. Finish the payment in ${app.label}, come back, then tap Mark paid.`
-          : to.phone ? `No UPI ID saved for ${who}, so ${app.label} can't be filled in. Open ${app.label} yourself and pay ${sum} to ${to.phone}, then come back and tap Mark paid. (Save a UPI ID in Employee management and this opens it for you.)`
-            : `No UPI ID or mobile number saved for ${who} - add one in Employee management first.`;
+        const dest = p.upi_id || p.phone || '';
+        openBtn.textContent = `Open ${app.label}`;
+        openBtn.hidden = !p.upi_id;                 // a payment can only be filled in from a UPI ID
+        copyToBtn.textContent = p.upi_id ? 'Copy UPI ID' : 'Copy number';
+        copyToBtn.hidden = !dest;
+        copyAmtBtn.hidden = !dest;
+        to.textContent = dest ? `${dest} \u00b7 ${sum}` : `No UPI ID or mobile number saved for ${val(name)} - add one in Employee management.`;
       }
       onChange(app ? app.key : '');
-    };
-    const attempt = async (via) => {
-      const app = current();
-      if (!app) return;
-      const opened = await openPayApp(app.key, toPay(), via);
-      onError(opened ? '' : `Nothing opened. ${app.label} may not be installed, or this browser blocked it. Try Choose from UPI apps, or open ${app.label} yourself and pay from there.`);
-      upiBtn.hidden = opened;
     };
     const copy = async (text, btn) => {
       const was = btn.textContent;
@@ -609,10 +591,13 @@ window.LD = (() => {
       } catch (err) { btn.textContent = 'Could not copy'; }
       setTimeout(() => { btn.textContent = was; }, 1500);
     };
-    openBtn.onclick = () => attempt();
-    upiBtn.onclick = () => attempt('upi');
-    bareBtn.onclick = () => attempt('noamount');
-    copyIdBtn.onclick = () => copy((val(payee) || {}).upi_id || '', copyIdBtn);
+    openBtn.onclick = async () => {
+      const app = current();
+      if (!app) return;
+      const opened = await openPayApp(app.key, { upi: (val(payee) || {}).upi_id, name: val(name), amount: val(amount), note });
+      onError(opened ? '' : `Couldn\u2019t open ${app.label} - copy the UPI ID and pay from inside it.`);
+    };
+    copyToBtn.onclick = () => { const p = val(payee) || {}; copy(p.upi_id || p.phone || '', copyToBtn); };
     copyAmtBtn.onclick = () => copy(Number(val(amount) || 0).toFixed(2), copyAmtBtn);
     sel.addEventListener('change', sync);
     sync();
