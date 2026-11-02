@@ -502,7 +502,10 @@ window.LD = (() => {
      Opens the app already filled in for the payee, using its own link scheme; the app can't tell us whether the
      payment went through, so the caller still has a "mark as paid" step. Resolves to true if the app took over the
      screen, false if nothing happened (most likely it isn't installed, or this isn't a phone). */
-  const PAY_APPS = [{ key: 'phonepe', label: 'PhonePe', scheme: 'phonepe://pay', androidPackage: 'com.phonepe.app' }];
+  const PAY_APPS = [
+    { key: 'phonepe', label: 'PhonePe', scheme: 'phonepe://pay', androidPackage: 'com.phonepe.app' },
+    { key: 'gpay', label: 'Google Pay', scheme: 'tez://upi/pay', androidPackage: 'com.google.android.apps.nbu.paisa.user' },
+  ];
 
   /* The link that opens the app for this payee. On an Android browser that is an intent link aimed at the app's own
      package (what Chrome and Samsung Internet understand for "open exactly this app"); elsewhere the app's own scheme.
