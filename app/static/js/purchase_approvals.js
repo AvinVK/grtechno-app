@@ -170,10 +170,24 @@
       walletNote.hidden = !wallet;
       if (wallet) walletNote.textContent = `Paid from ${w.name}’s fooding balance · ${money(w.fooding_remaining, data.currency)} left. No bank account is debited.`;
     };
+    // Optionally pay through an app (kohal, 2026-11-02) - not for someone paid out of their fooding balance, since no bank
+    // account is debited then. It reads the employee and amount as they are when it opens the app.
+    let pickedApp = '';
+    const workerOf = () => data.workers.find((x) => String(x.id) === String(workerSel.value));
+    const onWallet = () => { const w = workerOf(); return !!w && w.fooding_remaining != null; };
+    const relabel = () => { saveBtn.textContent = pickedApp && !onWallet() ? 'Mark paid & give cash' : 'Give cash'; };
+    const picker = LD.payAppPicker({
+      name: () => (workerOf() ? workerOf().name : 'the employee'), amount: () => amountInput.value,
+      payee: () => { const w = workerOf() || {}; return { upi_id: w.upi_id, phone: w.phone }; }, note: 'Cash', currency: data.currency,
+      onChange: (app) => { pickedApp = app; relabel(); }, onError: (msg) => { errEl.textContent = msg; },
+    });
+    const payBox = h('div', {}, ...picker.nodes);
     const form = h('div', {}, field('worker_id', 'Employee', workerSel), field('amount', 'Amount', amountInput),
-      accountField, walletNote, field('note', 'Note', noteInput));
-    form.addEventListener('change', syncSource);
-    syncSource();
+      accountField, walletNote, payBox, field('note', 'Note', noteInput));
+    const syncAll = () => { syncSource(); payBox.hidden = onWallet(); picker.refresh(); relabel(); };
+    form.addEventListener('change', syncAll);
+    amountInput.addEventListener('input', () => picker.refresh());
+    syncAll();
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Give cash'),
       form,

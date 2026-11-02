@@ -100,7 +100,10 @@ def _worker_rows():
     rows = []
     for w in Worker.query.order_by(Worker.name).all():
         left = _fooding_left(w)
-        rows.append({"id": w.id, "name": w.name, "fooding_remaining": None if left is None else float(left)})
+        row = {"id": w.id, "name": w.name, "fooding_remaining": None if left is None else float(left)}
+        if g.user.is_admin:        # who gets paid, for opening a payment app already filled in - only the admin pays
+            row["upi_id"], row["phone"] = w.upi_id or "", w.phone or ""
+        rows.append(row)
     db.session.commit()
     return rows
 

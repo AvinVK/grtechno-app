@@ -665,3 +665,14 @@ def test_a_wallet_worker_with_nothing_left_cannot_request_cash(app):
     who, wid = _wallet_user(app, "0")
     res = who.post("/api/cash-purchases/requests", json={"amount": "100"})
     assert res.status_code == 422 and "nothing left" in res.get_json()["fields"]["amount"]
+
+
+def test_the_give_cash_lists_carry_who_gets_paid_for_the_payment_app_but_only_for_the_admin(app, admin_client, accounts_client):
+    wid = add_worker("Pays By Phone")
+    w = db.session.get(Worker, wid)
+    w.upi_id, w.phone = "pay@ybl", "9000000002"
+    db.session.commit()
+    row = next(x for x in admin_client.get("/api/cash-purchases/accounts").get_json()["workers"] if x["id"] == wid)
+    assert row["upi_id"] == "pay@ybl" and row["phone"] == "9000000002"
+    seen = next(x for x in accounts_client.get("/api/cash-purchases/accounts").get_json()["workers"] if x["id"] == wid)
+    assert "upi_id" not in seen and "phone" not in seen              # the accountant doesn't pay, so doesn't get them

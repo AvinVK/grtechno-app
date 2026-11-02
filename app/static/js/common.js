@@ -502,61 +502,87 @@ window.LD = (() => {
      Opens the app already filled in for the payee, using its own link scheme; the app can't tell us whether the
      payment went through, so the caller still has a "mark as paid" step. Resolves to true if the app took over the
      screen, false if nothing happened (most likely it isn't installed, or this isn't a phone). */
-  const PAY_APPS = [{ key: 'phonepe', label: 'PhonePe', scheme: 'phonepe://pay' }];
+  const PAY_APPS = [{ key: 'phonepe', label: 'PhonePe', scheme: 'phonepe://pay', androidPackage: 'com.phonepe.app' }];
 
-  function payLink(app, { upi, name, amount, note }) {
+  /* The link that opens the app for this payee. On an Android browser that is an intent link aimed at the app's own
+     package (what Chrome and Samsung Internet understand for "open exactly this app"); elsewhere the app's own scheme.
+     via === 'upi' is the plain UPI link instead, which lists every UPI app on the phone to choose from. */
+  function payLink(app, { upi, name, amount, note }, via) {
     const part = (v) => encodeURIComponent(v).replace(/%40/g, '@');
     const q = [['pa', upi], ['pn', name], ['am', Number(amount).toFixed(2)], ['cu', 'INR'], ['tn', note]]
       .filter(([, v]) => v).map(([k, v]) => `${k}=${part(v)}`).join('&');
+    if (via === 'upi') return `upi://pay?${q}`;
+    if (/Android/i.test(navigator.userAgent) && app.androidPackage) return `intent://pay?${q}#Intent;scheme=upi;package=${app.androidPackage};end`;
     return `${app.scheme}?${q}`;
   }
 
-  function openPayApp(appKey, payee) {
+  // Needs a UPI ID to fill the payment in - a bare "open the app" link is not something a browser can launch reliably.
+  function openPayApp(appKey, payee, via) {
     const app = PAY_APPS.find((a) => a.key === appKey);
-    if (!app) return Promise.resolve(false);
-    // With a UPI ID the app opens ready to pay; without one it just opens, and the caller shows the number to pay.
-    const url = payee.upi ? payLink(app, payee) : app.scheme.replace(/pay$/, '');
+    if (!app || !payee.upi) return Promise.resolve(false);
     return new Promise((resolve) => {
       let left = false;
       const onHide = () => { if (document.visibilityState === 'hidden') left = true; };
+      const onBlur = () => { left = true; };
       document.addEventListener('visibilitychange', onHide);
-      window.location.href = url;
-      setTimeout(() => { document.removeEventListener('visibilitychange', onHide); resolve(left); }, 1500);
+      window.addEventListener('blur', onBlur);
+      const a = document.createElement('a');       // a tapped link is let through by browsers more readily than a script redirect
+      a.href = payLink(app, payee, via);
+      a.rel = 'noopener';
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => {
+        document.removeEventListener('visibilitychange', onHide);
+        window.removeEventListener('blur', onBlur);
+        resolve(left);
+      }, 1800);
     });
   }
 
   /* The "Pay with" part of a payout sheet (kohal, 2026-11-02): a picker (Not using an app / PhonePe), a line saying who is
-     being paid and how, and an Open button. Returns { nodes, app() } - append `nodes` to the sheet; app() is the chosen app's
-     key or '' (so the caller can relabel its main button, and knows whether "Mark paid" is meant). `onChange` fires on every
-     change, `onError` gets the "couldn't open" message to show inside the sheet (a toast would sit underneath it). */
+     being paid and how, and the buttons to open the app. Returns { nodes, app() } - append `nodes` to the sheet; app() is the
+     chosen app's key or '' (so the caller can relabel its main button, and knows whether "Mark paid" is meant). `onChange`
+     fires on every change, `onError` gets a message to show inside the sheet (a toast would sit underneath it). */
   function payAppPicker({ name, amount, payee = {}, note = '', currency, initial = '', onChange = () => {}, onError = () => {} }) {
+    const val = (v) => (typeof v === 'function' ? v() : v);
     const sel = selectField([{ value: '', label: 'Not using an app' }, ...PAY_APPS.map((a) => ({ value: a.key, label: a.label }))],
       initial, { title: 'Pay with', placeholder: 'Not using an app' });
     const openBtn = h('button', { class: 'btn', type: 'button' }, '');
+    const upiBtn = h('button', { class: 'btn', type: 'button', hidden: true }, 'Choose from UPI apps');
     const hint = h('p', { class: 'hint' });
-    const box = h('div', {}, hint, openBtn);
+    const box = h('div', {}, hint, h('div', { class: 'btn-pair' }, openBtn, upiBtn));
     const current = () => PAY_APPS.find((a) => a.key === sel.value);
+    const toPay = () => ({ upi: (val(payee) || {}).upi_id, name: val(name), amount: val(amount), note });
     const sync = () => {
       const app = current();
       box.hidden = !app;
+      upiBtn.hidden = true;
       onError('');
       if (app) {
         openBtn.textContent = `Open ${app.label}`;
-        hint.textContent = payee.upi_id ? `Pays ${name} (${payee.upi_id}) ${money(amount, currency)}. Finish the payment in ${app.label}, come back, then tap Mark paid.`
-          : payee.phone ? `No UPI ID saved for ${name}. ${app.label} will open - pay ${money(amount, currency)} to ${payee.phone}, then come back and tap Mark paid.`
-            : `No UPI ID or mobile number saved for ${name} - add one in Employee management first.`;
+        const who = val(name);
+        const to = val(payee) || {};
+        const sum = money(Number(val(amount)) || 0, currency);
+        openBtn.hidden = !to.upi_id;
+        hint.textContent = to.upi_id ? `Pays ${who} (${to.upi_id}) ${sum}. Finish the payment in ${app.label}, come back, then tap Mark paid.`
+          : to.phone ? `No UPI ID saved for ${who}, so ${app.label} can't be filled in. Open ${app.label} yourself and pay ${sum} to ${to.phone}, then come back and tap Mark paid. (Save a UPI ID in Employee management and this opens it for you.)`
+            : `No UPI ID or mobile number saved for ${who} - add one in Employee management first.`;
       }
       onChange(app ? app.key : '');
     };
-    openBtn.onclick = async () => {
+    const attempt = async (via) => {
       const app = current();
       if (!app) return;
-      const opened = await openPayApp(app.key, { upi: payee.upi_id, name, amount, note });
-      onError(opened ? '' : `Couldn\u2019t open ${app.label} - is it installed on this phone?`);
+      const opened = await openPayApp(app.key, toPay(), via);
+      onError(opened ? '' : `Nothing opened. ${app.label} may not be installed, or this browser blocked it. Try Choose from UPI apps, or open ${app.label} yourself and pay from there.`);
+      upiBtn.hidden = opened;
     };
+    openBtn.onclick = () => attempt();
+    upiBtn.onclick = () => attempt('upi');
     sel.addEventListener('change', sync);
     sync();
-    return { nodes: [field('pay_app', 'Pay with', sel), box], app: () => (current() ? current().key : '') };
+    return { nodes: [field('pay_app', 'Pay with', sel), box], app: () => (current() ? current().key : ''), refresh: sync };
   }
 
   return {
