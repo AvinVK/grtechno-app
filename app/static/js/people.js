@@ -445,7 +445,7 @@
         field('experience', 'Experience', experienceInput, { wide: true }),
         field('skills', 'Skills', skillsInput, { wide: true }),
         field('phone', 'Mobile number', phoneInput),
-        field('upi_id', 'UPI ID', upiInput, { hint: 'Optional - lets Pay with PhonePe open already filled in.' }),
+        field('upi_id', 'UPI ID', upiInput, { hint: 'Optional - lets the Pay with apps (PhonePe, Google Pay) open already filled in.' }),
         field('joining_date', 'Joining date', joiningInput),
         field('employment_type', 'Salary, daily wages, or contractor', employmentSel),
         wageField,
