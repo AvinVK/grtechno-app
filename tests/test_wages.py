@@ -122,7 +122,11 @@ def test_a_day_with_no_attendance_data_yet_is_not_yet_not_absent(app):
     later_days = [d for d in data["days"] if d["date"] > start.isoformat()]
     if later_days:
         assert all(d["not_yet"] for d in later_days)
-        assert all(d["cumulative"] == 0.0 for d in later_days)
+        # Nothing is earned past the data, so the running total stays where day one left it. Day one itself can
+        # already be worth a day's wage (a slot that starts on a Sunday - the uncredited-Sunday rule), so compare
+        # against it rather than assuming 0.
+        first = next(d for d in data["days"] if d["date"] == start.isoformat())
+        assert all(d["cumulative"] == first["cumulative"] for d in later_days)
 
 
 def test_a_worker_with_no_wage_set_sees_no_current_or_completed(app):
