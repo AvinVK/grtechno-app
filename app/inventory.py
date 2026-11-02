@@ -688,7 +688,7 @@ def approve_material_request(movement_id):
     if movement is None:
         abort(404)
     _pending_or_409(movement)
-    if movement.created_by_code == g.user.code:
+    if movement.created_by_code == g.user.code and not g.user.is_admin:     # an admin may approve their own (kohal, 2026-11-02)
         abort(403, "Someone else needs to approve this - not whoever asked for it.")
     material = movement.material
     requested = movement.quantity
@@ -767,7 +767,7 @@ def reject_material_request(movement_id):
     if movement is None:
         abort(404)
     _pending_or_409(movement)
-    if movement.created_by_code == g.user.code:
+    if movement.created_by_code == g.user.code and not g.user.is_admin:
         abort(403, "Someone else needs to decide this - not whoever asked for it.")
     reject_movement(movement, g.user)
     db.session.commit()

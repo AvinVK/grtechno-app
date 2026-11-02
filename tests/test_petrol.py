@@ -217,28 +217,47 @@ def test_a_day_that_is_not_approved_cannot_be_asked_for(app):
     assert who.post(f"/api/petrol/{eid}/request-cash").status_code == 409
 
 
-def test_the_admin_or_accountant_pays_it_and_must_say_how(app, admin_client, accounts_client, manager_client):
+def test_only_the_admin_pays_it_and_must_say_how(app, admin_client, accounts_client, manager_client):
+    """kohal, 2026-11-02: "for petrol also do it admin-style" - paying is going through the bank accounts, so it is the
+    admin's alone; the accountant can look at the list."""
     who, eid = _approved_day(app, admin_client)
     who.post(f"/api/petrol/{eid}/request-cash")
 
     waiting = accounts_client.get("/api/petrol/requests").get_json()
     assert [p["id"] for p in waiting["pending"]] == [eid] and waiting["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
+    assert waiting["can_decide"] is False
     assert manager_client.get("/api/petrol/requests").status_code == 403
     assert manager_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 403
     assert who.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 403
+    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "GR BB"}).status_code == 403
+    assert accounts_client.post(f"/api/petrol/requests/{eid}/reject").status_code == 403
+    assert admin_client.get("/api/petrol/requests").get_json()["can_decide"] is True
 
-    no_mode = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={})
+    no_mode = admin_client.post(f"/api/petrol/requests/{eid}/approve", json={})
     assert no_mode.status_code == 422 and "payment_mode" in no_mode.get_json()["fields"]
-    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cheque"}).status_code == 422
-    done = accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "GR BB"})
+    assert admin_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "Cheque"}).status_code == 422
+    done = admin_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "GR BB"})
     assert done.status_code == 200 and done.get_json()["entry"]["cash_status"] == "paid"
 
     mine = who.get("/api/petrol/me").get_json()
     assert mine["paid_total"] == 80.0 and mine["unpaid_total"] == 0.0
-    assert mine["entries"][0]["cash_mode"] == "GR BB" and mine["entries"][0]["cash_decided_by_name"] == "Anil Accounts"
-    assert accounts_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 409
+    assert mine["entries"][0]["cash_mode"] == "GR BB" and mine["entries"][0]["cash_decided_by_name"] == "grtechno"
+    assert admin_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 409
     hist = admin_client.get("/api/petrol/requests").get_json()
     assert hist["pending"] == [] and [h["id"] for h in hist["history"]] == [eid]
+
+
+def test_a_petrol_request_carries_who_gets_paid_for_the_payment_app(app, admin_client):
+    from app.extensions import db
+    from app.models import Worker
+    who, eid = _approved_day(app, admin_client)
+    with app.app_context():
+        w = Worker.query.filter_by(petrol_enabled=True).first()
+        w.upi_id, w.phone = "rider@ybl", "9000000001"
+        db.session.commit()
+    who.post(f"/api/petrol/{eid}/request-cash")
+    row = admin_client.get("/api/petrol/requests").get_json()["pending"][0]
+    assert row["payee"] == {"upi_id": "rider@ybl", "phone": "9000000001"}
 
 
 def test_a_rejected_cash_request_can_be_asked_for_again(app, admin_client):

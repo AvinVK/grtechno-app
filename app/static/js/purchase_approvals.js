@@ -54,7 +54,7 @@
     } catch (err) { toast(err.message, true); }
   }
 
-  function row(r, cur) {
+  function row(r, cur, canDecide) {
     const sub = [fmtDate(r.entry_date), r.quantity != null ? `${r.quantity} ${r.unit || ''}`.trim() : null,
       r.supplier || null, r.created_by_name ? `Logged by ${r.created_by_name}` : null, r.note || null].filter(Boolean).join(' · ');
     return h('li', {}, h('div', { class: 'card me-row approval-row' },
@@ -62,9 +62,9 @@
         h('strong', {}, `${r.worker_name} · ${r.material_name}`),
         h('span', { class: 'hint' }, `${money(r.amount, cur)} · ${sub}`),
         r.bill_url ? h('a', { href: r.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill') : null),
-      h('div', { class: 'approval-actions' },
+      canDecide ? h('div', { class: 'approval-actions' },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => act(r, 'approve') }, 'Approve'),
-        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject'))));
+        h('button', { class: 'btn small', type: 'button', onclick: () => act(r, 'reject') }, 'Reject')) : null));
   }
 
   async function showApprovals() {
@@ -75,9 +75,10 @@
     catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     clear(view).append(h('div', {},
       tabs('approvals', data.pending.length, data.pending_request_count),
+      data.can_decide ? null : h('p', { class: 'hint' }, 'Only the admin can approve these.'),
       h('div', { class: 'list-head' }, h('h2', {}, `${data.pending.length} pending`)),
       data.pending.length
-        ? h('ul', { class: 'card-group' }, data.pending.map((r) => row(r, data.currency)))
+        ? h('ul', { class: 'card-group' }, data.pending.map((r) => row(r, data.currency, data.can_decide)))
         : h('p', { class: 'empty-state' }, 'Nothing waiting on approval right now.')));
   }
 
@@ -95,14 +96,15 @@
   }
 
   function requestRow(r, data, cur, reload) {
+    const canDecide = data.can_decide;
     return h('li', {}, h('div', { class: 'card me-row approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.worker_name} · ${money(r.amount, cur)}`),
         h('span', { class: 'hint' }, [fmtDate(r.created_at.slice(0, 10)), r.note || null].filter(Boolean).join(' · '))),
-      h('div', { class: 'approval-actions' },
+      canDecide ? h('div', { class: 'approval-actions' },
         h('button', { class: 'btn small primary', type: 'button',
           onclick: () => openGiveSheet(data, reload, { worker_id: r.worker_id, amount: r.amount, request_id: r.id }) }, 'Allocate'),
-        h('button', { class: 'btn small', type: 'button', onclick: () => rejectRequest(r, reload) }, 'Reject'))));
+        h('button', { class: 'btn small', type: 'button', onclick: () => rejectRequest(r, reload) }, 'Reject')) : null));
   }
 
   async function showRequests() {
@@ -113,6 +115,7 @@
     catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     clear(view).append(h('div', {},
       tabs('requests', data.pending_purchase_count, data.requests.length),
+      data.can_decide ? null : h('p', { class: 'hint' }, 'Only the admin can allocate cash.'),
       h('div', { class: 'list-head' }, h('h2', {}, `${data.requests.length} waiting`)),
       data.requests.length
         ? h('ul', { class: 'card-group' }, data.requests.map((r) => requestRow(r, data, data.currency, showRequests)))
@@ -156,12 +159,24 @@
         saveBtn.disabled = false;
       }
     };
+    // Someone on the fooding wallet (a daily-wage worker) is paid out of that wallet, not an admin account
+    // (kohal, 2026-11-02) - so for them the account box gives way to a line saying what is left there.
+    const accountField = field('payment_mode', 'Account', modeSel);
+    const walletNote = h('p', { class: 'hint' });
+    const syncSource = () => {
+      const w = data.workers.find((x) => String(x.id) === String(workerSel.value));
+      const wallet = w && w.fooding_remaining != null;
+      accountField.hidden = !!wallet;
+      walletNote.hidden = !wallet;
+      if (wallet) walletNote.textContent = `Paid from ${w.name}’s fooding balance · ${money(w.fooding_remaining, data.currency)} left. No bank account is debited.`;
+    };
+    const form = h('div', {}, field('worker_id', 'Employee', workerSel), field('amount', 'Amount', amountInput),
+      accountField, walletNote, field('note', 'Note', noteInput));
+    form.addEventListener('change', syncSource);
+    syncSource();
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Give cash'),
-      field('worker_id', 'Employee', workerSel),
-      field('amount', 'Amount', amountInput),
-      field('payment_mode', 'Account', modeSel),
-      field('note', 'Note', noteInput),
+      form,
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
     document.body.append(overlay);
@@ -187,7 +202,7 @@
       tabs('balances', data.pending_purchase_count, data.pending_request_count),
       h('div', { class: 'list-head' },
         h('h2', {}, `${data.accounts.length} ${data.accounts.length === 1 ? 'employee' : 'employees'}`),
-        h('button', { class: 'btn small', type: 'button', onclick: () => openGiveSheet(data, showBalances) }, '+ Allocate cash')),
+        data.can_decide ? h('button', { class: 'btn small', type: 'button', onclick: () => openGiveSheet(data, showBalances) }, '+ Allocate cash') : null),
       data.accounts.length
         ? h('ul', { class: 'card-group' }, data.accounts.map((a) => balanceRow(a, data.currency)))
         : h('p', { class: 'empty-state' }, 'Nobody has been given cash yet - use + Allocate cash to start.')));

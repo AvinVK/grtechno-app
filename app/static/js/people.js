@@ -351,6 +351,7 @@
     const experienceInput = text('experience', { maxlength: 200, autocomplete: 'off', placeholder: 'e.g. 5 years in fire systems' });
     const skillsInput = text('skills', { maxlength: 400, autocomplete: 'off' });
     const phoneInput = text('phone', { type: 'tel', maxlength: 40, autocomplete: 'off' });
+    const upiInput = text('upi_id', { maxlength: 80, autocomplete: 'off', autocapitalize: 'none', placeholder: 'name@bank' });
     const joiningInput = dateField(w.joining_date || '', { placeholder: 'Joining date' });
     // Salary, daily wages, or contractor (kohal, 2026-10-17: "make salary or daily wages as binary and
     // dropdown... single selection"; "add contractor as well") - always one of the three, never a blank
@@ -422,7 +423,7 @@
           await onSave({
             name: nameInput.value, role_key: roleSel.value || UNASSIGNED, age: ageInput.value,
             qualification: qualificationInput.value, experience: experienceInput.value, skills: skillsInput.value,
-            phone: phoneInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
+            phone: phoneInput.value, upi_id: upiInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
             wage_amount: wageInput.value === '' ? null : wageInput.value, fooding_opt_in: foodingInput.checked,
             petrol_enabled: petrolInput.checked,
             pf_number: pfInput.value, esic_number: esicInput.value, reference: referenceInput.value,
@@ -444,6 +445,7 @@
         field('experience', 'Experience', experienceInput, { wide: true }),
         field('skills', 'Skills', skillsInput, { wide: true }),
         field('phone', 'Mobile number', phoneInput),
+        field('upi_id', 'UPI ID', upiInput, { hint: 'Optional - lets Pay with PhonePe open already filled in.' }),
         field('joining_date', 'Joining date', joiningInput),
         field('employment_type', 'Salary, daily wages, or contractor', employmentSel),
         wageField,

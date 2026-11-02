@@ -148,6 +148,12 @@
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const payBtn = h('button', { class: 'btn primary', type: 'button' }, 'Approve and mark paid');
+    // Optionally pay through an app (kohal, 2026-11-02): it opens already filled in, then "Mark paid" records it.
+    const picker = LD.payAppPicker({
+      name: r.user_name, amount: r.amount, payee: r.payee || {}, note: 'Petrol', currency: cur,
+      onChange: (app) => { payBtn.textContent = app ? 'Mark paid & approve' : 'Approve and mark paid'; },
+      onError: (msg) => { errEl.textContent = msg; },
+    });
     const finish = closeOnBack(() => overlay.remove());
     overlay.onclick = (e) => { if (e.target === overlay) finish(); };
     cancelBtn.onclick = () => finish();
@@ -168,6 +174,7 @@
       h('h2', {}, `${r.user_name} · ${money(r.amount, cur)}`),
       h('p', { class: 'hint' }, `${fmtDate(r.work_date)} · ${r.km} km`),
       field('payment_mode', 'Account', modeSel),
+      ...picker.nodes,
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, payBtn)));
     document.body.append(overlay);
@@ -197,9 +204,9 @@
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.user_name} · ${money(r.amount, cur)}`),
         h('span', { class: 'hint' }, [fmtDate(r.work_date), `${r.km} km`, r.project_title, `asked ${fmtStamp(r.cash_requested_at)}`].filter(Boolean).join(' · '))),
-      h('div', { class: 'approval-actions' },
+      data.can_decide ? h('div', { class: 'approval-actions' },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => openPaySheet(r, data.payment_modes, cur, showRequests) }, 'Approve'),
-        h('button', { class: 'btn small', type: 'button', onclick: () => reject(r) }, 'Reject')));
+        h('button', { class: 'btn small', type: 'button', onclick: () => reject(r) }, 'Reject')) : null);
 
     const historyRow = (r) => h('li', { class: 'p-row' },
       h('span', { class: 'p-main' },

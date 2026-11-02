@@ -104,8 +104,9 @@ def _extra_tiles():
         from .models import FoodingEntry
         n = fooding_eligible_workers().count()
         # Allotments the other of admin / accountant asked for, waiting on this person (kohal, 2026-10-27).
-        waiting = FoodingEntry.query.filter(FoodingEntry.kind == "allot", FoodingEntry.status == "pending",
-                                             FoodingEntry.created_by_code != g.user.code).count()
+        # Only the admin approves these (kohal, 2026-11-02), so only the admin sees a "to approve" count.
+        waiting = (FoodingEntry.query.filter(FoodingEntry.kind == "allot", FoodingEntry.status == "pending").count()
+                   if g.user.is_admin else 0)
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
                        "sum": " · ".join(x for x in (f"{n} on fooding" if n else "", f"{waiting} to approve" if waiting else "") if x) or None})
     if can_manage_fooding(g.user):

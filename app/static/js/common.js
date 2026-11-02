@@ -498,7 +498,69 @@ window.LD = (() => {
     });
   }
 
+  /* Pay with an app (kohal, 2026-11-02: "choose an app to pay ... clicking on it actually opens phonepe app").
+     Opens the app already filled in for the payee, using its own link scheme; the app can't tell us whether the
+     payment went through, so the caller still has a "mark as paid" step. Resolves to true if the app took over the
+     screen, false if nothing happened (most likely it isn't installed, or this isn't a phone). */
+  const PAY_APPS = [{ key: 'phonepe', label: 'PhonePe', scheme: 'phonepe://pay' }];
+
+  function payLink(app, { upi, name, amount, note }) {
+    const part = (v) => encodeURIComponent(v).replace(/%40/g, '@');
+    const q = [['pa', upi], ['pn', name], ['am', Number(amount).toFixed(2)], ['cu', 'INR'], ['tn', note]]
+      .filter(([, v]) => v).map(([k, v]) => `${k}=${part(v)}`).join('&');
+    return `${app.scheme}?${q}`;
+  }
+
+  function openPayApp(appKey, payee) {
+    const app = PAY_APPS.find((a) => a.key === appKey);
+    if (!app) return Promise.resolve(false);
+    // With a UPI ID the app opens ready to pay; without one it just opens, and the caller shows the number to pay.
+    const url = payee.upi ? payLink(app, payee) : app.scheme.replace(/pay$/, '');
+    return new Promise((resolve) => {
+      let left = false;
+      const onHide = () => { if (document.visibilityState === 'hidden') left = true; };
+      document.addEventListener('visibilitychange', onHide);
+      window.location.href = url;
+      setTimeout(() => { document.removeEventListener('visibilitychange', onHide); resolve(left); }, 1500);
+    });
+  }
+
+  /* The "Pay with" part of a payout sheet (kohal, 2026-11-02): a picker (Not using an app / PhonePe), a line saying who is
+     being paid and how, and an Open button. Returns { nodes, app() } - append `nodes` to the sheet; app() is the chosen app's
+     key or '' (so the caller can relabel its main button, and knows whether "Mark paid" is meant). `onChange` fires on every
+     change, `onError` gets the "couldn't open" message to show inside the sheet (a toast would sit underneath it). */
+  function payAppPicker({ name, amount, payee = {}, note = '', currency, initial = '', onChange = () => {}, onError = () => {} }) {
+    const sel = selectField([{ value: '', label: 'Not using an app' }, ...PAY_APPS.map((a) => ({ value: a.key, label: a.label }))],
+      initial, { title: 'Pay with', placeholder: 'Not using an app' });
+    const openBtn = h('button', { class: 'btn', type: 'button' }, '');
+    const hint = h('p', { class: 'hint' });
+    const box = h('div', {}, hint, openBtn);
+    const current = () => PAY_APPS.find((a) => a.key === sel.value);
+    const sync = () => {
+      const app = current();
+      box.hidden = !app;
+      onError('');
+      if (app) {
+        openBtn.textContent = `Open ${app.label}`;
+        hint.textContent = payee.upi_id ? `Pays ${name} (${payee.upi_id}) ${money(amount, currency)}. Finish the payment in ${app.label}, come back, then tap Mark paid.`
+          : payee.phone ? `No UPI ID saved for ${name}. ${app.label} will open - pay ${money(amount, currency)} to ${payee.phone}, then come back and tap Mark paid.`
+            : `No UPI ID or mobile number saved for ${name} - add one in Employee management first.`;
+      }
+      onChange(app ? app.key : '');
+    };
+    openBtn.onclick = async () => {
+      const app = current();
+      if (!app) return;
+      const opened = await openPayApp(app.key, { upi: payee.upi_id, name, amount, note });
+      onError(opened ? '' : `Couldn\u2019t open ${app.label} - is it installed on this phone?`);
+    };
+    sel.addEventListener('change', sync);
+    sync();
+    return { nodes: [field('pay_app', 'Pay with', sel), box], app: () => (current() ? current().key : '') };
+  }
+
   return {
+    PAY_APPS, payLink, openPayApp, payAppPicker,
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
     pickList, selectField, searchField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
   };

@@ -17,6 +17,7 @@ this one buried under Me - Manage). The older per-category JSON APIs (/api/worke
 exactly admin-only as they were - they still use category, not role_key, since Leads relies on them
 server-side, not through a browser session (see app/api.py)."""
 
+import re
 from datetime import date, timedelta
 
 from flask import Blueprint, g, jsonify, redirect, render_template, request
@@ -28,6 +29,8 @@ from .extensions import db
 from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
 from .modules import can_write, check_module, has_module
 from .validation import Fields, parse_money
+
+UPI_ID = re.compile(r"^[A-Za-z0-9._\-]{2,64}@[A-Za-z][A-Za-z0-9]{1,30}$")
 
 EMPLOYMENT_TYPES = ("regular", "daily_wages", "contractor")
 
@@ -302,11 +305,16 @@ def _employee_fields(payload):
     f.text("experience", 200)
     f.text("skills", 400)
     f.text("phone", 40)
+    f.text("upi_id", 80)
     f.date("joining_date")
     f.text("pf_number", 60)
     f.text("esic_number", 60)
     f.text("reference", 200)
     data, errors = f.data, f.errors
+    # A UPI ID looks like name@bank (kohal, 2026-11-02) - optional, but if given it has to be one, since a payment
+    # app is opened with it.
+    if data.get("upi_id") and not UPI_ID.match(data["upi_id"]):
+        errors["upi_id"] = "Enter a UPI ID like name@bank"
 
     if "role_key" in payload:
         raw_role = payload["role_key"]

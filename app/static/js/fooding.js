@@ -10,7 +10,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, money, field, selectField, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, money, plural, field, selectField, closeOnBack } = window.LD;
   const view = $('#view');
   const mode = view.dataset.mode;
 
@@ -66,13 +66,32 @@
         h('span', { class: 'row-title' }, e.kind === 'allot' ? (forManager ? 'Credited' : 'Allotted to you') : (e.purpose || 'Expense')),
         h('span', { class: 'row-sub' }, [fmtDate(e.entry_date), e.payment_mode,
           e.created_by_name ? `${e.kind === 'allot' ? 'by' : 'logged by'} ${e.created_by_name}` : null].filter(Boolean).join(' · '))),
-      h('span', { class: 'row-value' }, (e.kind === 'allot' ? '+' : '−') + money(e.amount, cur)));
+      h('span', { class: `row-value ${e.kind === 'allot' ? 'acct-credit' : 'acct-debit'}` }, (e.kind === 'allot' ? '+' : '−') + money(e.amount, cur)));
+  }
+
+  // The automatic daily food deduction, as one row that opens into each day's amount (kohal, 2026-11-02: "when i
+  // click on that 1800, it should open everyday expense of 200 with date"). Days from before each day was stored
+  // are rebuilt from the allotment dates, so those carry an "estimated" note.
+  function dailyFoodRow(reg, cur) {
+    if (!(reg.auto_deducted > 0)) return null;
+    const days = reg.daily_food || [];
+    const estimated = days.some((d) => d.estimated);
+    return h('li', { class: 'daily-food' }, h('details', {},
+      h('summary', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, 'Daily food'),
+          h('span', { class: 'row-sub' }, `${money(reg.fooding.daily_amount, cur)}/day, deducted automatically · ${plural(days.length, 'day', 'days')}`)),
+        h('span', { class: 'row-value acct-debit' }, `−${money(reg.auto_deducted, cur)}`)),
+      h('ul', { class: 'daily-food-days' }, days.map((d) => h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, d.date ? fmtDate(d.date) : 'Earlier days'),
+          d.estimated ? h('span', { class: 'row-sub' }, 'estimated') : null),
+        h('span', { class: 'row-value acct-debit' }, `−${money(d.amount, cur)}`)))),
+      estimated ? h('p', { class: 'hint' }, 'Days marked estimated were taken before each day was recorded; their dates are worked out from when money was allotted, so a paused spell isn’t reflected.') : null));
   }
 
   function openExpenseSheet(paymentModes, cur) {
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal' });
-    const modeSel = selectField(paymentModes, '', { title: 'Account', placeholder: 'Choose an account' });
     const purposeInput = h('input', { type: 'text', maxlength: 200, autocomplete: 'off', placeholder: 'e.g. Bus fare to site' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -85,7 +104,7 @@
       errEl.textContent = '';
       try {
         const res = await api('/api/fooding/me/expenses', {
-          method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value, purpose: purposeInput.value },
+          method: 'POST', body: { amount: amountInput.value, purpose: purposeInput.value },
         });
         finish();
         toast('Expense added');
@@ -98,7 +117,6 @@
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Add expense'),
       field('amount', 'Amount', amountInput),
-      field('payment_mode', 'Account', modeSel),
       field('purpose', 'What was it for', purposeInput),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
@@ -213,8 +231,8 @@
           h('span', { class: 'stat-note' }, `Daily food deducted: ${money(reg.auto_deducted, cur)}`))),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Register'),
-        entries.length
-          ? h('ul', { class: 'card-group' }, entries.map(entryRow(cur, { forManager: true })))
+        entries.length || reg.auto_deducted > 0
+          ? h('ul', { class: 'card-group' }, [dailyFoodRow(reg, cur), ...entries.map(entryRow(cur, { forManager: true }))].filter(Boolean))
           : h('p', { class: 'hint' }, 'Nothing credited or spent yet.')),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Add to balance'),
@@ -258,6 +276,12 @@
       const errEl = h('p', { class: 'err', role: 'alert' });
       const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
       const okBtn = h('button', { class: 'btn primary', type: 'button' }, 'Approve');
+      // Optionally pay through an app (kohal, 2026-11-02): it opens already filled in, then "Mark paid & approve" records it.
+      const picker = LD.payAppPicker({
+        name: r.worker_name, amount: r.amount, payee: r.payee || {}, note: 'Fooding', currency: cur, initial: r.auto ? 'phonepe' : '',
+        onChange: (app) => { okBtn.textContent = app ? 'Mark paid & approve' : 'Approve'; },
+        onError: (msg) => { errEl.textContent = msg; },
+      });
       const finish = closeOnBack(() => overlay.remove());
       overlay.onclick = (e) => { if (e.target === overlay) finish(); };
       cancelBtn.onclick = () => finish();
@@ -278,6 +302,7 @@
         h('h2', {}, 'Approve fooding'),
         h('p', { class: 'hint' }, `${r.worker_name} · ${money(r.amount, cur)}`),
         field('payment_mode', 'Paid from account', modeSel),
+        ...picker.nodes,
         errEl,
         h('div', { class: 'confirm-actions' }, cancelBtn, okBtn)));
       document.body.append(overlay);
@@ -286,7 +311,7 @@
     const activeRow = (r) => h('li', { class: 'card approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.worker_name} \u00b7 ${money(r.amount, cur)}`),
-        h('span', { class: 'hint' }, [r.payment_mode, `asked by ${r.created_by_name || 'someone'}`, fmtDate(r.entry_date)].join(' \u00b7 ')),
+        h('span', { class: 'hint' }, [r.payment_mode, (r.auto ? 'automatic request - balance is low' : `asked by ${r.created_by_name || 'someone'}`), fmtDate(r.entry_date)].filter(Boolean).join(' \u00b7 ')),
         r.is_mine ? h('span', { class: 'hint' }, 'Waiting for the other of admin / accountant to approve') : null),
       h('div', { class: 'approval-actions' },
         r.can_decide ? h('button', { class: 'btn small primary', type: 'button', onclick: () => openApproveSheet(r) }, 'Approve') : null,
@@ -296,7 +321,7 @@
     const historyRow = (r) => h('li', { class: 'p-row' },
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, r.worker_name),
-        h('span', { class: 'row-sub' }, [fmtDate(r.entry_date), r.payment_mode, r.created_by_name ? `asked by ${r.created_by_name}` : null,
+        h('span', { class: 'row-sub' }, [fmtDate(r.entry_date), r.payment_mode, r.auto ? 'automatic request' : (r.created_by_name ? `asked by ${r.created_by_name}` : null),
           r.decided_by_name ? `${r.status === 'cancelled' ? 'withdrawn' : r.status} by ${r.decided_by_name}` : null].filter(Boolean).join(' \u00b7 ')),
         h('span', { class: `chip ${STATUS[r.status][1]}` }, STATUS[r.status][0])),
       h('span', { class: 'row-value' }, money(r.amount, cur)));

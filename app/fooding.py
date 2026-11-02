@@ -23,7 +23,7 @@ this needed so an already-eligible daily-wage worker didn't silently lose it whe
 
 See FoodingAccount in app/models.py for how the running balance is kept current without a scheduled job."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
@@ -42,6 +42,10 @@ api_errors(bp)
 # online/UPI") - a fixed pair, not the general PAYMENT_MODES list (Cheque/Bank transfer/Other don't apply
 # to handing cash or a UPI transfer to someone in person).
 PAYMENT_MODES = tuple(PAYMENT_ACCOUNTS)       # the same accounts as everywhere else (kohal, 2026-10-31)
+
+# What an employee's own expense (and cash given to them out of their wallet) is recorded as paid from (kohal,
+# 2026-11-02: "the source has to be his fooding budget and not these accounts") - not one of the admin's accounts.
+FOODING_SOURCE = "Fooding balance"
 
 
 def _manage_only():
@@ -82,7 +86,23 @@ def account_for(worker, *, create=False):
                                   allotted_total=Decimal("0"), deducted_total=Decimal("0"), is_paused=False)
         db.session.add(account)
     account.settle()
+    raise_auto_topup(account)
     return account
+
+
+def raise_auto_topup(account):
+    """Ask the admin for more when the balance can no longer pay a day's food (kohal, 2026-11-02: "only if fooding is
+    <200, it should raise auto request for 1500rs ... only admin can approve this and send money"). One at a time, only
+    for someone who has been funded before (a brand new account is not "running low"), and not while paused (nothing
+    is being deducted). It has no person behind it (created_by_code is None) - see _decide_request for who may decide
+    it. Nothing runs on a schedule here, so it appears the next time the account is read."""
+    if account.is_paused or account.allotted_total <= 0 or account.remaining >= FoodingAccount.DAILY_AMOUNT:
+        return
+    if any(e.kind == "allot" and e.status == "pending" for e in account.entries):
+        return
+    db.session.add(FoodingEntry(account=account, kind="allot", amount=FoodingAccount.AUTO_TOPUP, payment_mode="",
+                                purpose=FoodingEntry.AUTO_PURPOSE, status="pending", entry_date=today_local(),
+                                created_by_code=None))
 
 
 def _approved(entries):
@@ -161,7 +181,9 @@ def add_my_expense():
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
     account = account_for(worker, create=True)
-    amount, mode, errors = _amount_and_mode(payload, balance_cap=account.remaining)
+    amount, _mode, errors = _amount_and_mode(payload, balance_cap=account.remaining)
+    errors.pop("payment_mode", None)            # no account to pick - it always comes out of their own balance
+    mode = FOODING_SOURCE
     purpose = str(payload.get("purpose") or "").strip()[:200]
     if not purpose:
         errors.setdefault("purpose", "Say what it was for")
@@ -187,6 +209,36 @@ def list_fooding():
                    payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
 
 
+def _daily_food(account, auto):
+    """Every day the automatic food deduction was taken, newest first, as {date, amount, estimated}.
+
+    Days taken since FoodingDeduction existed are exact. Anything taken before that (`auto` less what is recorded)
+    wasn't stored per day, so it is rebuilt: from the day after each allotment, DAILY_AMOUNT a day while there was
+    money, until that earlier total is used up. Pauses weren't recorded either, so these are marked estimated."""
+    rows = [{"date": d.day.isoformat(), "amount": float(d.amount), "estimated": False} for d in account.deductions]
+    earlier = auto - sum((d.amount for d in account.deductions), Decimal("0"))
+    if earlier > 0:
+        allots = sorted(((e.decided_at.date() if e.decided_at else e.entry_date), e.amount)
+                        for e in account.entries if e.kind == "allot" and e.status == "approved")
+        first_recorded = min((d.day for d in account.deductions), default=None)
+        end = (first_recorded or today_local() + timedelta(days=1)) - timedelta(days=1)
+        balance, i = Decimal("0"), 0
+        day = allots[0][0] if allots else end
+        while earlier > 0 and day <= end:
+            take = min(FoodingAccount.DAILY_AMOUNT, balance, earlier)      # what was there before today's allotments
+            if take > 0:
+                rows.append({"date": day.isoformat(), "amount": float(take), "estimated": True})
+                balance -= take
+                earlier -= take
+            while i < len(allots) and allots[i][0] <= day:                 # money allotted today is first used tomorrow
+                balance += allots[i][1]
+                i += 1
+            day += timedelta(days=1)
+        if earlier > 0:                                 # could not be placed on a day - keep the total honest
+            rows.append({"date": None, "amount": float(earlier), "estimated": True})
+    return sorted(rows, key=lambda r: r["date"] or "", reverse=True)
+
+
 @bp.get("/api/fooding/<int:worker_id>")
 def register(worker_id):
     """One person's fooding register (kohal, 2026-10-27: "when clicking on one daily wages person, it should
@@ -202,6 +254,7 @@ def register(worker_id):
     auto = (account.deducted_total - spent) if account else Decimal("0")
     return jsonify(fooding=account.to_dict() if account else _empty_dict(worker),
                    entries=[e.to_dict() for e in entries], auto_deducted=float(max(auto, Decimal("0"))),
+                   daily_food=_daily_food(account, max(auto, Decimal("0"))) if account else [],
                    payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
 
 
@@ -242,6 +295,10 @@ def list_requests():
     """Active requests (waiting for the other person) and the history of every one decided since (kohal,
     2026-10-27: "a subtab or request in fooding tab where one can see active request and history")."""
     _manage_only()
+    # Catch every account up to today first, so a balance that has just run low has its automatic request in the list.
+    for w in _fooding_eligible_query().all():
+        account_for(w)
+    db.session.commit()
     pending = (FoodingEntry.query.filter_by(kind="allot", status="pending")
                .order_by(FoodingEntry.created_at).all())
     history = (FoodingEntry.query.filter(FoodingEntry.kind == "allot", FoodingEntry.status != "pending")
@@ -249,8 +306,11 @@ def list_requests():
     rows = []
     for e in pending:
         d = e.to_dict()
-        d["can_decide"] = e.created_by_code != g.user.code       # someone else asked - this person may decide
+        # Someone else asked - this person may decide; the app's own top-up request is the admin's alone.
+        d["can_decide"] = g.user.is_admin
         d["is_mine"] = e.created_by_code == g.user.code
+        # Who the money goes to, for opening a payment app already filled in (kohal, 2026-11-02).
+        d["payee"] = {"upi_id": e.account.worker.upi_id or "", "phone": e.account.worker.phone or ""}
         rows.append(d)
     return jsonify(pending=rows, history=[e.to_dict() for e in history], payment_modes=list(PAYMENT_MODES),
                    currency=settings_for_client()["currency"])
@@ -258,11 +318,14 @@ def list_requests():
 
 def _decide_request(entry_id, status):
     _manage_only()
+    # Only the admin approves or rejects (kohal, 2026-11-02: "for all the cash approvals ... only admin can approve it
+    # since only admin can open the phonepe app and pay through the bank accounts"). That includes a request the
+    # admin made themselves - there is no longer a second person to hand it to.
+    if not g.user.is_admin:
+        abort(403, "Only the admin can approve or reject fooding money - it is paid out through the bank accounts.")
     entry = _request_or_404(entry_id)
     if entry.status != "pending":
         abort(409, "This request has already been decided.")
-    if entry.created_by_code == g.user.code:
-        abort(403, "Someone else has to approve this - you made the request.")
     if status == "approved":
         # The approver says which account the money is debited from (kohal, 2026-10-31); the one it was asked
         # from is the starting point, used as is when nothing is sent.
