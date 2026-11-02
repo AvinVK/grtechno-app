@@ -31,55 +31,59 @@ def worker_user(app, name="Deepak Daily", pin="285193", employment_type="contrac
 
 # ---------- admin/accountant: giving cash ----------
 
-def test_only_admin_or_accountant_can_give_or_see_pending(client, accounts_client, admin_client):
+def test_only_admin_or_accountant_can_see_pending_but_only_the_admin_can_give(client, accounts_client, admin_client):
+    """kohal, 2026-11-02: only the admin hands cash over - it is paid out through the bank accounts."""
     wid = add_worker()
     assert client.post(f"/api/cash-purchases/{wid}/give", json={"amount": 100, "payment_mode": "CASH"}).status_code == 403
     assert client.get("/api/cash-purchases/pending").status_code == 403
-    assert accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": 100, "payment_mode": "CASH"}).status_code == 200
-    assert admin_client.get("/api/cash-purchases/pending").status_code == 200
+    assert accounts_client.get("/api/cash-purchases/pending").status_code == 200           # can look ...
+    assert accounts_client.get("/api/cash-purchases/pending").get_json()["can_decide"] is False
+    assert accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": 100, "payment_mode": "CASH"}).status_code == 403
+    assert admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": 100, "payment_mode": "CASH"}).status_code == 200
+    assert admin_client.get("/api/cash-purchases/pending").get_json()["can_decide"] is True
 
 
-def test_giving_cash_creates_the_account(accounts_client):
+def test_giving_cash_creates_the_account(admin_client):
     wid = add_worker()
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     assert res.status_code == 200
     body = res.get_json()["account"]
     assert body["given_total"] == 2000.0 and body["spent_total"] == 0.0 and body["remaining"] == 2000.0
 
 
-def test_a_second_give_adds_to_the_balance_not_replaces_it(accounts_client):
+def test_a_second_give_adds_to_the_balance_not_replaces_it(admin_client):
     wid = add_worker()
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "CASH"})
     assert res.get_json()["account"]["given_total"] == 2500.0
 
 
-def test_give_amount_must_be_a_positive_number(accounts_client):
+def test_give_amount_must_be_a_positive_number(admin_client):
     wid = add_worker()
     for bad in ("0", "-5", "abc", ""):
-        res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": bad, "payment_mode": "CASH"})
+        res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": bad, "payment_mode": "CASH"})
         assert res.status_code == 422 and "amount" in res.get_json()["fields"], bad
 
 
-def test_give_requires_a_valid_payment_mode(accounts_client):
+def test_give_requires_a_valid_payment_mode(admin_client):
     wid = add_worker()
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500"})
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500"})
     assert res.status_code == 422 and "payment_mode" in res.get_json()["fields"]
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "Cheque"})
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "Cheque"})
     assert res.status_code == 422 and "payment_mode" in res.get_json()["fields"]
 
 
-def test_giving_cash_to_an_unknown_worker_is_a_404(accounts_client):
-    res = accounts_client.post("/api/cash-purchases/999999/give", json={"amount": "500", "payment_mode": "CASH"})
+def test_giving_cash_to_an_unknown_worker_is_a_404(admin_client):
+    res = admin_client.post("/api/cash-purchases/999999/give", json={"amount": "500", "payment_mode": "CASH"})
     assert res.status_code == 404
 
 
-def test_any_worker_can_receive_cash_no_opt_in_needed(accounts_client):
+def test_any_worker_can_receive_cash_no_opt_in_needed(admin_client):
     """Unlike fooding, there's no eligibility checkbox - anyone with a Worker row can be given cash."""
     salaried = Worker(name="Sanjay Salary", category="staff", employment_type="regular")
     db.session.add(salaried)
     db.session.commit()
-    res = accounts_client.post(f"/api/cash-purchases/{salaried.id}/give", json={"amount": "300", "payment_mode": "CASH"})
+    res = admin_client.post(f"/api/cash-purchases/{salaried.id}/give", json={"amount": "300", "payment_mode": "CASH"})
     assert res.status_code == 200
 
 
@@ -96,9 +100,9 @@ def test_a_worker_with_nothing_given_yet_sees_no_account_not_an_error(app):
     assert data["account"] is None and data["entries"] == []
 
 
-def test_a_worker_sees_their_own_account_once_given_cash(app, accounts_client):
+def test_a_worker_sees_their_own_account_once_given_cash(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1500", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1500", "payment_mode": "CASH"})
     data = who.get("/api/cash-purchases/me").get_json()
     assert data["account"]["given_total"] == 1500.0 and data["account"]["remaining"] == 1500.0
 
@@ -113,9 +117,9 @@ def test_logging_a_purchase_needs_cash_given_first(app):
     assert res.status_code == 422
 
 
-def test_logging_a_purchase_creates_a_pending_entry(app, accounts_client):
+def test_logging_a_purchase_creates_a_pending_entry(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     res = who.post("/api/cash-purchases/me", json={
         "entry_date": "2026-10-21", "material_name": "Diesel", "quantity": "10", "unit": "litres",
         "amount": "900", "supplier": "Highway Fuels", "note": "For the site generator",
@@ -131,9 +135,9 @@ def test_logging_a_purchase_creates_a_pending_entry(app, accounts_client):
     assert account["spent_total"] == 0.0 and account["remaining"] == 2000.0
 
 
-def test_purchase_needs_material_name_and_a_positive_amount(app, accounts_client):
+def test_purchase_needs_material_name_and_a_positive_amount(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     res = who.post("/api/cash-purchases/me", json={"material_name": "", "amount": "500"})
     assert res.status_code == 422 and "material_name" in res.get_json()["fields"]
     res = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "0"})
@@ -142,9 +146,9 @@ def test_purchase_needs_material_name_and_a_positive_amount(app, accounts_client
     assert res.status_code == 422 and "amount" in res.get_json()["fields"]
 
 
-def test_purchase_quantity_is_optional_but_must_be_positive_if_given(app, accounts_client):
+def test_purchase_quantity_is_optional_but_must_be_positive_if_given(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     res = who.post("/api/cash-purchases/me", json={"material_name": "Toll receipt", "amount": "80"})
     assert res.status_code == 201 and res.get_json()["entry"]["quantity"] is None
 
@@ -152,63 +156,62 @@ def test_purchase_quantity_is_optional_but_must_be_positive_if_given(app, accoun
     assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
 
 
-def test_a_purchase_defaults_to_todays_date(app, accounts_client):
+def test_a_purchase_defaults_to_todays_date(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     res = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "80"})
     assert res.get_json()["entry"]["entry_date"]   # some ISO date, not blank
 
 
 # ---------- approving / rejecting ----------
 
-def test_approving_a_purchase_deducts_the_balance(app, accounts_client):
+def test_approving_a_purchase_deducts_the_balance(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
 
-    res = accounts_client.post(f"/api/cash-purchases/{entry_id}/approve")
+    res = admin_client.post(f"/api/cash-purchases/{entry_id}/approve")
     assert res.status_code == 200
     entry = res.get_json()["entry"]
-    assert entry["status"] == "approved" and entry["approved_by_name"] == "Anil Accounts"
+    assert entry["status"] == "approved" and entry["approved_by_name"] == "grtechno"
 
     account = who.get("/api/cash-purchases/me").get_json()["account"]
     assert account["spent_total"] == 900.0 and account["remaining"] == 1100.0
 
 
-def test_spending_more_than_given_leaves_remaining_negative(app, accounts_client):
+def test_spending_more_than_given_leaves_remaining_negative(app, admin_client):
     """No stock-style ceiling here - cash can be overspent, the employee is just owed the difference back."""
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "700"}).get_json()["entry"]["id"]
-    accounts_client.post(f"/api/cash-purchases/{entry_id}/approve")
+    admin_client.post(f"/api/cash-purchases/{entry_id}/approve")
     account = who.get("/api/cash-purchases/me").get_json()["account"]
     assert account["remaining"] == -200.0
 
 
-def test_rejecting_a_purchase_leaves_the_balance_untouched(app, accounts_client):
+def test_rejecting_a_purchase_leaves_the_balance_untouched(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
 
-    res = accounts_client.post(f"/api/cash-purchases/{entry_id}/reject")
+    res = admin_client.post(f"/api/cash-purchases/{entry_id}/reject")
     assert res.status_code == 200 and res.get_json()["entry"]["status"] == "rejected"
     account = who.get("/api/cash-purchases/me").get_json()["account"]
     assert account["spent_total"] == 0.0 and account["remaining"] == 2000.0
 
 
-def test_cannot_approve_or_reject_twice(app, accounts_client):
+def test_cannot_approve_or_reject_twice(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
-    accounts_client.post(f"/api/cash-purchases/{entry_id}/approve")
-    assert accounts_client.post(f"/api/cash-purchases/{entry_id}/approve").status_code == 409
-    assert accounts_client.post(f"/api/cash-purchases/{entry_id}/reject").status_code == 409
+    admin_client.post(f"/api/cash-purchases/{entry_id}/approve")
+    assert admin_client.post(f"/api/cash-purchases/{entry_id}/approve").status_code == 409
+    assert admin_client.post(f"/api/cash-purchases/{entry_id}/reject").status_code == 409
 
 
-def test_the_logger_cannot_approve_or_reject_their_own_purchase(app, admin_client):
-    """kohal, 2026-10-21: "approved by admin" - an accountant who also logged it can't sign off their own,
-    same ban as a material request. An accountant can have a Worker row of their own (e.g. they're also on
-    site sometimes), same as "Anil Accounts" elsewhere in this app's own tests."""
+def test_an_accountant_cannot_approve_or_reject_a_purchase_only_the_admin_can(app, admin_client):
+    """kohal, 2026-11-02: "only admin can approve it since only admin can open the phonepe app and pay through the
+    bank accounts" - an accountant (who may also have a Worker row, and log purchases) can look but not decide."""
     accountant = make_user("Anil Accounts", role="accounts")
     requester = signed_in(app, accountant)
     with app.app_context():
@@ -222,34 +225,44 @@ def test_the_logger_cannot_approve_or_reject_their_own_purchase(app, admin_clien
     assert requester.post(f"/api/cash-purchases/{entry_id}/approve").status_code == 403
     assert requester.post(f"/api/cash-purchases/{entry_id}/reject").status_code == 403
     other = signed_in(app, make_user("Other Accounts", role="accounts"))
-    assert other.post(f"/api/cash-purchases/{entry_id}/approve").status_code == 200
+    assert other.post(f"/api/cash-purchases/{entry_id}/approve").status_code == 403
+    assert admin_client.post(f"/api/cash-purchases/{entry_id}/approve").status_code == 200
 
 
-def test_pending_list_only_shows_pending_entries(app, accounts_client):
+def test_an_accountant_cannot_decide_a_cash_request_either(app, admin_client, accounts_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    rid = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]["id"]
+    assert accounts_client.get("/api/cash-purchases/requests").get_json()["can_decide"] is False
+    assert accounts_client.post(f"/api/cash-purchases/requests/{rid}/reject").status_code == 403
+    assert accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH", "request_id": rid}).status_code == 403
+    assert admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH", "request_id": rid}).status_code == 200
+
+
+def test_pending_list_only_shows_pending_entries(app, admin_client):
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     e1 = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
     e2 = who.post("/api/cash-purchases/me", json={"material_name": "Cement", "amount": "400"}).get_json()["entry"]["id"]
-    accounts_client.post(f"/api/cash-purchases/{e1}/approve")
+    admin_client.post(f"/api/cash-purchases/{e1}/approve")
 
-    ids = [p["id"] for p in accounts_client.get("/api/cash-purchases/pending").get_json()["pending"]]
+    ids = [p["id"] for p in admin_client.get("/api/cash-purchases/pending").get_json()["pending"]]
     assert e2 in ids and e1 not in ids
 
 
-def test_pending_response_includes_workers_and_payment_modes_for_the_give_sheet(accounts_client):
+def test_pending_response_includes_workers_and_payment_modes_for_the_give_sheet(admin_client):
     add_worker("Ramesh Welder")
-    data = accounts_client.get("/api/cash-purchases/pending").get_json()
+    data = admin_client.get("/api/cash-purchases/pending").get_json()
     assert any(w["name"] == "Ramesh Welder" for w in data["workers"])
     assert data["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
 
 
-def test_mes_entries_show_every_status_newest_first(app, accounts_client):
+def test_mes_entries_show_every_status_newest_first(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     e1 = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
     e2 = who.post("/api/cash-purchases/me", json={"material_name": "Cement", "amount": "400"}).get_json()["entry"]["id"]
-    accounts_client.post(f"/api/cash-purchases/{e1}/approve")
-    accounts_client.post(f"/api/cash-purchases/{e2}/reject")
+    admin_client.post(f"/api/cash-purchases/{e1}/approve")
+    admin_client.post(f"/api/cash-purchases/{e2}/reject")
 
     entries = who.get("/api/cash-purchases/me").get_json()["entries"]
     statuses = {e["id"]: e["status"] for e in entries}
@@ -258,18 +271,18 @@ def test_mes_entries_show_every_status_newest_first(app, accounts_client):
 
 # ---------- the bill (uploaded after the fact) ----------
 
-def test_bill_upload_needs_a_file(app, accounts_client):
+def test_bill_upload_needs_a_file(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
     res = who.post(f"/api/cash-purchases/{entry_id}/bill", data={})
     assert res.status_code == 422
 
 
-def test_bill_upload_and_delete_by_the_logger(app, accounts_client):
+def test_bill_upload_and_delete_by_the_logger(app, admin_client):
     import io
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
 
     res = who.post(f"/api/cash-purchases/{entry_id}/bill", data={"bill": (io.BytesIO(b"fake"), "bill.jpg", "image/jpeg")},
@@ -280,10 +293,10 @@ def test_bill_upload_and_delete_by_the_logger(app, accounts_client):
     assert res.status_code == 200 and res.get_json()["entry"]["bill_url"] is None
 
 
-def test_bill_upload_blocked_for_someone_else(app, accounts_client):
+def test_bill_upload_blocked_for_someone_else(app, admin_client):
     import io
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     entry_id = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
 
     other, _ = worker_user(app, name="Other Worker", pin="193857")
@@ -292,7 +305,7 @@ def test_bill_upload_blocked_for_someone_else(app, accounts_client):
     assert res.status_code == 403
 
     # the admin/accountant can still attach one on someone else's behalf
-    res = accounts_client.post(f"/api/cash-purchases/{entry_id}/bill", data={"bill": (io.BytesIO(b"fake"), "bill.jpg", "image/jpeg")},
+    res = admin_client.post(f"/api/cash-purchases/{entry_id}/bill", data={"bill": (io.BytesIO(b"fake"), "bill.jpg", "image/jpeg")},
                                 content_type="multipart/form-data")
     assert res.status_code == 201
 
@@ -322,9 +335,9 @@ def test_admin_and_accountant_get_a_purchase_approval_tile_next_to_fooding(admin
         assert 'href="/fooding"' in html   # both tiles together, same grid
 
 
-def test_the_purchase_approval_tile_shows_how_many_are_pending(app, admin_client, accounts_client):
+def test_the_purchase_approval_tile_shows_how_many_are_pending(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"})
     who.post("/api/cash-purchases/me", json={"material_name": "Cement", "amount": "400"})
 
@@ -351,10 +364,10 @@ def test_accounts_needs_admin_or_accountant(client, accounts_client, admin_clien
     assert admin_client.get("/api/cash-purchases/accounts").status_code == 200
 
 
-def test_accounts_only_lists_workers_whove_actually_been_given_cash(app, admin_client, accounts_client):
+def test_accounts_only_lists_workers_whove_actually_been_given_cash(app, admin_client):
     who, wid = worker_user(app)
     never_given = add_worker("Never Given Anything")
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1500", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1500", "payment_mode": "CASH"})
 
     data = admin_client.get("/api/cash-purchases/accounts").get_json()
     ids = [a["worker_id"] for a in data["accounts"]]
@@ -363,42 +376,42 @@ def test_accounts_only_lists_workers_whove_actually_been_given_cash(app, admin_c
     assert row["given_total"] == 1500.0 and row["spent_total"] == 0.0 and row["remaining"] == 1500.0
 
 
-def test_accounts_includes_workers_and_payment_modes_for_the_give_sheet(accounts_client):
+def test_accounts_includes_workers_and_payment_modes_for_the_give_sheet(admin_client):
     add_worker("Ramesh Welder")
-    data = accounts_client.get("/api/cash-purchases/accounts").get_json()
+    data = admin_client.get("/api/cash-purchases/accounts").get_json()
     assert any(w["name"] == "Ramesh Welder" for w in data["workers"])
     assert data["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
 
 
-def test_worker_history_needs_admin_or_accountant(app, client, accounts_client):
+def test_worker_history_needs_admin_or_accountant(app, client, admin_client):
     who, wid = worker_user(app)
     assert client.get(f"/api/cash-purchases/{wid}").status_code == 403
-    assert accounts_client.get(f"/api/cash-purchases/{wid}").status_code == 200
+    assert admin_client.get(f"/api/cash-purchases/{wid}").status_code == 200
 
 
-def test_worker_history_shows_every_entry_regardless_of_status(app, accounts_client):
+def test_worker_history_shows_every_entry_regardless_of_status(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     e1 = who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"}).get_json()["entry"]["id"]
     e2 = who.post("/api/cash-purchases/me", json={"material_name": "Cement", "amount": "400"}).get_json()["entry"]["id"]
-    accounts_client.post(f"/api/cash-purchases/{e1}/approve")
-    accounts_client.post(f"/api/cash-purchases/{e2}/reject")
+    admin_client.post(f"/api/cash-purchases/{e1}/approve")
+    admin_client.post(f"/api/cash-purchases/{e2}/reject")
 
-    data = accounts_client.get(f"/api/cash-purchases/{wid}").get_json()
+    data = admin_client.get(f"/api/cash-purchases/{wid}").get_json()
     assert data["worker"]["name"] == "Deepak Daily"
     assert data["account"]["remaining"] == 1100.0
     statuses = {e["id"]: e["status"] for e in data["entries"]}
     assert statuses[e1] == "approved" and statuses[e2] == "rejected"
 
 
-def test_worker_history_for_a_worker_never_given_cash_shows_no_account(accounts_client):
+def test_worker_history_for_a_worker_never_given_cash_shows_no_account(admin_client):
     wid = add_worker("Never Given Anything")
-    data = accounts_client.get(f"/api/cash-purchases/{wid}").get_json()
+    data = admin_client.get(f"/api/cash-purchases/{wid}").get_json()
     assert data["account"] is None and data["entries"] == []
 
 
-def test_worker_history_for_an_unknown_worker_is_a_404(accounts_client):
-    assert accounts_client.get("/api/cash-purchases/999999").status_code == 404
+def test_worker_history_for_an_unknown_worker_is_a_404(admin_client):
+    assert admin_client.get("/api/cash-purchases/999999").status_code == 404
 
 
 # ---------- cash requests (kohal, 2026-10-21): the employee's own ask, before anything is given ----------
@@ -452,48 +465,48 @@ def test_cannot_have_two_pending_requests_at_once(app):
     assert res.status_code == 409
 
 
-def test_a_new_request_is_fine_once_the_old_one_is_resolved(app, accounts_client):
+def test_a_new_request_is_fine_once_the_old_one_is_resolved(app, admin_client):
     who, wid = worker_user(app)
     first = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
-    accounts_client.post(f"/api/cash-purchases/requests/{first['id']}/reject", json={})
+    admin_client.post(f"/api/cash-purchases/requests/{first['id']}/reject", json={})
     second = who.post("/api/cash-purchases/requests", json={"amount": "3000"})
     assert second.status_code == 201
 
 
-def test_own_requests_show_up_in_my_cash_purchases(app, accounts_client):
+def test_own_requests_show_up_in_my_cash_purchases(app, admin_client):
     who, wid = worker_user(app)
     who.post("/api/cash-purchases/requests", json={"amount": "2000"})
     data = who.get("/api/cash-purchases/me").get_json()
     assert len(data["requests"]) == 1 and data["requests"][0]["amount"] == 2000.0
 
 
-def test_pending_requests_list_includes_workers_and_payment_modes(app, accounts_client):
+def test_pending_requests_list_includes_workers_and_payment_modes(app, admin_client):
     who, wid = worker_user(app)
     who.post("/api/cash-purchases/requests", json={"amount": "2000"})
-    data = accounts_client.get("/api/cash-purchases/requests").get_json()
+    data = admin_client.get("/api/cash-purchases/requests").get_json()
     assert len(data["requests"]) == 1 and data["requests"][0]["worker_id"] == wid
     assert any(w["id"] == wid for w in data["workers"]) and data["payment_modes"]
 
 
-def test_rejecting_a_request_gives_nothing_and_closes_it(app, accounts_client):
+def test_rejecting_a_request_gives_nothing_and_closes_it(app, admin_client):
     who, wid = worker_user(app)
     req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
-    res = accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    res = admin_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
     assert res.status_code == 200 and res.get_json()["request"]["status"] == "rejected"
-    assert accounts_client.get("/api/cash-purchases/requests").get_json()["requests"] == []
+    assert admin_client.get("/api/cash-purchases/requests").get_json()["requests"] == []
     assert who.get("/api/cash-purchases/me").get_json()["account"] is None
 
 
-def test_cannot_reject_an_already_resolved_request(app, accounts_client):
+def test_cannot_reject_an_already_resolved_request(app, admin_client):
     who, wid = worker_user(app)
     req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
-    accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
-    res = accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    admin_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    res = admin_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
     assert res.status_code == 409
 
 
-def test_rejecting_an_unknown_request_is_a_404(accounts_client):
-    assert accounts_client.post("/api/cash-purchases/requests/999999/reject", json={}).status_code == 404
+def test_rejecting_an_unknown_request_is_a_404(admin_client):
+    assert admin_client.post("/api/cash-purchases/requests/999999/reject", json={}).status_code == 404
 
 
 def test_only_admin_or_accountant_can_reject_a_request(client, app):
@@ -502,37 +515,37 @@ def test_only_admin_or_accountant_can_reject_a_request(client, app):
     assert client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={}).status_code == 403
 
 
-def test_giving_cash_against_a_request_fulfils_it(app, accounts_client):
+def test_giving_cash_against_a_request_fulfils_it(app, admin_client):
     who, wid = worker_user(app)
     req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give",
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give",
                                 json={"amount": "2000", "payment_mode": "CASH", "request_id": req["id"]})
     assert res.status_code == 200 and res.get_json()["account"]["given_total"] == 2000.0
     resolved = who.get("/api/cash-purchases/me").get_json()["requests"][0]
     assert resolved["status"] == "fulfilled" and resolved["resolved_by_name"]
 
 
-def test_giving_cash_with_an_already_resolved_request_id_is_rejected(app, accounts_client):
+def test_giving_cash_with_an_already_resolved_request_id_is_rejected(app, admin_client):
     who, wid = worker_user(app)
     req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
-    accounts_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give",
+    admin_client.post(f"/api/cash-purchases/requests/{req['id']}/reject", json={})
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give",
                                 json={"amount": "2000", "payment_mode": "CASH", "request_id": req["id"]})
     assert res.status_code == 422
 
 
-def test_giving_cash_with_a_request_for_a_different_worker_is_rejected(app, accounts_client):
+def test_giving_cash_with_a_request_for_a_different_worker_is_rejected(app, admin_client):
     who, wid = worker_user(app, name="Requester")
     req = who.post("/api/cash-purchases/requests", json={"amount": "2000"}).get_json()["request"]
     other_id = add_worker("Someone Else")
-    res = accounts_client.post(f"/api/cash-purchases/{other_id}/give",
+    res = admin_client.post(f"/api/cash-purchases/{other_id}/give",
                                 json={"amount": "2000", "payment_mode": "CASH", "request_id": req["id"]})
     assert res.status_code == 422
 
 
-def test_giving_cash_without_a_request_id_still_works_as_before(accounts_client):
+def test_giving_cash_without_a_request_id_still_works_as_before(admin_client):
     wid = add_worker()
-    res = accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1000", "payment_mode": "CASH"})
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1000", "payment_mode": "CASH"})
     assert res.status_code == 200
 
 
@@ -548,26 +561,107 @@ def test_requests_count_toward_the_purchase_approval_tiles_pending_sum(app, admi
 # inventory") - pending/pending_requests/accounts each return both counts, the same bundling pattern
 # app/inventory.py's own tabs use (pending_request_count/restock_count on every one of its 3 endpoints).
 
-def test_each_subtab_response_carries_both_pending_counts(app, accounts_client):
+def test_each_subtab_response_carries_both_pending_counts(app, admin_client):
     who, wid = worker_user(app)
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
     who.post("/api/cash-purchases/me", json={"material_name": "Diesel", "amount": "900"})
     who.post("/api/cash-purchases/requests", json={"amount": "3000"})
 
-    pending = accounts_client.get("/api/cash-purchases/pending").get_json()
+    pending = admin_client.get("/api/cash-purchases/pending").get_json()
     assert len(pending["pending"]) == 1 and pending["pending_request_count"] == 1
 
-    requests = accounts_client.get("/api/cash-purchases/requests").get_json()
+    requests = admin_client.get("/api/cash-purchases/requests").get_json()
     assert len(requests["requests"]) == 1 and requests["pending_purchase_count"] == 1
 
-    accounts = accounts_client.get("/api/cash-purchases/accounts").get_json()
+    accounts = admin_client.get("/api/cash-purchases/accounts").get_json()
     assert accounts["pending_purchase_count"] == 1 and accounts["pending_request_count"] == 1
 
 
-def test_an_employees_page_lists_the_cash_given_to_them_with_dates(accounts_client, admin_client):
+def test_an_employees_page_lists_the_cash_given_to_them_with_dates(admin_client):
     wid = add_worker()
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH", "note": "For site"})
-    accounts_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "GR BB"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH", "note": "For site"})
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500", "payment_mode": "GR BB"})
     data = admin_client.get(f"/api/cash-purchases/{wid}").get_json()
     assert [(t["amount"], t["payment_mode"]) for t in data["topups"]] == [(500.0, "GR BB"), (2000.0, "CASH")]
     assert data["topups"][1]["note"] == "For site" and data["topups"][0]["entry_date"]
+
+
+def _wallet_worker(allotted="1000"):
+    from datetime import date as _d
+    from app.models import FoodingAccount
+    wid = add_worker("Fooding Fred")
+    w = db.session.get(Worker, wid)
+    w.fooding_opt_in = True
+    db.session.add(FoodingAccount(worker=w, anchor_date=_d.today(), allotted_total=Decimal(allotted),
+                                  deducted_total=Decimal("0"), is_paused=True))      # paused, so no daily food muddies the sums
+    db.session.commit()
+    return wid
+
+
+def test_cash_for_a_fooding_worker_comes_out_of_their_fooding_balance(admin_client):
+    wid = _wallet_worker("1000")
+    # No account is needed or asked for.
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "400", "note": "Pipes"})
+    assert res.status_code == 200 and res.get_json()["account"]["given_total"] == 400.0
+
+    reg = admin_client.get(f"/api/fooding/{wid}").get_json()
+    assert reg["fooding"]["remaining"] == 600.0
+    expense = [e for e in reg["entries"] if e["kind"] == "expense"][0]
+    assert (expense["amount"], expense["purpose"]) == (400.0, "Cash for purchases: Pipes")
+    # ... and no bank / cash account of the admin's is debited.
+    assert all(a["debits"] == 0 and a["credits"] == 0 for a in admin_client.get("/api/accounts").get_json()["accounts"])
+
+
+def test_cash_for_a_fooding_worker_cannot_exceed_their_fooding_balance(admin_client):
+    wid = _wallet_worker("300")
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "500"})
+    assert res.status_code == 422 and "Only" in res.get_json()["fields"]["amount"] and "300" in res.get_json()["fields"]["amount"]
+    assert admin_client.get(f"/api/fooding/{wid}").get_json()["fooding"]["remaining"] == 300.0
+    assert admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "300"}).status_code == 200
+    assert admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1"}).status_code == 422
+
+
+def test_cash_for_someone_without_a_fooding_wallet_still_needs_an_account(admin_client):
+    wid = add_worker("No Wallet")
+    assert admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "100"}).status_code == 422
+
+
+def _wallet_user(app, allotted="1000", employment_type="contractor"):
+    from datetime import date as _d
+    from app.models import FoodingAccount
+    who, wid = worker_user(app, name="Sunny Wallet", employment_type=employment_type)
+    w = db.session.get(Worker, wid)
+    w.fooding_opt_in = True
+    db.session.add(FoodingAccount(worker=w, anchor_date=_d.today(), allotted_total=Decimal(allotted),
+                                  deducted_total=Decimal("0"), is_paused=True))
+    db.session.commit()
+    return who, wid
+
+
+def test_a_non_daily_wage_worker_on_the_fooding_wallet_can_request_cash_up_to_their_balance(app, admin_client):
+    who, wid = _wallet_user(app, "1000")
+    assert who.get("/api/cash-purchases/me").get_json()["can_request"] is True
+    over = who.post("/api/cash-purchases/requests", json={"amount": "1500"})
+    assert over.status_code == 422 and "1,000" in over.get_json()["fields"]["amount"]
+
+    req = who.post("/api/cash-purchases/requests", json={"amount": "600", "note": "Pipes"})
+    assert req.status_code == 201
+    rid = req.get_json()["request"]["id"]
+    # The admin fulfils it: no account to pick, and it comes out of the worker's fooding balance.
+    res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "600", "request_id": rid})
+    assert res.status_code == 200
+    assert admin_client.get(f"/api/fooding/{wid}").get_json()["fooding"]["remaining"] == 400.0
+    assert who.get("/api/cash-purchases/me").get_json()["requests"][0]["status"] == "fulfilled"
+
+
+def test_a_daily_wage_worker_cannot_request_cash_even_with_a_fooding_wallet(app):
+    """kohal, 2026-11-02: "for daily wages, remove this request cash" - the wallet tops itself up instead."""
+    who, wid = _wallet_user(app, "1000", employment_type="daily_wages")
+    assert who.get("/api/cash-purchases/me").get_json()["can_request"] is False
+    assert who.post("/api/cash-purchases/requests", json={"amount": "100"}).status_code == 403
+
+
+def test_a_wallet_worker_with_nothing_left_cannot_request_cash(app):
+    who, wid = _wallet_user(app, "0")
+    res = who.post("/api/cash-purchases/requests", json={"amount": "100"})
+    assert res.status_code == 422 and "nothing left" in res.get_json()["fields"]["amount"]

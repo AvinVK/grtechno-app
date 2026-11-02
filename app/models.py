@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from .constants import DEFAULT_SETTINGS, PETROL_RATE_PER_KM, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES
@@ -836,6 +836,9 @@ class FoodingAccount(db.Model):
     __tablename__ = "fooding_accounts"
 
     DAILY_AMOUNT = Decimal("200")
+    # When the balance falls below one day's food, a top-up request of this size is raised for the admin to approve
+    # (kohal, 2026-11-02: "only if fooding is <200, it should raise auto request for 1500rs").
+    AUTO_TOPUP = Decimal("1500")
 
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
@@ -852,6 +855,11 @@ class FoodingAccount(db.Model):
         order_by="FoodingEntry.entry_date.desc(), FoodingEntry.id.desc()",
     )
 
+    deductions = db.relationship(
+        "FoodingDeduction", back_populates="account", cascade="all, delete-orphan",
+        order_by="FoodingDeduction.day.desc()",
+    )
+
     def settle(self, today: date = None) -> None:
         """Bring deducted_total/anchor_date up to date for every day since anchor_date, at DAILY_AMOUNT a
         day - a no-op while paused, or once remaining is already zero. Always moves anchor_date to today
@@ -859,10 +867,16 @@ class FoodingAccount(db.Model):
         happened to run out."""
         today = today or date.today()
         if not self.is_paused and today > self.anchor_date:
-            days = (today - self.anchor_date).days
-            accrue = min(Decimal(days) * self.DAILY_AMOUNT, self.remaining)
-            if accrue > 0:
-                self.deducted_total += accrue
+            # One FoodingDeduction per day, so the register can list each day's food (kohal, 2026-11-02) - the same
+            # total as before: DAILY_AMOUNT a day, never more than what is left.
+            left = self.remaining
+            day = self.anchor_date
+            while day < today and left > 0:
+                day += timedelta(days=1)
+                take = min(self.DAILY_AMOUNT, left)
+                self.deductions.append(FoodingDeduction(day=day, amount=take))
+                self.deducted_total += take
+                left -= take
         self.anchor_date = today
 
     @property
@@ -876,6 +890,20 @@ class FoodingAccount(db.Model):
             "remaining": float(self.remaining), "is_paused": self.is_paused,
             "daily_amount": float(self.DAILY_AMOUNT),
         }
+
+
+class FoodingDeduction(db.Model):
+    """One day's automatic food deduction from a FoodingAccount (see FoodingAccount.settle). Only days taken since
+    this table existed are here - the register rebuilds earlier ones (app/fooding.py _daily_food)."""
+
+    __tablename__ = "fooding_deductions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("fooding_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    day = db.Column(db.Date, nullable=False)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+
+    account = db.relationship("FoodingAccount", back_populates="deductions")
 
 
 class FoodingEntry(db.Model):
@@ -911,6 +939,14 @@ class FoodingEntry(db.Model):
     account = db.relationship("FoodingAccount", back_populates="entries")
     created_by = db.relationship("User")
 
+    AUTO_PURPOSE = "Automatic top-up"      # purpose of an allot the app raised itself, so it stays marked once decided
+
+    @property
+    def is_auto(self) -> bool:
+        """An allot the app raised when the balance ran low (see fooding.raise_auto_topup) - not one a person asked for,
+        and not an older entry that just has no creator recorded."""
+        return self.kind == "allot" and self.purpose == self.AUTO_PURPOSE
+
     def to_dict(self) -> dict:
         decider = db.session.get(User, self.decided_by_code) if self.decided_by_code else None
         return {
@@ -918,6 +954,7 @@ class FoodingEntry(db.Model):
             "purpose": self.purpose, "entry_date": self.entry_date.isoformat(),
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_by_code": self.created_by_code, "status": self.status,
+            "auto": self.is_auto,
             "decided_by_name": decider.name if decider else None, "decided_at": _iso(self.decided_at),
             "created_at": _iso(self.created_at),
             "worker_id": self.account.worker_id, "worker_name": self.account.worker.name,
@@ -1632,6 +1669,7 @@ class Worker(db.Model):
     experience = db.Column(db.String(200), nullable=False, default="", server_default="")
     skills = db.Column(db.String(400), nullable=False, default="", server_default="")
     phone = db.Column(EncryptedText, nullable=True)
+    upi_id = db.Column(EncryptedText, nullable=True)           # optional - lets "Pay with PhonePe" open filled in
     joining_date = db.Column(db.Date, nullable=True)
     employment_type = db.Column(db.String(20), nullable=False, default="", server_default="")   # regular | daily_wages
     wage_amount = db.Column(db.Numeric(14, 2), nullable=True)                  # salary (regular) or daily rate (daily_wages)
@@ -1714,7 +1752,7 @@ class Worker(db.Model):
         if detail:
             data.update({
                 "age": self.age, "qualification": self.qualification, "experience": self.experience,
-                "skills": self.skills, "phone": self.phone,
+                "skills": self.skills, "phone": self.phone, "upi_id": self.upi_id or "",
                 "joining_date": self.joining_date.isoformat() if self.joining_date else None,
                 "employment_type": self.employment_type,
                 "wage_amount": float(self.wage_amount) if self.wage_amount is not None else None,

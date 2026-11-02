@@ -852,17 +852,18 @@ def test_cannot_approve_more_than_claimed_on_a_return(app, admin_client, account
     assert res.status_code == 422 and "quantity" in res.get_json()["fields"]
 
 
-def test_the_requester_cannot_approve_their_own_return(app, admin_client):
+def test_an_admin_can_approve_their_own_return(app, admin_client):
+    """kohal, 2026-11-02: "admins request can be approved by admin. this is throughout the app"."""
     mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
     wid = add_worker(admin_client)
     res = admin_client.post(f"/api/inventory/material-requests/{movement_id}/approve",
                              json={"quantity": 4, "given_by_worker_id": wid, "transport_mode": "Own vehicle"})
-    assert res.status_code == 403
+    assert res.status_code == 200 and res.get_json()["movement"]["status"] == "approved"
 
 
-def test_the_requester_cannot_reject_their_own_return_either(app, admin_client):
+def test_an_admin_can_reject_their_own_return_too(app, admin_client):
     mat_id, pid, movement_id = pending_return(admin_client, app, issued=10, qty=4)
-    assert admin_client.post(f"/api/inventory/material-requests/{movement_id}/reject").status_code == 403
+    assert admin_client.post(f"/api/inventory/material-requests/{movement_id}/reject").status_code == 200
 
 
 def test_rejecting_a_return_leaves_stock_untouched(app, admin_client, accounts_client):

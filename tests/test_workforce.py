@@ -545,3 +545,15 @@ def test_fooding_opt_in_defaults_off_and_round_trips(app, admin_client):
 
     res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Fooding Checkbox Test", "fooding_opt_in": False})
     assert res.status_code == 200 and res.get_json()["worker"]["fooding_opt_in"] is False
+
+
+def test_an_employees_upi_id_is_optional_but_must_look_like_one(admin_client, app):
+    with app.app_context():
+        wid = make("Pays By Phone")
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Pays By Phone", "upi_id": "sunny@ybl"})
+    assert res.status_code == 200
+    assert admin_client.get(f"/api/workforce/{wid}").get_json()["worker"]["upi_id"] == "sunny@ybl"
+    for bad in ("sunny", "sunny@", "has space@ybl"):
+        res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Pays By Phone", "upi_id": bad})
+        assert res.status_code == 422 and "upi_id" in res.get_json()["fields"]
+    assert admin_client.patch(f"/api/workforce/{wid}", json={"name": "Pays By Phone", "upi_id": ""}).status_code == 200   # clearing it is fine

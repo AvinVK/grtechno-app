@@ -28,7 +28,8 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 from .constants import PAYMENT_ACCOUNTS
 from .auth import can_manage_cash_purchases
 from .extensions import db
-from .models import CashAccount, CashPurchase, CashRequest, CashTopup, Worker, settings_for_client, utcnow
+from .fooding import FOODING_SOURCE, raise_auto_topup
+from .models import CashAccount, CashPurchase, CashRequest, CashTopup, FoodingEntry, Worker, settings_for_client, utcnow
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -46,6 +47,14 @@ def _manage_only():
         abort(403, "Only the admin or accountant can manage cash purchases.")
 
 
+def _admin_decides():
+    """Approving or rejecting here, and handing cash over, is the admin's alone (kohal, 2026-11-02: "for all the cash
+    approvals in purchase approval and in fooding, only admin can approve it since only admin can open the phonepe app
+    and pay through the bank accounts"). The accountant still sees these screens and can log things."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can approve cash or hand it over - it is paid out through the bank accounts.")
+
+
 def own_worker():
     """The Worker row standing in for the signed-in person, if any - see auth.sync_worker_for_user. None
     for the admin, and for anyone who's never actually signed in to get one made."""
@@ -58,6 +67,8 @@ def _can_request_cash(worker) -> bool:
     daily cash-out to fall back on. Doesn't touch give() or the rest of the feature - the admin can still
     hand a daily-wage worker cash unprompted, and they can still log what they bought with it, same as
     before this restriction."""
+    # (kohal, 2026-11-02: "for daily wages, remove this request cash" - their money comes through the fooding wallet,
+    # which asks the admin for a top-up by itself when it runs low.)
     return worker.employment_type != "daily_wages"
 
 
@@ -70,6 +81,28 @@ def account_for(worker, *, create=False):
         account = CashAccount(worker=worker, given_total=Decimal("0"), spent_total=Decimal("0"))
         db.session.add(account)
     return account
+
+
+def _fooding_left(worker):
+    """What is left in this worker's fooding wallet today, or None if they have no wallet (not fooding-eligible).
+    Settles the daily deduction first, so the figure is right as of now; the caller commits."""
+    if not worker.fooding_eligible:
+        return None
+    account = worker.fooding_account
+    if account is None:
+        return Decimal("0")
+    account.settle()
+    raise_auto_topup(account)
+    return account.remaining
+
+
+def _worker_rows():
+    rows = []
+    for w in Worker.query.order_by(Worker.name).all():
+        left = _fooding_left(w)
+        rows.append({"id": w.id, "name": w.name, "fooding_remaining": None if left is None else float(left)})
+    db.session.commit()
+    return rows
 
 
 def _payload():
@@ -167,7 +200,13 @@ def request_cash():
         abort(409, "You already have a request waiting on the admin.")
     payload = _payload()
     amount, note, errors = _request_amount_and_note(payload)
+    left = _fooding_left(worker)
+    if left is not None and amount is not None and amount > left:
+        shown = f"{left:,.2f}".rstrip("0").rstrip(".")
+        errors["amount"] = (f"Only {settings_for_client()['currency']}{shown} left in your fooding balance"
+                            if left > 0 else "You have nothing left in your fooding balance")
     if errors:
+        db.session.commit()
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     req = CashRequest(worker=worker, amount=amount, note=note, status="pending")
     db.session.add(req)
@@ -280,11 +319,12 @@ def accounts():
     rows = CashAccount.query.join(Worker).order_by(Worker.name).all()
     return jsonify(
         accounts=[a.to_dict() for a in rows],
-        workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
+        workers=_worker_rows(),
         payment_modes=list(PAYMENT_MODES),
         currency=settings_for_client()["currency"],
         pending_purchase_count=CashPurchase.query.filter_by(status="pending").count(),
         pending_request_count=CashRequest.query.filter_by(status="pending").count(),
+        can_decide=g.user.is_admin,
     )
 
 
@@ -321,12 +361,24 @@ def give(worker_id):
     the same form, just pre-filled from that request and closing it out as fulfilled once the cash is
     actually given, rather than leaving it to sit there answered but still "pending"."""
     _manage_only()
+    _admin_decides()
     worker = db.session.get(Worker, worker_id)
     if worker is None:
         abort(404)
     payload = _payload()
     amount, mode, errors = _amount_and_mode(payload)
     note = str(payload.get("note") or "").strip()[:200]
+    # Cash for someone on the fooding wallet (a daily-wage worker) comes out of that wallet, not out of one of the
+    # admin's accounts (kohal, 2026-11-02: "when the daily wages are requesting for cash, it should be deducted from
+    # fooding allocated balance and not any admin accounts"), so there is no account to choose.
+    left = _fooding_left(worker)
+    if left is not None:
+        errors.pop("payment_mode", None)
+        mode = FOODING_SOURCE
+        if amount is not None and amount > left:
+            shown = f"{left:,.2f}".rstrip("0").rstrip(".")
+            errors["amount"] = (f"Only {settings_for_client()['currency']}{shown} left in {worker.name}'s fooding balance"
+                                if left > 0 else f"{worker.name} has nothing left in their fooding balance")
     cash_request = None
     request_id = payload.get("request_id")
     if request_id not in (None, ""):
@@ -341,6 +393,12 @@ def give(worker_id):
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     account = account_for(worker, create=True)
     account.given_total += amount
+    if left is not None:
+        wallet = worker.fooding_account
+        wallet.deducted_total += amount
+        db.session.add(FoodingEntry(account=wallet, kind="expense", amount=amount, payment_mode=FOODING_SOURCE,
+                                    purpose=f"Cash for purchases{': ' + note if note else ''}"[:200],
+                                    entry_date=today_local(), created_by_code=g.user.code))
     db.session.add(CashTopup(account=account, amount=amount, payment_mode=mode, note=note,
                               entry_date=today_local(), created_by_code=g.user.code))
     if cash_request is not None:
@@ -361,10 +419,11 @@ def pending_requests():
     rows = CashRequest.query.filter_by(status="pending").order_by(CashRequest.created_at).all()
     return jsonify(
         requests=[r.to_dict() for r in rows],
-        workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
+        workers=_worker_rows(),
         payment_modes=list(PAYMENT_MODES),
         currency=settings_for_client()["currency"],
         pending_purchase_count=CashPurchase.query.filter_by(status="pending").count(),
+        can_decide=g.user.is_admin,
     )
 
 
@@ -373,6 +432,7 @@ def reject_request(request_id):
     """Turn down a request without giving anything - the request's own counterpart to give() closing one
     out as fulfilled, for when the admin/accountant doesn't want to allocate against it at all."""
     _manage_only()
+    _admin_decides()
     req = db.session.get(CashRequest, request_id)
     if req is None:
         abort(404)
@@ -393,20 +453,20 @@ def pending():
     rows = CashPurchase.query.filter_by(status="pending").order_by(CashPurchase.created_at).all()
     return jsonify(
         pending=[p.to_dict() for p in rows],
-        workers=[{"id": w.id, "name": w.name} for w in Worker.query.order_by(Worker.name).all()],
+        workers=_worker_rows(),
         payment_modes=list(PAYMENT_MODES),
         currency=settings_for_client()["currency"],
         pending_request_count=CashRequest.query.filter_by(status="pending").count(),
+        can_decide=g.user.is_admin,
     )
 
 
 @bp.post("/api/cash-purchases/<int:purchase_id>/approve")
 def approve(purchase_id):
     _manage_only()
+    _admin_decides()
     purchase = _purchase_or_404(purchase_id)
     _pending_or_409(purchase)
-    if purchase.created_by_code == g.user.code:
-        abort(403, "Someone else needs to approve this - not whoever logged it.")
     purchase.status = "approved"
     purchase.approved_by_code = g.user.code
     purchase.approved_at = utcnow()
@@ -418,10 +478,9 @@ def approve(purchase_id):
 @bp.post("/api/cash-purchases/<int:purchase_id>/reject")
 def reject(purchase_id):
     _manage_only()
+    _admin_decides()
     purchase = _purchase_or_404(purchase_id)
     _pending_or_409(purchase)
-    if purchase.created_by_code == g.user.code:
-        abort(403, "Someone else needs to decide this - not whoever logged it.")
     purchase.status = "rejected"
     purchase.approved_by_code = g.user.code
     purchase.approved_at = utcnow()

@@ -202,7 +202,14 @@ def list_cash_requests():
     history = (PetrolEntry.query.filter(PetrolEntry.cash_status.in_(("paid", "rejected")))
                .order_by(db.func.coalesce(PetrolEntry.cash_decided_at, PetrolEntry.created_at).desc(), PetrolEntry.id.desc())
                .limit(200).all())
-    return jsonify(pending=[e.to_dict() for e in pending], history=[e.to_dict() for e in history],
+    rows = []
+    for e in pending:
+        d = e.to_dict()
+        # Who gets paid, for opening a payment app already filled in (kohal, 2026-11-02).
+        w = Worker.query.filter_by(user_code=e.user_code).first()
+        d["payee"] = {"upi_id": (w.upi_id if w else "") or "", "phone": (w.phone if w else "") or ""}
+        rows.append(d)
+    return jsonify(pending=rows, history=[e.to_dict() for e in history], can_decide=g.user.is_admin,
                    payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
 
 
@@ -211,10 +218,18 @@ def _manage_only():
         abort(403, "Only the admin or accountant can handle petrol cash requests.")
 
 
+def _admin_pays():
+    """Approving or rejecting a petrol cash request is paying money out through the bank accounts, so it is the admin's
+    alone (kohal, 2026-11-02: "for petrol also do it admin-style"). The accountant can still see the list."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can approve or reject petrol cash - it is paid out through the bank accounts.")
+
+
 @bp.post("/api/petrol/requests/<int:entry_id>/approve")
 def approve_cash_request(entry_id):
     """Pay it: the approver says how (Cash or Online/UPI) - required."""
     _manage_only()
+    _admin_pays()
     entry = db.session.get(PetrolEntry, entry_id)
     if entry is None:
         abort(404)
@@ -235,6 +250,7 @@ def approve_cash_request(entry_id):
 @bp.post("/api/petrol/requests/<int:entry_id>/reject")
 def reject_cash_request(entry_id):
     _manage_only()
+    _admin_pays()
     entry = db.session.get(PetrolEntry, entry_id)
     if entry is None:
         abort(404)

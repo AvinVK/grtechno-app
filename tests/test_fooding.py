@@ -233,26 +233,24 @@ def test_a_worker_can_log_an_expense_against_their_own_balance(app, accounts_cli
     who, wid = daily_wage_user(app)
     allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
 
-    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "CASH", "purpose": "Auto fare to site"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "purpose": "Auto fare to site"})
     assert res.status_code == 201
     body = res.get_json()
     assert body["fooding"]["remaining"] == 850.0
     assert len(body["entries"]) == 2   # the allot entry, plus this one
     expense = next(e for e in body["entries"] if e["kind"] == "expense")
-    assert expense["amount"] == 150.0 and expense["payment_mode"] == "CASH" and expense["purpose"] == "Auto fare to site"
+    assert expense["amount"] == 150.0 and expense["payment_mode"] == "Fooding balance" and expense["purpose"] == "Auto fare to site"
 
     data = who.get("/api/fooding/me").get_json()["fooding"]
     assert data["remaining"] == 850.0
 
 
-def test_an_expense_needs_amount_payment_mode_and_purpose(app, accounts_client):
+def test_an_expense_needs_amount_and_purpose(app, accounts_client):
     who, wid = daily_wage_user(app)
     allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
 
     res = who.post("/api/fooding/me/expenses", json={"amount": "150", "payment_mode": "CASH", "purpose": ""})
     assert res.status_code == 422 and "purpose" in res.get_json()["fields"]
-    res = who.post("/api/fooding/me/expenses", json={"amount": "150", "purpose": "Food"})
-    assert res.status_code == 422 and "payment_mode" in res.get_json()["fields"]
     res = who.post("/api/fooding/me/expenses", json={"amount": "0", "payment_mode": "CASH", "purpose": "Food"})
     assert res.status_code == 422 and "amount" in res.get_json()["fields"]
 
@@ -478,11 +476,13 @@ def test_an_allotment_is_only_a_request_until_someone_else_approves(app, account
     assert entry["kind"] == "allot" and entry["amount"] == 1000.0
 
 
-def test_whoever_asks_cannot_approve_it_but_the_other_one_can_either_way_round(app, accounts_client, admin_client):
+def test_only_the_admin_approves_or_rejects_whoever_asked(app, accounts_client, admin_client):
+    """kohal, 2026-11-02: "only admin can approve it since only admin can open the phonepe app and pay through the
+    bank accounts" - so the accountant can ask but never decide, and the admin can approve their own ask."""
     wid = daily_wage_worker()
     by_admin = _ask(admin_client, wid, 500)
-    assert admin_client.post(f"/api/fooding/requests/{by_admin}/approve").status_code == 403
-    assert accounts_client.post(f"/api/fooding/requests/{by_admin}/approve").status_code == 200
+    assert accounts_client.post(f"/api/fooding/requests/{by_admin}/approve").status_code == 403
+    assert admin_client.post(f"/api/fooding/requests/{by_admin}/approve").status_code == 200
 
     by_accounts = _ask(accounts_client, wid, 300)
     assert accounts_client.post(f"/api/fooding/requests/{by_accounts}/approve").status_code == 403
@@ -515,13 +515,13 @@ def test_active_requests_and_history_are_listed_with_who_can_decide(app, account
     wid = daily_wage_worker("Listed Worker")
     waiting = _ask(accounts_client, wid, 200)
     done = _ask(admin_client, wid, 900, "GR BB")
-    accounts_client.post(f"/api/fooding/requests/{done}/approve")
+    admin_client.post(f"/api/fooding/requests/{done}/approve")
 
     mine = accounts_client.get("/api/fooding/requests").get_json()
     assert [p["id"] for p in mine["pending"]] == [waiting]
     assert mine["pending"][0]["is_mine"] is True and mine["pending"][0]["can_decide"] is False
     assert mine["pending"][0]["worker_name"] == "Listed Worker" and mine["pending"][0]["created_by_name"] == "Anil Accounts"
-    assert [(h["id"], h["status"], h["decided_by_name"]) for h in mine["history"]] == [(done, "approved", "Anil Accounts")]
+    assert [(h["id"], h["status"], h["decided_by_name"]) for h in mine["history"]] == [(done, "approved", "grtechno")]
 
     theirs = admin_client.get("/api/fooding/requests").get_json()
     assert theirs["pending"][0]["can_decide"] is True and theirs["pending"][0]["is_mine"] is False
@@ -534,7 +534,7 @@ def test_only_admin_or_accountant_see_or_decide_requests(app, client, accounts_c
     assert client.post(f"/api/fooding/requests/{rid}/approve").status_code == 403
 
 
-def test_the_me_tile_counts_requests_waiting_on_you(app, accounts_client, admin_client):
+def test_the_me_tile_counts_requests_waiting_on_the_admin_only(app, accounts_client, admin_client):
     wid = daily_wage_worker()
     _ask(accounts_client, wid)
     theirs = admin_client.get("/me").get_data(as_text=True)
@@ -550,3 +550,138 @@ def test_the_approver_chooses_the_account_the_money_is_debited_from(app, account
     assert admin_client.post(f"/api/fooding/requests/{rid}/approve", json={"payment_mode": "GR BOB"}).status_code == 200
     entry = who.get("/api/fooding/me").get_json()["entries"][0]
     assert entry["kind"] == "allot" and entry["payment_mode"] == "GR BOB"
+
+
+def test_each_days_food_is_recorded_and_listed_with_its_date(app, accounts_client, admin_client):
+    wid = daily_wage_worker()
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
+    with app.app_context():
+        db.session.get(Worker, wid).fooding_account.anchor_date = date.today() - timedelta(days=3)
+        db.session.commit()
+    reg = admin_client.get(f"/api/fooding/{wid}").get_json()
+    assert [(d["date"], d["amount"], d["estimated"]) for d in reg["daily_food"]] == [
+        ((date.today() - timedelta(days=i)).isoformat(), 200.0, False) for i in range(3)]
+    assert reg["auto_deducted"] == 600.0
+
+
+def test_the_last_day_is_a_part_day_when_the_balance_runs_out(app, accounts_client, admin_client):
+    wid = daily_wage_worker()
+    allot(accounts_client, wid, {"amount": "500", "payment_mode": "CASH"})
+    with app.app_context():
+        db.session.get(Worker, wid).fooding_account.anchor_date = date.today() - timedelta(days=5)
+        db.session.commit()
+    days = admin_client.get(f"/api/fooding/{wid}").get_json()["daily_food"]
+    assert sorted(d["amount"] for d in days) == [100.0, 200.0, 200.0]       # 500 = 200 + 200 + 100, nothing after
+
+
+def test_days_taken_before_each_day_was_stored_are_rebuilt_and_marked_estimated(app, accounts_client, admin_client):
+    wid = daily_wage_worker()
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
+    start = date.today() - timedelta(days=20)
+    with app.app_context():
+        account = db.session.get(Worker, wid).fooding_account
+        for e in account.entries:
+            e.entry_date = start
+            e.decided_at = None
+        account.deducted_total = Decimal("1000")        # as if five days of food had already been taken, unrecorded
+        db.session.commit()
+    days = admin_client.get(f"/api/fooding/{wid}").get_json()["daily_food"]
+    assert all(d["estimated"] for d in days) and sum(d["amount"] for d in days) == 1000.0
+    assert sorted(d["date"] for d in days) == [(start + timedelta(days=i)).isoformat() for i in range(1, 6)]   # the day after it was allotted
+
+
+def test_an_employees_own_expense_comes_out_of_their_fooding_balance_with_no_account_to_pick(app, accounts_client):
+    who, wid = daily_wage_user(app)
+    allot(accounts_client, wid, {"amount": "1000", "payment_mode": "CASH"})
+    res = who.post("/api/fooding/me/expenses", json={"amount": "250", "purpose": "Bus fare"})   # note: no payment_mode
+    assert res.status_code == 201
+    entry = [e for e in res.get_json()["entries"] if e["kind"] == "expense"][0]
+    assert (entry["amount"], entry["payment_mode"], entry["purpose"]) == (250.0, "Fooding balance", "Bus fare")
+    assert res.get_json()["fooding"]["remaining"] == 750.0
+    # ... and still can't spend more than is there.
+    assert who.post("/api/fooding/me/expenses", json={"amount": "5000", "purpose": "x"}).status_code == 422
+
+
+def test_a_pending_request_carries_who_gets_paid_for_the_payment_app(app, accounts_client):
+    who, wid = daily_wage_user(app)
+    with app.app_context():
+        w = db.session.get(Worker, wid)
+        w.upi_id, w.phone = "deepak@ybl", "9876543210"
+        db.session.commit()
+    _ask(accounts_client, wid)
+    row = accounts_client.get("/api/fooding/requests").get_json()["pending"][0]
+    assert row["payee"] == {"upi_id": "deepak@ybl", "phone": "9876543210"}
+
+
+# ---------- the app asks the admin for more when the balance runs low (kohal, 2026-11-02) ----------
+
+def _fund(accounts_client, admin_client, wid, amount="1000"):
+    rid = _ask(accounts_client, wid, amount)
+    assert admin_client.post(f"/api/fooding/requests/{rid}/approve").status_code == 200
+
+
+def _spend(app, wid, deducted):
+    with app.app_context():
+        account = db.session.get(Worker, wid).fooding_account
+        account.deducted_total = Decimal(deducted)
+        db.session.commit()
+
+
+def _pending(client):
+    return client.get("/api/fooding/requests").get_json()["pending"]
+
+
+def test_a_low_balance_raises_one_automatic_1500_request(app, accounts_client, admin_client):
+    who, wid = daily_wage_user(app)
+    _fund(accounts_client, admin_client, wid, "1000")
+    assert _pending(admin_client) == []                      # plenty left, nothing to ask for
+    _spend(app, wid, "850")                                  # 150 left - less than a day's food
+    rows = _pending(admin_client)
+    assert len(rows) == 1 and rows[0]["amount"] == 1500.0 and rows[0]["auto"] is True
+    assert rows[0]["can_decide"] is True and rows[0]["is_mine"] is False
+    assert len(_pending(admin_client)) == 1                  # reading again does not raise a second one
+
+
+def test_no_automatic_request_for_a_new_paused_or_well_funded_account(app, accounts_client, admin_client):
+    who, wid = daily_wage_user(app)
+    admin_client.get("/api/fooding")                          # never funded: not "running low"
+    assert _pending(admin_client) == []
+    _fund(accounts_client, admin_client, wid, "1000")
+    accounts_client.post(f"/api/fooding/{wid}/pause")
+    _spend(app, wid, "900")
+    assert _pending(admin_client) == []                      # paused: nothing is being deducted
+    accounts_client.post(f"/api/fooding/{wid}/resume")
+    _spend(app, wid, "700")                                  # 300 left, still at least a day's food
+    assert _pending(admin_client) == []
+
+
+def test_only_the_admin_can_decide_the_automatic_request(app, accounts_client, admin_client):
+    who, wid = daily_wage_user(app)
+    _fund(accounts_client, admin_client, wid, "1000")
+    _spend(app, wid, "900")
+    rid = _pending(admin_client)[0]["id"]
+    assert _pending(accounts_client)[0]["can_decide"] is False
+    assert accounts_client.post(f"/api/fooding/requests/{rid}/approve", json={"payment_mode": "CASH"}).status_code == 403
+    assert accounts_client.post(f"/api/fooding/requests/{rid}/reject").status_code == 403
+    assert admin_client.post(f"/api/fooding/requests/{rid}/approve", json={"payment_mode": "GR BB"}).status_code == 200
+    data = admin_client.get(f"/api/fooding/{wid}").get_json()
+    assert data["fooding"]["remaining"] == 100.0 + 1500.0
+    assert [e for e in data["entries"] if e["amount"] == 1500.0][0]["payment_mode"] == "GR BB"
+
+
+def test_the_automatic_request_needs_an_account_chosen_to_approve(app, accounts_client, admin_client):
+    who, wid = daily_wage_user(app)
+    _fund(accounts_client, admin_client, wid, "1000")
+    _spend(app, wid, "900")
+    rid = _pending(admin_client)[0]["id"]
+    assert admin_client.post(f"/api/fooding/requests/{rid}/approve").status_code == 422     # it has no account of its own
+
+
+def test_an_older_entry_with_no_creator_is_not_marked_automatic(app, accounts_client, admin_client):
+    who, wid = daily_wage_user(app)
+    _fund(accounts_client, admin_client, wid, "1000")
+    with app.app_context():
+        for e in db.session.get(Worker, wid).fooding_account.entries:
+            e.created_by_code = None                              # as an entry from before approvals existed
+        db.session.commit()
+    assert all(not e["auto"] for e in admin_client.get(f"/api/fooding/{wid}").get_json()["entries"])
