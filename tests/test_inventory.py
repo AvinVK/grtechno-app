@@ -61,11 +61,12 @@ def approved_issue(app, admin_client, mid, pid, qty, entry_date=None):
 # ---------- admin only ----------
 
 def test_inventory_is_role_gated(client, manager_client, accounts_client, admin_client):
-    """Sales field and project manager have no Inventory access; Accountant does (kohal's access matrix,
-    2026-10-14) - Inventory used to be admin-only outright, before any role had it."""
-    for who in (client, manager_client):
-        assert who.get("/inventory").status_code == 403
-        assert who.get("/api/inventory/materials").status_code == 403
+    """Sales field has no Inventory access; Accountant does (kohal's access matrix, 2026-10-14) - Inventory used
+    to be admin-only outright, before any role had it. The project manager got it too on 2026-11-04."""
+    assert client.get("/inventory").status_code == 403
+    assert client.get("/api/inventory/materials").status_code == 403
+    assert manager_client.get("/inventory").status_code == 200
+    assert manager_client.get("/api/inventory/materials").status_code == 200
     assert accounts_client.get("/inventory").status_code == 200
     assert accounts_client.get("/api/inventory/materials").status_code == 200
     assert admin_client.get("/inventory").status_code == 200
@@ -1019,3 +1020,105 @@ def test_a_credit_purchase_has_no_account_and_the_list_is_served(admin_client):
     mid = res.get_json()["material"]["id"]
     assert admin_client.get("/api/inventory/materials").get_json()["payment_accounts"][-1] == "GR BOB"
     assert "GR BB" in admin_client.get(f"/api/inventory/materials/{mid}").get_json()["payment_accounts"]
+
+
+# ---------- paying a supplier (kohal, 2026-11-04) ----------
+
+def _owed_supplier(admin_client, rate=10, qty=10):
+    sid = add_supplier(admin_client, "Shree")
+    material = add_material(admin_client)
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": qty, "rate": rate, "supplier_id": sid})
+    return sid
+
+
+def test_paying_a_supplier_reduces_what_is_owed_and_debits_the_account(admin_client):
+    sid = _owed_supplier(admin_client)                                     # owes 100
+    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={
+        "amount": "40", "payment_account": "GR BB", "mode": "UPI", "phone": "9999900000", "upi_id": "shree@okaxis"})
+    assert res.status_code == 201 and res.get_json()["credit"] == 60.0 and res.get_json()["paid"] == 40.0
+    detail = admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()
+    assert detail["credit"] == 60.0 and detail["phone"] == "9999900000" and detail["upi_id"] == "shree@okaxis"
+    assert [p["amount"] for p in detail["payments"]] == [40.0]
+    assert admin_client.get("/api/inventory/suppliers/credit").get_json()["total"] == 60.0
+    rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
+    assert [(r["reason"], r["kind"], r["amount"]) for r in rows] == [("Supplier payment", "debit", 40.0)]
+
+
+def test_a_supplier_cannot_be_paid_more_than_is_owed(admin_client):
+    sid = _owed_supplier(admin_client)
+    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "101", "payment_account": "GR BB", "mode": "Cash"})
+    assert res.status_code == 422 and "amount" in res.get_json()["fields"]
+    admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "100", "payment_account": "GR BB", "mode": "Cash"})
+    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "1", "payment_account": "GR BB", "mode": "Cash"})
+    assert res.status_code == 422 and "owed" in res.get_json()["fields"]["amount"]
+
+
+def test_a_supplier_payment_needs_an_account_and_a_mode(admin_client):
+    sid = _owed_supplier(admin_client)
+    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "10"})
+    fields = res.get_json()["fields"]
+    assert res.status_code == 422 and "payment_account" in fields and "mode" in fields
+    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "10", "payment_account": "GR BB", "mode": "UPI", "upi_id": "nope"})
+    assert res.status_code == 422 and "upi_id" in res.get_json()["fields"]
+
+
+def test_only_the_admin_can_pay_a_supplier(app, admin_client, accounts_client):
+    sid = _owed_supplier(admin_client)
+    res = accounts_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "10", "payment_account": "GR BB", "mode": "Cash"})
+    assert res.status_code == 403
+    assert accounts_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["can_pay"] is False
+
+
+# ---------- stock-in requests tab (kohal, 2026-11-04) ----------
+
+def test_a_project_manager_can_now_open_inventory(app):
+    pm = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    assert pm.get("/api/inventory/materials").status_code == 200
+    assert pm.get("/inventory").status_code == 200
+
+
+def test_a_stock_in_request_from_a_project_manager_shows_up_for_approval(app, admin_client, accounts_client):
+    pm = signed_in(app, make_user("Priya Manager", role="project_manager"))
+    material = add_material(admin_client)
+    sid = add_supplier(admin_client)
+    res = pm.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5, "supplier_id": sid})
+    assert res.status_code == 201 and res.get_json()["movement"]["status"] == "pending"
+
+    seen_by_pm = pm.get("/api/inventory/stock-in-requests").get_json()
+    assert len(seen_by_pm["requests"]) == 1 and seen_by_pm["can_approve"] is False
+    assert pm.get("/api/inventory/materials").get_json()["stock_in_request_count"] == 1
+
+    data = accounts_client.get("/api/inventory/stock-in-requests").get_json()
+    assert data["can_approve"] is True and data["requests"][0]["material_name"] == "Cement" and data["requests"][0]["created_by_name"] == "Priya Manager"
+    mid = data["requests"][0]["id"]
+    assert pm.post(f"/api/inventory/materials/{material['id']}/movements/{mid}/approve").status_code == 403   # the requester cannot approve
+    assert accounts_client.post(f"/api/inventory/materials/{material['id']}/movements/{mid}/approve").status_code == 200
+
+    after = accounts_client.get("/api/inventory/stock-in-requests").get_json()
+    assert after["requests"] == [] and [h["status"] for h in after["history"]] == ["approved"]
+    assert admin_client.get(f"/api/inventory/materials/{material['id']}").get_json()["material"]["stock_qty"] == 10.0
+
+
+# ---------- deleting a supplier (kohal, 2026-11-04) ----------
+
+def test_a_supplier_with_nothing_on_record_can_be_deleted_by_the_admin(admin_client):
+    from app.models import Supplier
+    sid = add_supplier(admin_client, "Unused Traders")
+    assert admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["can_delete"] is True
+    assert admin_client.delete(f"/api/inventory/suppliers/{sid}").status_code == 200
+    assert db.session.get(Supplier, sid) is None
+
+
+def test_a_supplier_with_purchases_or_payments_cannot_be_deleted(admin_client):
+    sid = _owed_supplier(admin_client)
+    assert admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["can_delete"] is False
+    res = admin_client.delete(f"/api/inventory/suppliers/{sid}")
+    assert res.status_code == 409 and "on record" in res.get_json()["error"]
+    admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "100", "payment_account": "GR BB", "mode": "Cash"})
+    assert admin_client.delete(f"/api/inventory/suppliers/{sid}").status_code == 409        # fully paid, still has history
+
+
+def test_only_the_admin_can_delete_a_supplier(admin_client, accounts_client):
+    sid = add_supplier(admin_client, "Unused Traders")
+    assert accounts_client.delete(f"/api/inventory/suppliers/{sid}").status_code == 403
+    assert admin_client.delete("/api/inventory/suppliers/999999").status_code == 404

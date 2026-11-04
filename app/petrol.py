@@ -23,10 +23,10 @@ from .auth import PROJECT_MANAGER_ROLE_KEYS, can_manage_fooding, visible_project
 from .constants import PETROL_RATE_PER_KM
 from .fooding import PAYMENT_MODES
 from .extensions import db
-from .models import PetrolEntry, Project, Worker, settings_for_client, utcnow
+from .models import PetrolEntry, PetrolPayout, Project, Worker, settings_for_client, utcnow
 from .timeutil import today_local
 from .uploads import IMAGE_TYPES, UploadError, delete_upload, save_upload
-from .validation import api_errors
+from .validation import api_errors, parse_money
 
 bp = Blueprint("petrol", __name__)
 api_errors(bp)
@@ -98,18 +98,28 @@ def purge_old_photos() -> None:
         db.session.commit()
 
 
-def _register(entries):
-    """Rows of a register, newest first, plus what has been approved in total and this month."""
+def _register(entries, user_code=None):
+    """Rows of a register, newest first, plus what has been approved in total and this month - and, with the person's
+    code, their petrol balance: what is approved, less everything paid (per-day payments and payouts), what is waiting
+    on the admin, and how much more they may still ask for."""
     today = today_local()
     approved = [e for e in entries if e.status == "approved" and e.amount is not None]
     total = sum((e.amount for e in approved), Decimal("0"))
     month = sum((e.amount for e in approved if (e.work_date.year, e.work_date.month) == (today.year, today.month)), Decimal("0"))
     km_month = sum((e.km for e in approved if (e.work_date.year, e.work_date.month) == (today.year, today.month)), 0)
     paid = sum((e.amount for e in approved if e.cash_status == "paid"), Decimal("0"))
+    asked = sum((e.amount for e in approved if e.cash_status == "requested"), Decimal("0"))      # asked day by day, before payouts
+    payouts = PetrolPayout.query.filter_by(user_code=user_code).order_by(PetrolPayout.requested_at.desc(), PetrolPayout.id.desc()).all() if user_code else []
+    paid += sum((o.amount_paid or Decimal("0") for o in payouts if o.status == "paid"), Decimal("0"))
+    asked += sum((o.amount for o in payouts if o.status == "requested"), Decimal("0"))
+    balance = total - paid
     return {
         "entries": [e.to_dict() for e in entries],
         "approved_total": float(total), "month_total": float(month), "month_km": km_month,
-        "paid_total": float(paid), "unpaid_total": float(total - paid),
+        "paid_total": float(paid), "unpaid_total": float(balance),
+        "requested_total": float(asked), "can_request_up_to": float(max(balance - asked, Decimal("0"))),
+        "settled": bool(total > 0 and balance <= 0),
+        "payouts": [o.to_dict() for o in payouts],
         "rate_per_km": PETROL_RATE_PER_KM, "currency": settings_for_client()["currency"],
     }
 
@@ -135,7 +145,7 @@ def my_petrol():
     if not petrol_on(g.user):
         abort(403, "Petrol payment is only for employees it has been switched on for.")
     purge_old_photos()
-    return jsonify(**_register(_completed_entries(g.user.code)))
+    return jsonify(**_register(_completed_entries(g.user.code), g.user.code))
 
 
 @bp.get("/api/petrol")
@@ -146,14 +156,14 @@ def list_petrol():
     workers = Worker.query.filter(Worker.petrol_enabled.is_(True)).order_by(Worker.name).all()
     rows = []
     for w in workers:
-        reg = _register(_completed_entries(w.user_code)) if w.user_code else _register([])
+        reg = _register(_completed_entries(w.user_code), w.user_code) if w.user_code else _register([])
         pending = (PetrolEntry.query.filter(PetrolEntry.user_code == w.user_code, PetrolEntry.status == "pending",
                                             PetrolEntry.out_reading.isnot(None)).count() if w.user_code else 0)
         rows.append({"worker_id": w.id, "worker_name": w.name, "month_total": reg["month_total"],
                      "month_km": reg["month_km"], "approved_total": reg["approved_total"], "pending": pending,
                      "unpaid_total": reg["unpaid_total"]})
     return jsonify(workers=rows, rate_per_km=PETROL_RATE_PER_KM, currency=settings_for_client()["currency"],
-                   cash_waiting=PetrolEntry.query.filter_by(cash_status="requested").count())
+                   cash_waiting=PetrolEntry.query.filter_by(cash_status="requested").count() + PetrolPayout.query.filter_by(status="requested").count())
 
 
 @bp.get("/api/petrol/worker/<int:worker_id>")
@@ -164,7 +174,7 @@ def worker_register(worker_id):
     if worker is None or not worker.petrol_enabled:
         abort(404)
     purge_old_photos()
-    return jsonify(worker_name=worker.name, **_register(_completed_entries(worker.user_code) if worker.user_code else []))
+    return jsonify(worker_name=worker.name, **_register(_completed_entries(worker.user_code) if worker.user_code else [], worker.user_code))
 
 
 # ---------- cash requests: an approved day's amount, asked for by the employee ----------
@@ -209,8 +219,99 @@ def list_cash_requests():
         w = Worker.query.filter_by(user_code=e.user_code).first()
         d["payee"] = {"upi_id": (w.upi_id if w else "") or "", "phone": (w.phone if w else "") or ""}
         rows.append(d)
+    payout_rows = []
+    for o in PetrolPayout.query.filter_by(status="requested").order_by(PetrolPayout.requested_at).all():
+        d = o.to_dict()
+        w = Worker.query.filter_by(user_code=o.user_code).first()
+        d["payee"] = {"upi_id": (w.upi_id if w else "") or "", "phone": (w.phone if w else "") or ""}
+        d["balance"] = _register(_completed_entries(o.user_code), o.user_code)["unpaid_total"]
+        payout_rows.append(d)
+    payout_history = (PetrolPayout.query.filter(PetrolPayout.status.in_(("paid", "rejected")))
+                      .order_by(db.func.coalesce(PetrolPayout.decided_at, PetrolPayout.requested_at).desc(), PetrolPayout.id.desc()).limit(200).all())
     return jsonify(pending=rows, history=[e.to_dict() for e in history], can_decide=g.user.is_admin,
+                   payouts=payout_rows, payout_history=[o.to_dict() for o in payout_history],
                    payment_modes=list(PAYMENT_MODES), currency=settings_for_client()["currency"])
+
+
+@bp.post("/api/petrol/payouts")
+def request_payout():
+    """The employee's one ask for petrol money (kohal, 2026-11-04) - any amount up to what they are still owed and
+    have not already asked for; left blank it is all of it. One waiting at a time."""
+    if not petrol_on(g.user):
+        abort(403, "Petrol payment is only for employees it has been switched on for.")
+    if PetrolPayout.query.filter_by(user_code=g.user.code, status="requested").first() is not None:
+        abort(409, "You already have a petrol request waiting on the admin.")
+    reg = _register(_completed_entries(g.user.code), g.user.code)
+    available = Decimal(str(reg["can_request_up_to"]))
+    payload = request.get_json(silent=True) if request.is_json else None
+    raw = (payload or {}).get("amount") if isinstance(payload, dict) else None
+    errors = {}
+    amount = parse_money(raw, errors) if raw not in (None, "") else available
+    shown = f"{available:,.2f}".rstrip("0").rstrip(".")
+    if not errors:
+        if available <= 0:
+            errors["amount"] = "There is nothing left to ask for"
+        elif amount is None or amount <= 0:
+            errors["amount"] = "Enter an amount greater than 0"
+        elif amount > available:
+            errors["amount"] = f"You can ask for up to {settings_for_client()['currency']}{shown}"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    db.session.add(PetrolPayout(user_code=g.user.code, amount=amount, status="requested"))
+    db.session.commit()
+    return jsonify(**_register(_completed_entries(g.user.code), g.user.code)), 201
+
+
+@bp.post("/api/petrol/payouts/<int:payout_id>/approve")
+def approve_payout(payout_id):
+    """Pay it - the admin's alone. They say which account it comes from and how much is actually paid (up to what was
+    asked, prefilled with all of it); that amount settles against the employee's balance and the rest stays owed."""
+    _manage_only()
+    _admin_pays()
+    payout = db.session.get(PetrolPayout, payout_id)
+    if payout is None:
+        abort(404)
+    if payout.status != "requested":
+        abort(409, "This isn't waiting for approval.")
+    payload = request.get_json(silent=True) if request.is_json else None
+    payload = payload if isinstance(payload, dict) else {}
+    errors = {}
+    account = payload.get("payment_mode")
+    if account not in PAYMENT_MODES:
+        errors["payment_mode"] = "Choose the account it is paid from"
+    raw = payload.get("amount")
+    amount = parse_money(raw, errors) if raw not in (None, "") else payout.amount
+    if "amount" not in errors:
+        if amount is None or amount <= 0:
+            errors["amount"] = "Enter an amount greater than 0"
+        elif amount > payout.amount:
+            shown = f"{payout.amount:,.2f}".rstrip("0").rstrip(".")
+            errors["amount"] = f"Only {settings_for_client()['currency']}{shown} was asked for"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    payout.status = "paid"
+    payout.amount_paid = amount
+    payout.payment_account = account
+    payout.decided_by_code = g.user.code
+    payout.decided_at = utcnow()
+    db.session.commit()
+    return jsonify(payout=payout.to_dict())
+
+
+@bp.post("/api/petrol/payouts/<int:payout_id>/reject")
+def reject_payout(payout_id):
+    _manage_only()
+    _admin_pays()
+    payout = db.session.get(PetrolPayout, payout_id)
+    if payout is None:
+        abort(404)
+    if payout.status != "requested":
+        abort(409, "This isn't waiting for approval.")
+    payout.status = "rejected"
+    payout.decided_by_code = g.user.code
+    payout.decided_at = utcnow()
+    db.session.commit()
+    return jsonify(payout=payout.to_dict())
 
 
 def _manage_only():
