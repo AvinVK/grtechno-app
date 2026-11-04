@@ -117,8 +117,11 @@ def _register(entries, user_code=None):
         "entries": [e.to_dict() for e in entries],
         "approved_total": float(total), "month_total": float(month), "month_km": km_month,
         "paid_total": float(paid), "unpaid_total": float(balance),
-        "requested_total": float(asked), "can_request_up_to": float(max(balance - asked, Decimal("0"))),
-        "settled": bool(total > 0 and balance <= 0),
+        # The balance can go below zero (kohal, 2026-11-05): an employee may ask for money before any petrol is on
+        # record, and what they ride afterwards is taken off it - `advance` is how much of it is still to be ridden off.
+        "requested_total": float(asked), "suggested_amount": float(max(balance - asked, Decimal("0"))),
+        "advance": float(max(-balance, Decimal("0"))),
+        "settled": bool(balance == 0 and (total > 0 or paid > 0)),
         "payouts": [o.to_dict() for o in payouts],
         "rate_per_km": PETROL_RATE_PER_KM, "currency": settings_for_client()["currency"],
     }
@@ -235,26 +238,21 @@ def list_cash_requests():
 
 @bp.post("/api/petrol/payouts")
 def request_payout():
-    """The employee's one ask for petrol money (kohal, 2026-11-04) - any amount up to what they are still owed and
-    have not already asked for; left blank it is all of it. One waiting at a time."""
+    """The employee's one ask for petrol money (kohal, 2026-11-04) - for any amount at all, with or without petrol on
+    record (kohal, 2026-11-05: "no restrictions on amount ... it can also go negative"); left blank it is what they
+    are owed, if anything. One waiting at a time."""
     if not petrol_on(g.user):
         abort(403, "Petrol payment is only for employees it has been switched on for.")
     if PetrolPayout.query.filter_by(user_code=g.user.code, status="requested").first() is not None:
         abort(409, "You already have a petrol request waiting on the admin.")
     reg = _register(_completed_entries(g.user.code), g.user.code)
-    available = Decimal(str(reg["can_request_up_to"]))
+    suggested = Decimal(str(reg["suggested_amount"]))
     payload = request.get_json(silent=True) if request.is_json else None
     raw = (payload or {}).get("amount") if isinstance(payload, dict) else None
     errors = {}
-    amount = parse_money(raw, errors) if raw not in (None, "") else available
-    shown = f"{available:,.2f}".rstrip("0").rstrip(".")
-    if not errors:
-        if available <= 0:
-            errors["amount"] = "There is nothing left to ask for"
-        elif amount is None or amount <= 0:
-            errors["amount"] = "Enter an amount greater than 0"
-        elif amount > available:
-            errors["amount"] = f"You can ask for up to {settings_for_client()['currency']}{shown}"
+    amount = parse_money(raw, errors) if raw not in (None, "") else suggested
+    if not errors and (amount is None or amount <= 0):
+        errors["amount"] = "Enter an amount greater than 0"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     db.session.add(PetrolPayout(user_code=g.user.code, amount=amount, status="requested"))

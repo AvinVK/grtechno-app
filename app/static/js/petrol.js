@@ -48,7 +48,7 @@
   function openRequestSheet(data, onDone) {
     const cur = data.currency;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(data.can_request_up_to) });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: data.suggested_amount > 0 ? String(data.suggested_amount) : '' });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const sendBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Send request');
@@ -70,7 +70,7 @@
         sendBtn.disabled = false;
       }
     } },
-    field('amount', 'Amount', amountInput, { hint: `You can ask for up to ${money(data.can_request_up_to, cur)}.` }),
+    field('amount', 'Amount', amountInput, { hint: 'Any amount - it is taken off automatically as your petrol is approved, and can go below zero.' }),
     errEl,
     h('div', { class: 'confirm-actions' }, cancelBtn, sendBtn));
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' }, h('h2', {}, 'Request petrol cash'), form));
@@ -81,15 +81,13 @@
     const cur = data.currency;
     const waiting = (data.payouts || []).find((p) => p.status === 'requested');
     if (waiting) return h('p', { class: 'hint' }, `Your request for ${money(waiting.amount, cur)} is waiting for the admin.`);
-    if (data.settled) return h('p', { class: 'hint' }, 'All settled - nothing is owed to you right now.');
+    const note = data.settled ? h('p', { class: 'hint' }, 'All settled - nothing is owed to you right now.')
+      : (data.advance > 0 ? h('p', { class: 'hint' }, `You are ${money(data.advance, cur)} ahead - it comes off as your petrol is approved.`) : null);
     // Asked for day by day, before one request could cover any amount - still waiting on the admin.
     const earlier = data.requested_total > 0 ? h('p', { class: 'hint' }, `${money(data.requested_total, cur)} you asked for earlier is waiting for the admin.`) : null;
-    if (data.can_request_up_to > 0) {
-      return h('div', {}, earlier,
-        h('div', { class: 'acct-actions' },
-          h('button', { class: 'btn primary', type: 'button', onclick: () => openRequestSheet(data, onChanged) }, 'Request cash')));
-    }
-    return earlier;
+    return h('div', {}, note, earlier,
+      h('div', { class: 'acct-actions' },
+        h('button', { class: 'btn primary', type: 'button', onclick: () => openRequestSheet(data, onChanged) }, 'Request cash')));
   }
 
   function paymentsSection(data) {
@@ -114,13 +112,13 @@
           h('span', { class: 'stat-value is-text' }, money(data.month_total, cur)),
           h('span', { class: 'stat-note' }, `${data.month_km} km approved`)),
         h('div', { class: 'stat' },
-          h('span', { class: 'stat-label' }, data.settled ? 'Settled' : 'Balance owed'),
-          h('span', { class: 'stat-value is-text' }, money(data.unpaid_total, cur)),
+          h('span', { class: 'stat-label' }, data.settled ? 'Settled' : (data.advance > 0 ? 'Advance taken' : 'Balance owed')),
+          h('span', { class: 'stat-value is-text' }, money(data.advance > 0 ? data.advance : data.unpaid_total, cur)),
           h('span', { class: 'stat-note' }, `${money(data.paid_total, cur)} paid · ${money(data.rate_per_km, cur)} per km`))),
       opts.own ? requestPart(data, opts.onChanged) : null,
       h('p', { class: 'hint' }, opts.own
-        ? 'Each day is the kilometres between the two odometer readings, paid per km once approved. Approved days add up into your balance - ask for any amount of it with Request cash. Amounts in brackets are not approved yet.'
-        : 'Each day is the kilometres between the two odometer readings, paid per km once approved. Approved days add up into a balance, paid when the employee asks. Amounts in brackets are not approved yet.'),
+        ? 'Each day is the kilometres between the two odometer readings, paid per km once approved. Approved days add up into your balance. Ask for petrol money any time, in any amount - it is taken off as your petrol is approved, and can go below zero. Amounts in brackets are not approved yet.'
+        : 'Each day is the kilometres between the two odometer readings, paid per km once approved. Approved days add up into a balance, paid when the employee asks - they can also ask before any petrol is recorded, which shows as an advance. Amounts in brackets are not approved yet.'),
       paymentsSection(data),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Register'),
@@ -167,7 +165,7 @@
         h('div', { class: 'approval-main' },
           h('strong', {}, w.worker_name),
           h('span', { class: 'hint' }, [`${w.month_km} km this month`, w.pending ? `${w.pending} waiting for approval` : null,
-            w.unpaid_total ? `${money(w.unpaid_total, cur)} to be paid` : null].filter(Boolean).join(' · '))),
+            w.unpaid_total > 0 ? `${money(w.unpaid_total, cur)} to be paid` : (w.unpaid_total < 0 ? `${money(-w.unpaid_total, cur)} advance` : null)].filter(Boolean).join(' · '))),
         h('span', { class: 'fn-stat-value' }, money(w.month_total, cur))))))
         : h('p', { class: 'empty-state' }, 'Nobody is on petrol payment yet - switch it on for someone in Employee management.')));
   }
@@ -262,7 +260,7 @@
         payBtn.disabled = false;
       }
     } },
-    field('amount', 'Amount paid', amountInput, { hint: `Asked for ${money(r.amount, cur)} · balance owed ${money(r.balance, cur)}. Pay less and the rest stays owed.` }),
+    field('amount', 'Amount paid', amountInput, { hint: `Asked for ${money(r.amount, cur)} · ${r.balance < 0 ? `already ${money(-r.balance, cur)} ahead` : `balance owed ${money(r.balance, cur)}`}. Pay less and the rest stays owed.` }),
     field('payment_mode', 'Account', modeSel),
     ...picker.nodes,
     errEl,
@@ -310,7 +308,7 @@
     const payoutRow = (r) => h('li', { class: 'card approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.user_name} · ${money(r.amount, cur)}`),
-        h('span', { class: 'hint' }, [`balance owed ${money(r.balance, cur)}`, `asked ${fmtStamp(r.requested_at)}`].join(' · '))),
+        h('span', { class: 'hint' }, [r.balance < 0 ? `already ${money(-r.balance, cur)} ahead` : `balance owed ${money(r.balance, cur)}`, `asked ${fmtStamp(r.requested_at)}`].join(' · '))),
       data.can_decide ? h('div', { class: 'approval-actions' },
         h('button', { class: 'btn small primary', type: 'button', onclick: () => openPayoutSheet(r, data.payment_modes, cur, showRequests) }, 'Approve'),
         h('button', { class: 'btn small', type: 'button', onclick: () => rejectPayout(r) }, 'Reject')) : null);

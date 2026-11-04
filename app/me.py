@@ -95,8 +95,8 @@ def _extra_tiles():
       his comissions, how does he check that?" - previously only visible to an admin, through Employee
       management's own popup), a real page (see app/commissions.py).
 
-    An employee's own cash-purchase balance and log stays a block further down the Me hub itself (not a
-    tile/page here) - see me.html's own me-cash-purchases section."""
+    (The employee's own Cash purchases block on the Me hub - balance, Request cash, Log purchase - was removed on
+    2026-11-05; the admin's side, Purchase approval, is unchanged.)"""
     from .models import settings_for_client
 
     tiles = []
