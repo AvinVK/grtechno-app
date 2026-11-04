@@ -26,12 +26,14 @@
   // Three tabs at the top of Inventory, same pill shape as Projects' own section tabs (kohal, 2026-10-17:
   // "the approval request should go to a new subtab inside inventory called material requests"; restock
   // added 2026-10-21). `requestBadge`/`restockBadge` are each tab's own count, shown only while there is one.
-  function inventoryTabs(active, requestBadge, restockBadge) {
+  function inventoryTabs(active, requestBadge, restockBadge, stockInBadge) {
     const badge = (n) => (n ? h('span', { class: 'nav-badge' }, String(n)) : null);
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Inventory section' },
       h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'list' ? 'page' : null }, 'Materials'),
       h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null },
         'Material requests', badge(requestBadge)),
+      h('a', { class: 'filter-chip', href: '#stockin', 'aria-current': active === 'stockin' ? 'page' : null },
+        'Stock-in requests', badge(stockInBadge)),
       h('a', { class: 'filter-chip', href: '#restock', 'aria-current': active === 'restock' ? 'page' : null },
         'Restock', badge(restockBadge)));
   }
@@ -71,7 +73,7 @@
     }
     search.oninput = refresh;
 
-    clear(view).append(h('div', {}, inventoryTabs('list', data.pending_request_count, data.restock_count), h('div', { class: 'filters' }, search), count, results));
+    clear(view).append(h('div', {}, inventoryTabs('list', data.pending_request_count, data.restock_count, data.stock_in_request_count), h('div', { class: 'filters' }, search), count, results));
     refresh();
   }
 
@@ -224,7 +226,7 @@
           h('button', { type: 'button', class: 'link-btn', onclick: () => rejectRequest(r, reload) }, 'Reject')))));
 
     clear(view).append(h('div', {},
-      inventoryTabs('requests', data.requests.length, data.restock_count),
+      inventoryTabs('requests', data.requests.length, data.restock_count, data.stock_in_request_count),
       data.requests.length
         ? h('ul', { class: 'card-group' }, rows)
         : h('p', { class: 'empty-state' }, 'No pending requests right now.'),
@@ -232,6 +234,43 @@
       history.requests.length
         ? h('ul', { class: 'card-group' }, history.requests.map(historyRow))
         : h('p', { class: 'empty-state' }, 'Nothing dealt with yet.')));
+  }
+
+  /* ---------- Stock-in requests: raised by anyone with Inventory access, approved by an accountant / office assistant / admin ---------- */
+
+  async function showStockIns() {
+    showBack(false);
+    showAddLink(false);
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/inventory/stock-in-requests'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const cur = data.currency;
+    const reload = () => showStockIns();
+    const line = (r) => [fmtDate(r.entry_date), `${r.quantity} ${r.unit || ''}`.trim(), r.supplier_name, r.bill_no ? `Bill ${r.bill_no}` : null,
+      r.created_by_name ? `Requested by ${r.created_by_name}` : null, r.note || null].filter(Boolean).join(' · ');
+    const pendingRows = data.requests.map((r) => h('li', { class: 'p-row' },
+      h('span', { class: 'chip chip-today' }, 'Pending'),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
+        h('span', { class: 'row-sub' }, line(r)),
+        data.can_approve ? h('span', { class: 'bill-links' },
+          h('button', { type: 'button', class: 'link-btn', onclick: () => approveOrRejectStockIn(r.material_id, r, true, reload) }, 'Approve'),
+          h('button', { type: 'button', class: 'link-btn', onclick: () => approveOrRejectStockIn(r.material_id, r, false, reload) }, 'Reject')) : null),
+      h('span', { class: 'row-value' }, money(r.total_cost, cur))));
+    const historyRows = data.history.map((r) => h('li', { class: 'p-row' },
+      h('span', { class: `chip ${r.status === 'approved' ? 'chip-active' : 'chip-off'}` }, r.status === 'approved' ? 'Approved' : 'Rejected'),
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, `${r.material_code} · ${r.material_name}`),
+        h('span', { class: 'row-sub' }, [line(r), r.approved_by_name ? `${r.status === 'approved' ? 'Approved' : 'Rejected'} by ${r.approved_by_name}` : null].filter(Boolean).join(' · '))),
+      h('span', { class: 'row-value' }, money(r.total_cost, cur))));
+    clear(view).append(h('div', {},
+      inventoryTabs('stockin', data.pending_request_count, data.restock_count, data.requests.length),
+      h('div', { class: 'list-head' }, h('h2', {}, `${data.requests.length} waiting`)),
+      data.can_approve ? null : h('p', { class: 'hint' }, 'An accountant, office assistant or the admin approves these.'),
+      data.requests.length ? h('ul', { class: 'card-group' }, pendingRows) : h('p', { class: 'empty-state' }, 'No stock-in requests waiting.'),
+      h('div', { class: 'list-head' }, h('h2', {}, 'History')),
+      data.history.length ? h('ul', { class: 'card-group' }, historyRows) : h('p', { class: 'empty-state' }, 'Nothing dealt with yet.')));
   }
 
   /* ---------- Restock: every material a pending request needs more of than is on hand ---------- */
@@ -262,7 +301,7 @@
     }
 
     clear(view).append(h('div', {},
-      inventoryTabs('restock', data.pending_request_count, data.restock.length),
+      inventoryTabs('restock', data.pending_request_count, data.restock.length, data.stock_in_request_count),
       data.restock.length
         ? h('ul', { class: 'card-group' }, data.restock.map(restockRow))
         : h('p', { class: 'empty-state' }, 'Nothing short right now - every pending request fits inside current stock.')));
@@ -814,7 +853,7 @@
     recalc();
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Add stock');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, data.can_approve_stock_in ? 'Add stock' : 'Send request');
 
     const form = h('form', { novalidate: true, class: 'project-form',
       onsubmit: async (e) => {
@@ -841,9 +880,14 @@
           gst_percent: gstPercent.value || '0',
         };
         try {
-          await api(`/api/inventory/materials/${material.id}/stock-in`, { method: 'POST', body });
-          toast('Stock added');
-          window.location.hash = `#m${material.id}`;
+          const res = await api(`/api/inventory/materials/${material.id}/stock-in`, { method: 'POST', body });
+          if (res.movement.status === 'pending') {
+            toast('Stock-in request sent for approval');
+            window.location.hash = '#stockin';
+          } else {
+            toast('Stock added');
+            window.location.hash = `#m${material.id}`;
+          }
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
@@ -887,6 +931,7 @@
     if (hash === '#new') return showNew();
     if (hash === '#requests') return showRequests();
     if (hash === '#restock') return showRestock();
+    if (hash === '#stockin') return showStockIns();
     let m = /^#m(\d+)\/edit$/.exec(hash);
     if (m) return showEdit(Number(m[1]));
     m = /^#m(\d+)\/stock-in$/.exec(hash);

@@ -665,6 +665,39 @@ class LeadDocument(db.Model):
         return {"doc_type": self.doc_type, "url": f"/uploads/lead_documents/{self.filename}", "created_at": _iso(self.created_at)}
 
 
+class PetrolPayout(db.Model):
+    """One ask for petrol money (kohal, 2026-11-04: "the petrol cash request should accumulate and the employee should
+    have raise petrol cash request to admin so that once that is paid, it should settle whatever is paid and have the
+    remaining showing") - the employee asks for any part of what they are owed, the admin pays an amount (which may be
+    less than asked) from one of their accounts, and that amount settles against the balance: approved petrol, less
+    whatever has been paid (per-day payments from before this existed, and these). `amount` is what was asked for,
+    `amount_paid` what was actually paid."""
+
+    __tablename__ = "petrol_payouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    amount_paid = db.Column(db.Numeric(14, 2), nullable=True)
+    status = db.Column(db.String(10), nullable=False, default="requested", server_default="requested")   # requested | paid | rejected
+    payment_account = db.Column(db.String(40), nullable=False, default="", server_default="")
+    requested_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    decided_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_code])
+    decided_by = db.relationship("User", foreign_keys=[decided_by_code])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "user_code": self.user_code, "user_name": self.user.name if self.user else None,
+            "amount": float(self.amount), "amount_paid": float(self.amount_paid) if self.amount_paid is not None else None,
+            "status": self.status, "payment_account": self.payment_account,
+            "requested_at": _iso(self.requested_at), "decided_at": _iso(self.decided_at),
+            "decided_by_name": self.decided_by.name if self.decided_by else None,
+        }
+
+
 class PetrolEntry(db.Model):
     """One check-in/out session's petrol claim (kohal, 2026-10-27: "at checkin time submit odometer pic and
     its reading as integer and at checkout submit odometer reading pic and its reading as integer... both
@@ -1262,7 +1295,36 @@ class Supplier(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False, unique=True)
+    # Who to pay and how (kohal, 2026-11-04) - both optional; "Make payment" fills them in and saves any change.
+    phone = db.Column(EncryptedText, nullable=True)
+    upi_id = db.Column(EncryptedText, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+
+class SupplierPayment(db.Model):
+    """A payment the admin made to a supplier against what is owed on credit stock-ins (kohal, 2026-11-04). What is
+    still owed is the credit stock-ins' total cost minus these. Paid from one of the admin's own accounts, so the
+    Accounts page shows it as a debit there; `mode` is how it went (Cash, UPI, Bank transfer, Cheque)."""
+
+    __tablename__ = "supplier_payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    payment_account = db.Column(db.String(40), nullable=False)
+    mode = db.Column(db.String(20), nullable=False)
+    note = db.Column(db.String(200), nullable=False, default="", server_default="")
+    entry_date = db.Column(db.Date, nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    supplier = db.relationship("Supplier", backref=db.backref("payments", cascade="all, delete-orphan", passive_deletes=True))
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "amount": float(self.amount), "payment_account": self.payment_account, "mode": self.mode,
+                "note": self.note, "entry_date": self.entry_date.isoformat(),
+                "created_by_name": self.created_by.name if self.created_by else None}
 
 
 class MaterialUnit(db.Model):

@@ -7,8 +7,8 @@ through (constants.PAYMENT_ACCOUNTS), so this page reads them all and lines them
 
   Credits (money in):  project payments received, lead advances, self transfers in.
   Debits (money out):  salary and wages paid, fooding allotted, cash handed to an employee for purchases, petrol
-                       paid out, inventory bought for cash, what the admin bought directly (admin purchases), self
-                       transfers out.
+                       paid out, inventory bought for cash, what the admin bought directly (admin purchases), payments made to
+                       suppliers, self transfers out.
 
 Left out on purpose, because the money already left through one of the above: an employee's own fooding expense
 and what they buy with the cash they were handed. Entries made before the account list existed carry an older
@@ -22,7 +22,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 from .constants import PAYMENT_ACCOUNTS
 from .extensions import db
 from .models import (
-    AccountTransfer, AdminPurchase, CashTopup, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
+    AccountTransfer, AdminPurchase, CashTopup, PetrolPayout, SupplierPayment, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
 )
 from .timeutil import today_local
 from .validation import Fields, api_errors, parse_money
@@ -80,6 +80,9 @@ def ledger(account):
         rows.append(_row("debit", e.cash_decided_at or e.work_date, e.amount or Decimal("0"), "Petrol", e.user.name if e.user else "",
                          f"Ride of {e.work_date.strftime('%d %b %Y')}", requested_by=e.user.name if e.user else None,
                          approved_by=_name(e.cash_decided_by_code)))
+    for o in PetrolPayout.query.filter_by(status="paid", payment_account=account).all():
+        rows.append(_row("debit", o.decided_at, o.amount_paid or Decimal("0"), "Petrol", o.user.name if o.user else "", "Petrol payment",
+                         requested_by=o.user.name if o.user else None, approved_by=_name(o.decided_by_code)))
     for m in MaterialMovement.query.filter_by(kind="in", status="approved", payment_mode="cash", payment_account=account).all():
         rows.append(_row("debit", m.entry_date, m.total_cost or m.amount, "Inventory purchase",
                          m.supplier.name if m.supplier else "", m.material.name,
@@ -88,6 +91,10 @@ def ledger(account):
     for p in AdminPurchase.query.filter_by(payment_account=account).all():
         rows.append(_row("debit", p.entry_date, p.amount, "Material purchase" if p.category == "material" else "Other expense",
                          p.supplier, p.material_name, requested_by=p.created_by.name if p.created_by else None))
+
+    for p in SupplierPayment.query.filter_by(payment_account=account).all():
+        rows.append(_row("debit", p.entry_date, p.amount, "Supplier payment", p.supplier.name, f"{p.mode}{' · ' + p.note if p.note else ''}",
+                         requested_by=p.created_by.name if p.created_by else None))
 
     # Self transfers: the same row is the debit of the account it left and the credit of the one it reached.
     for t in AccountTransfer.query.filter((AccountTransfer.from_account == account) | (AccountTransfer.to_account == account)).all():

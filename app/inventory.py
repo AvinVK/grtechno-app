@@ -10,6 +10,7 @@ entries - never edited directly, so the two always add up:
 """
 
 import json
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -20,7 +21,9 @@ from .auth import can_approve_stock_in, visible_projects
 from .extensions import db
 from .modules import check_module
 from .constants import PAYMENT_ACCOUNTS
-from .models import Material, MaterialMovement, MaterialUnit, Project, Supplier, Worker, settings_for_client, utcnow
+from .models import (
+    Material, MaterialMovement, MaterialUnit, Project, Supplier, SupplierPayment, Worker, settings_for_client, utcnow,
+)
 from .timeutil import to_local, today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -344,6 +347,7 @@ def list_materials():
         # show a number on a tab.
         pending_request_count=MaterialMovement.query.filter_by(kind="out", status="pending").count(),
         restock_count=len(_restock_rows()),
+        stock_in_request_count=_stock_in_pending().count(),
     )
 
 
@@ -416,17 +420,55 @@ def suppliers_page():
     return render_template("suppliers.html")
 
 
+SUPPLIER_PAY_MODES = ("Cash", "UPI", "Bank transfer", "Cheque")
+UPI_ID = re.compile(r"^[A-Za-z0-9._\-]{2,64}@[A-Za-z][A-Za-z0-9]{1,30}$")
+
+
+def _owed(supplier_id):
+    """(credit bought, paid so far) for one supplier - what is still owed is the first minus the second."""
+    bought = sum((mv.total_cost for mv in _credit_rows(supplier_id)), Decimal("0"))
+    paid = sum((p.amount for p in SupplierPayment.query.filter_by(supplier_id=supplier_id).all()), Decimal("0"))
+    return bought, paid
+
+
 @bp.get("/api/inventory/suppliers/credit")
 def supplier_credit_list():
-    owed, count = {}, {}
+    bought, count = {}, {}
     for mv in _credit_rows():
-        owed[mv.supplier_id] = owed.get(mv.supplier_id, Decimal("0")) + mv.total_cost
+        bought[mv.supplier_id] = bought.get(mv.supplier_id, Decimal("0")) + mv.total_cost
         count[mv.supplier_id] = count.get(mv.supplier_id, 0) + 1
-    rows = [{"id": s.id, "name": s.name, "credit": float(owed.get(s.id, 0)), "purchases": count.get(s.id, 0)}
+    paid = {}
+    for p in SupplierPayment.query.all():
+        paid[p.supplier_id] = paid.get(p.supplier_id, Decimal("0")) + p.amount
+    rows = [{"id": s.id, "name": s.name, "credit": float(bought.get(s.id, 0) - paid.get(s.id, 0)), "purchases": count.get(s.id, 0)}
             for s in Supplier.query.order_by(Supplier.name).all()]
     rows.sort(key=lambda r: (-r["credit"], r["name"].lower()))
-    return jsonify(suppliers=rows, total=float(sum(owed.values(), start=Decimal("0"))),
+    return jsonify(suppliers=rows, total=round(sum(r["credit"] for r in rows), 2),
                    currency=settings_for_client()["currency"])
+
+
+def _supplier_has_history(supplier_id):
+    """Anything at all on record for this supplier - a stock-in of any status or a payment. Deleting one that has
+    history would blank the supplier off those stock-ins and drop its payments from the Accounts page."""
+    return (MaterialMovement.query.filter_by(supplier_id=supplier_id).first() is not None
+            or SupplierPayment.query.filter_by(supplier_id=supplier_id).first() is not None)
+
+
+def _supplier_detail(supplier):
+    rows = _credit_rows(supplier.id)
+    bought, paid = _owed(supplier.id)
+    payments = (SupplierPayment.query.filter_by(supplier_id=supplier.id)
+                .order_by(SupplierPayment.entry_date.desc(), SupplierPayment.id.desc()).all())
+    return dict(
+        name=supplier.name, credit=float(bought - paid), bought=float(bought), paid=float(paid),
+        phone=supplier.phone or "", upi_id=supplier.upi_id or "", can_pay=g.user.is_admin,
+        can_delete=g.user.is_admin and not _supplier_has_history(supplier.id),
+        entries=[{"id": mv.id, "material_id": mv.material_id, "material_name": mv.material.name, "unit": mv.material.unit,
+                  "quantity": float(mv.quantity), "bill_no": mv.bill_no, "note": mv.note,
+                  "entry_date": mv.entry_date.isoformat(), "total_cost": float(mv.total_cost)} for mv in rows],
+        payments=[p.to_dict() for p in payments],
+        payment_accounts=list(PAYMENT_ACCOUNTS), pay_modes=list(SUPPLIER_PAY_MODES),
+        currency=settings_for_client()["currency"])
 
 
 @bp.get("/api/inventory/suppliers/<int:supplier_id>/credit")
@@ -434,13 +476,71 @@ def supplier_credit_detail(supplier_id):
     supplier = db.session.get(Supplier, supplier_id)
     if supplier is None:
         abort(404)
-    rows = _credit_rows(supplier.id)
-    return jsonify(
-        name=supplier.name, credit=float(sum((mv.total_cost for mv in rows), start=Decimal("0"))),
-        entries=[{"id": mv.id, "material_id": mv.material_id, "material_name": mv.material.name, "unit": mv.material.unit,
-                  "quantity": float(mv.quantity), "bill_no": mv.bill_no, "note": mv.note,
-                  "entry_date": mv.entry_date.isoformat(), "total_cost": float(mv.total_cost)} for mv in rows],
-        currency=settings_for_client()["currency"])
+    return jsonify(**_supplier_detail(supplier))
+
+
+@bp.delete("/api/inventory/suppliers/<int:supplier_id>")
+def delete_supplier(supplier_id):
+    """Remove a supplier (kohal, 2026-11-04) - the admin's alone, and only one nothing has been bought from or paid:
+    a supplier with stock-ins or payments on record stays, so what is owed and what was paid is never lost."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can delete a supplier.")
+    supplier = db.session.get(Supplier, supplier_id)
+    if supplier is None:
+        abort(404)
+    if _supplier_has_history(supplier.id):
+        abort(409, "This supplier has purchases or payments on record, so it can't be deleted.")
+    db.session.delete(supplier)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@bp.post("/api/inventory/suppliers/<int:supplier_id>/payments")
+def pay_supplier(supplier_id):
+    """Pay a supplier part or all of what is owed (kohal, 2026-11-04) - the admin's alone, since it goes out through
+    the bank accounts. The contact number and UPI ID shown on the form are saved on the supplier if changed."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can pay a supplier - it is paid out through the bank accounts.")
+    supplier = db.session.get(Supplier, supplier_id)
+    if supplier is None:
+        abort(404)
+    payload = _payload()
+    f = Fields(payload)
+    f.money("amount", nullable=False)
+    f.date("entry_date")
+    f.text("note", 200)
+    f.text("phone", 40)
+    f.text("upi_id", 80)
+    f.choice("payment_account", PAYMENT_ACCOUNTS)
+    f.choice("mode", SUPPLIER_PAY_MODES)
+    errors = f.errors
+    for key, msg in (("payment_account", "Choose the account it is paid from"), ("mode", "Choose how it is paid")):
+        if key not in f.data and key not in errors:
+            errors[key] = msg
+    bought, paid = _owed(supplier.id)
+    owed = bought - paid
+    amount = f.data.get("amount")
+    if "amount" not in errors:
+        shown = f"{owed:,.2f}".rstrip("0").rstrip(".")
+        if amount is None or amount <= 0:
+            errors["amount"] = "Enter an amount greater than 0"
+        elif owed <= 0:
+            errors["amount"] = "Nothing is owed to this supplier"
+        elif amount > owed:
+            errors["amount"] = f"Only {settings_for_client()['currency']}{shown} is owed to this supplier"
+    upi = f.data.get("upi_id") or ""
+    if upi and not UPI_ID.match(upi):
+        errors["upi_id"] = "Enter a UPI ID like name@bank"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    supplier.phone = f.data.get("phone", "")
+    supplier.upi_id = upi
+    payment = SupplierPayment(supplier=supplier, amount=amount.quantize(Decimal("0.01")), payment_account=f.data["payment_account"],
+                              mode=f.data["mode"], note=f.data.get("note", ""), entry_date=f.data.get("entry_date") or today_local(),
+                              created_by_code=g.user.code)
+    db.session.add(payment)
+    db.session.commit()
+    return jsonify(payment=payment.to_dict(), **_supplier_detail(supplier)), 201
 
 
 @bp.patch("/api/inventory/materials/<int:material_id>")
@@ -654,6 +754,36 @@ def material_requests():
         workers=_workers_for_client(),
         transport_modes=list(TRANSPORT_MODES),
         restock_count=len(_restock_rows()),
+        stock_in_request_count=_stock_in_pending().count(),
+    )
+
+
+# ---------- Stock-in requests (kohal, 2026-11-04) ----------
+#
+# A stock-in raised by someone who can't approve one themselves (a project manager, say) waits as a pending
+# stock-in (see _status_fields). This tab is where those are raised from and seen: pending ones for an accountant,
+# office assistant or the admin to approve or reject, and the ones already dealt with. Approving and rejecting use
+# the same per-material routes as always (approve_stock_in / reject_stock_in).
+
+def _stock_in_pending():
+    return MaterialMovement.query.filter(MaterialMovement.kind == "in", MaterialMovement.status == "pending",
+                                         MaterialMovement.requested.is_(False))
+
+
+@bp.get("/api/inventory/stock-in-requests")
+def stock_in_requests():
+    pending = _stock_in_pending().order_by(MaterialMovement.created_at).all()
+    history = (MaterialMovement.query
+               .filter(MaterialMovement.kind == "in", MaterialMovement.status.in_(("approved", "rejected")),
+                       MaterialMovement.requested.is_(False), MaterialMovement.approved_by_code.isnot(None),
+                       MaterialMovement.approved_by_code != MaterialMovement.created_by_code)
+               .order_by(MaterialMovement.approved_at.desc(), MaterialMovement.id.desc()).limit(100).all())
+    return jsonify(
+        requests=[_material_request_dict(mv) for mv in pending],
+        history=[_material_request_dict(mv) for mv in history],
+        materials=[{"id": m.id, "name": m.name, "unit": m.unit} for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
+        can_approve=can_approve_stock_in(g.user), currency=settings_for_client()["currency"],
+        restock_count=len(_restock_rows()), pending_request_count=MaterialMovement.query.filter_by(kind="out", status="pending").count(),
     )
 
 
@@ -725,6 +855,7 @@ def restock():
     return jsonify(
         restock=_restock_rows(),
         pending_request_count=MaterialMovement.query.filter_by(kind="out", status="pending").count(),
+        stock_in_request_count=_stock_in_pending().count(),
     )
 
 

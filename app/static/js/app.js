@@ -619,6 +619,11 @@
       // every stage section reads as past and locks read-only, same as if it had moved beyond each one.
       const stageIndex = STAGE_ORDER.indexOf(lead.stage);
       const isPastStage = (stage) => stageIndex === -1 || stageIndex > STAGE_ORDER.indexOf(stage);
+      // A stage that has been passed is read only - but only what was actually filled in (kohal, 2026-11-04: leads whose
+      // earlier stage was saved before every field was required, e.g. a survey with no site name, could not save the next
+      // stage at all because the empty field was locked). Anything still empty stays open to be entered.
+      const lockFilled = (controls) => controls.forEach((c) => { if (String(c.value ?? '').trim() !== '') c.disabled = true; });
+      const lockCheckboxes = (boxes) => { if (boxes.some((b) => b.box.querySelector('input').checked)) boxes.forEach((b) => { b.box.querySelector('input').disabled = true; }); };
 
       // Site survey - editable while it's either already done or exactly what's next; once the lead has
       // moved on to Quote sent or beyond, it's read-only history (see isPastStage below).
@@ -729,9 +734,7 @@
         fileInput.value = '';
       };
 
-      if (surveyLocked) {
-        [surveyDateInput, surveyorSel, repName, repRole, repPhone, ...siteControls].forEach((c) => { c.disabled = true; });
-      }
+      if (surveyLocked) lockFilled([surveyDateInput, surveyorSel, repName, repRole, repPhone, ...siteControls]);
       surveySectionNode = h('details', { class: 'stage-section', open: expand === 1 },
         h('summary', { class: 'stage-section-title' }, 'Site survey'),
         h('div', { class: 'stage-section-body' },
@@ -767,9 +770,8 @@
           toast('Complete the site survey first', true);
         });
       } else if (isPastStage('Quote sent')) {
-        // Already done, and the lead has moved on - viewable, but read only, same as Site survey above.
-        inputs.quote_sent_date.disabled = true;
-        inputs.est_value.disabled = true;
+        // Already done, and the lead has moved on - viewable, but read only, same as Site survey above (what is still empty stays open).
+        lockFilled([inputs.quote_sent_date, inputs.est_value]);
       } else if (lead.stage === 'Site survey' && !lead.quote_sent_date) {
         // Sending the quote for the first time is what completes Site survey's own step - make that
         // outcome visible on the button itself, before it's clicked, instead of only in the toast after.
@@ -907,9 +909,9 @@
           toast('Finalize a negotiation round first', true);
         });
       } else if (isPastStage('Work order & advance')) {
-        // The lead is Won or Lost - viewable, but read only, same as the earlier stages once passed.
-        woServiceBoxes.forEach((s) => { s.box.querySelector('input').disabled = true; });
-        ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode', 'advance_comments'].forEach((name) => { inputs[name].disabled = true; });
+        // The lead is Won or Lost - viewable, but read only, same as the earlier stages once passed (what is still empty stays open).
+        lockCheckboxes(woServiceBoxes);
+        lockFilled(['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode', 'advance_comments'].map((name) => inputs[name]));
       } else if (lead.stage === 'Negotiation' && !lead.work_order_no) {
         const woInput = inputs.work_order_no;
         const updateSaveLabel = () => {
@@ -925,8 +927,9 @@
       // overdue banner's Reschedule jumps straight to that field, and with Activity read only, Notes is
       // the one place left to add anything).
       if (isPastStage('New enquiry')) {
-        ['company', 'contact_name', 'phone', 'email', 'source', 'enquired_by_id'].forEach((name) => { inputs[name].disabled = true; });
-        serviceBoxes.forEach((s) => { s.box.querySelector('input').disabled = true; });
+        inputs.email.disabled = true;                        // optional, so an empty one is not "missing"
+        lockFilled(['company', 'contact_name', 'phone', 'source', 'enquired_by_id'].map((name) => inputs[name]));
+        lockCheckboxes(serviceBoxes);
       }
 
       form = h('form', { novalidate: true, id: 'lead-form' },
@@ -1014,12 +1017,12 @@
           if (!body.enquired_by_id) missing.enquired_by_id = 'This field is required';
           if (!body.follow_up_date) missing.follow_up_date = 'This field is required';
           // Quote sent: once either box is filled (or the quote was already sent), both are required.
-          if (!isNew && !inputs.quote_sent_date.disabled && (body.quote_sent_date || body.est_value !== null || lead.quote_sent_date)) {
+          if (!isNew && !(inputs.quote_sent_date.disabled && inputs.est_value.disabled) && (body.quote_sent_date || body.est_value !== null || lead.quote_sent_date)) {
             if (!body.quote_sent_date) missing.quote_sent_date = 'This field is required';
             if (body.est_value === null) missing.est_value = 'This field is required';
           }
           // Work order & advance: same all-or-nothing rule, once negotiation has been finalized.
-          if (!isNew && !inputs.work_order_no.disabled
+          if (!isNew && ['work_order_no', 'work_order_date', 'advance_amount', 'advance_date', 'advance_mode'].some((name) => !inputs[name].disabled)
             && (body.work_order_no || body.work_order_date || body.advance_amount !== null || body.advance_date || body.advance_mode || lead.work_order_no)) {
             if (!body.work_order_no) missing.work_order_no = 'This field is required';
             if (!body.work_order_date) missing.work_order_date = 'This field is required';

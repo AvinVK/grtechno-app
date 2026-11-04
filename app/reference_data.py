@@ -41,7 +41,7 @@ ROLES = [
 ROLE_MODULES = {
     "sales_field": ["leads", "attendance"],
     "sales_office": ["leads", "attendance"],
-    "project_manager": ["projects", "attendance", "workplan"],
+    "project_manager": ["projects", "attendance", "workplan", "inventory"],
     "supervisor": ["projects", "attendance"],
     "accounts": ["clients", "projects", "inventory", "users", "workforce", "attendance", "workplan"],
     "sub_admin": ["clients", "projects", "attendance"],

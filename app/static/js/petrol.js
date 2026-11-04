@@ -11,7 +11,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, money, toast, field, selectField, closeOnBack } = window.LD;
+  const { $, h, clear, api, money, toast, field, selectField, closeOnBack, showFieldErrors } = window.LD;
   const view = $('#view');
   const mode = view.dataset.mode;
 
@@ -31,21 +31,7 @@
       return h('span', { class: 'chip chip-role' },
         ['Paid', e.cash_mode, fmtStamp(e.cash_decided_at)].filter(Boolean).join(' · '));
     }
-    const rejected = e.cash_status === 'rejected' ? h('span', { class: 'chip chip-off' }, 'Cash request rejected') : null;
-    if (!own) return rejected;
-    const btn = h('button', { class: 'btn small', type: 'button' }, e.cash_status === 'rejected' ? 'Request again' : 'Request cash');
-    btn.onclick = async () => {
-      btn.disabled = true;
-      try {
-        await api(`/api/petrol/${e.id}/request-cash`, { method: 'POST' });
-        toast('Cash requested');
-        await onChanged();
-      } catch (err) {
-        toast(err.message, true);
-        btn.disabled = false;
-      }
-    };
-    return h('span', { class: 'petrol-cash' }, rejected, btn);
+    return e.cash_status === 'rejected' ? h('span', { class: 'chip chip-off' }, 'Cash request rejected') : null;
   }
 
   function entryRow(cur, opts) {
@@ -58,6 +44,67 @@
       h('span', { class: 'row-value' }, e.status === 'approved' ? money(e.amount, cur) : `(${money(e.amount, cur)})`));
   }
 
+  /* The employee's ask: any amount up to what they are still owed (kohal, 2026-11-04) - the sheet opens with all of it. */
+  function openRequestSheet(data, onDone) {
+    const cur = data.currency;
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(data.can_request_up_to) });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const sendBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Send request');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form', onsubmit: async (e) => {
+      e.preventDefault();
+      sendBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      try {
+        await api('/api/petrol/payouts', { method: 'POST', body: { amount: amountInput.value } });
+        finish();
+        toast('Request sent to the admin');
+        await onDone();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        sendBtn.disabled = false;
+      }
+    } },
+    field('amount', 'Amount', amountInput, { hint: `You can ask for up to ${money(data.can_request_up_to, cur)}.` }),
+    errEl,
+    h('div', { class: 'confirm-actions' }, cancelBtn, sendBtn));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' }, h('h2', {}, 'Request petrol cash'), form));
+    document.body.append(overlay);
+  }
+
+  function requestPart(data, onChanged) {
+    const cur = data.currency;
+    const waiting = (data.payouts || []).find((p) => p.status === 'requested');
+    if (waiting) return h('p', { class: 'hint' }, `Your request for ${money(waiting.amount, cur)} is waiting for the admin.`);
+    if (data.settled) return h('p', { class: 'hint' }, 'All settled - nothing is owed to you right now.');
+    // Asked for day by day, before one request could cover any amount - still waiting on the admin.
+    const earlier = data.requested_total > 0 ? h('p', { class: 'hint' }, `${money(data.requested_total, cur)} you asked for earlier is waiting for the admin.`) : null;
+    if (data.can_request_up_to > 0) {
+      return h('div', {}, earlier,
+        h('div', { class: 'acct-actions' },
+          h('button', { class: 'btn primary', type: 'button', onclick: () => openRequestSheet(data, onChanged) }, 'Request cash')));
+    }
+    return earlier;
+  }
+
+  function paymentsSection(data) {
+    const cur = data.currency;
+    if (!data.payouts || !data.payouts.length) return null;
+    return h('section', { class: 'p-section' },
+      h('h3', {}, 'Payments'),
+      h('ul', { class: 'card-group' }, data.payouts.map((p) => h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, p.status === 'paid' ? `Paid ${money(p.amount_paid, cur)}` : (p.status === 'rejected' ? 'Request rejected' : 'Waiting for the admin')),
+          h('span', { class: 'row-sub' }, [fmtStamp(p.decided_at || p.requested_at), p.status === 'paid' && p.amount_paid < p.amount ? `asked ${money(p.amount, cur)}` : null,
+            p.payment_account || null, p.decided_by_name ? `by ${p.decided_by_name}` : null].filter(Boolean).join(' · '))),
+        h('span', { class: 'row-value' }, money(p.status === 'paid' ? p.amount_paid : p.amount, cur))))));
+  }
+
   function registerBlock(data, opts = {}) {
     const cur = data.currency;
     return h('div', { class: 'petrol-register' },
@@ -67,12 +114,14 @@
           h('span', { class: 'stat-value is-text' }, money(data.month_total, cur)),
           h('span', { class: 'stat-note' }, `${data.month_km} km approved`)),
         h('div', { class: 'stat' },
-          h('span', { class: 'stat-label' }, 'To be paid'),
+          h('span', { class: 'stat-label' }, data.settled ? 'Settled' : 'Balance owed'),
           h('span', { class: 'stat-value is-text' }, money(data.unpaid_total, cur)),
           h('span', { class: 'stat-note' }, `${money(data.paid_total, cur)} paid · ${money(data.rate_per_km, cur)} per km`))),
+      opts.own ? requestPart(data, opts.onChanged) : null,
       h('p', { class: 'hint' }, opts.own
-        ? 'Each day is the kilometres between the two odometer readings, paid per km once approved. When a day is approved, use Request cash to ask for that amount. Amounts in brackets are not approved yet.'
-        : 'Each day is the kilometres between the two odometer readings, paid per km once approved. Amounts in brackets are not approved yet.'),
+        ? 'Each day is the kilometres between the two odometer readings, paid per km once approved. Approved days add up into your balance - ask for any amount of it with Request cash. Amounts in brackets are not approved yet.'
+        : 'Each day is the kilometres between the two odometer readings, paid per km once approved. Approved days add up into a balance, paid when the employee asks. Amounts in brackets are not approved yet.'),
+      paymentsSection(data),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Register'),
         data.entries.length
@@ -180,6 +229,48 @@
     document.body.append(overlay);
   }
 
+  /* Paying a payout: the amount (all of what was asked, or less), the account it comes from, and optionally through
+     PhonePe / Google Pay - what is paid settles against their balance and the rest stays owed (kohal, 2026-11-04). */
+  function openPayoutSheet(r, paymentModes, cur, onDone) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(r.amount) });
+    const modeSel = selectField(paymentModes, '', { title: 'Account', placeholder: 'Choose an account' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const payBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Approve and mark paid');
+    const picker = LD.payAppPicker({
+      name: r.user_name, amount: () => amountInput.value, payee: r.payee || {}, note: 'Petrol', currency: cur,
+      onChange: (app) => { payBtn.textContent = app ? 'Mark paid & approve' : 'Approve and mark paid'; },
+      onError: (msg) => { errEl.textContent = msg; },
+    });
+    amountInput.addEventListener('input', () => picker.refresh());
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form', onsubmit: async (e) => {
+      e.preventDefault();
+      payBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      try {
+        await api(`/api/petrol/payouts/${r.id}/approve`, { method: 'POST', body: { amount: amountInput.value, payment_mode: modeSel.value } });
+        finish();
+        toast('Paid');
+        await onDone();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        payBtn.disabled = false;
+      }
+    } },
+    field('amount', 'Amount paid', amountInput, { hint: `Asked for ${money(r.amount, cur)} · balance owed ${money(r.balance, cur)}. Pay less and the rest stays owed.` }),
+    field('payment_mode', 'Account', modeSel),
+    ...picker.nodes,
+    errEl,
+    h('div', { class: 'confirm-actions' }, cancelBtn, payBtn));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' }, h('h2', {}, r.user_name), form));
+    document.body.append(overlay);
+  }
+
   async function showRequests() {
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
@@ -208,6 +299,30 @@
         h('button', { class: 'btn small primary', type: 'button', onclick: () => openPaySheet(r, data.payment_modes, cur, showRequests) }, 'Approve'),
         h('button', { class: 'btn small', type: 'button', onclick: () => reject(r) }, 'Reject')) : null);
 
+    async function rejectPayout(r) {
+      try {
+        await api(`/api/petrol/payouts/${r.id}/reject`, { method: 'POST' });
+        toast('Rejected');
+        await showRequests();
+      } catch (err) { toast(err.message, true); }
+    }
+
+    const payoutRow = (r) => h('li', { class: 'card approval-row' },
+      h('div', { class: 'approval-main' },
+        h('strong', {}, `${r.user_name} · ${money(r.amount, cur)}`),
+        h('span', { class: 'hint' }, [`balance owed ${money(r.balance, cur)}`, `asked ${fmtStamp(r.requested_at)}`].join(' · '))),
+      data.can_decide ? h('div', { class: 'approval-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => openPayoutSheet(r, data.payment_modes, cur, showRequests) }, 'Approve'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => rejectPayout(r) }, 'Reject')) : null);
+
+    const payoutHistoryRow = (r) => h('li', { class: 'p-row' },
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, r.user_name),
+        h('span', { class: 'row-sub' }, [fmtStamp(r.decided_at), r.status === 'paid' && r.amount_paid < r.amount ? `asked ${money(r.amount, cur)}` : null,
+          r.decided_by_name ? `${r.status === 'paid' ? 'paid' : 'rejected'} by ${r.decided_by_name}` : null].filter(Boolean).join(' · ')),
+        h('span', { class: `chip ${r.status === 'paid' ? 'chip-role' : 'chip-off'}` }, r.status === 'paid' ? `Paid · ${r.payment_account}` : 'Rejected')),
+      h('span', { class: 'row-value' }, money(r.status === 'paid' ? r.amount_paid : r.amount, cur)));
+
     const historyRow = (r) => h('li', { class: 'p-row' },
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, r.user_name),
@@ -218,16 +333,16 @@
       h('span', { class: 'row-value' }, money(r.amount, cur)));
 
     clear(view).append(h('div', {},
-      tabBar('requests', data.pending.length),
+      tabBar('requests', data.pending.length + data.payouts.length),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Active'),
-        data.pending.length
-          ? h('ul', { class: 'card-group' }, data.pending.map(activeRow))
-          : h('p', { class: 'hint' }, 'Nothing waiting. When an employee asks for the cash for an approved day it shows up here.')),
+        data.pending.length || data.payouts.length
+          ? h('ul', { class: 'card-group' }, [...data.payouts.map(payoutRow), ...data.pending.map(activeRow)])
+          : h('p', { class: 'hint' }, 'Nothing waiting. When an employee asks for petrol cash it shows up here.')),
       h('section', { class: 'p-section' },
         h('h3', {}, 'History'),
-        data.history.length
-          ? h('ul', { class: 'card-group' }, data.history.map(historyRow))
+        data.history.length || data.payout_history.length
+          ? h('ul', { class: 'card-group' }, [...data.payout_history.map(payoutHistoryRow), ...data.history.map(historyRow)])
           : h('p', { class: 'hint' }, 'Nothing decided yet.'))));
   }
 

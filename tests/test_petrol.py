@@ -274,3 +274,92 @@ def test_the_me_tile_counts_cash_waiting_to_be_paid(app, admin_client):
     who.post(f"/api/petrol/{eid}/request-cash")
     assert "1 to pay" in admin_client.get("/me").get_data(as_text=True)
 
+
+# ---------- petrol cash that accumulates (kohal, 2026-11-04) ----------
+
+def _two_approved_days(app, admin_client):
+    """Rider Ravi with two approved days, 20 km each - 80 + 80 = 160 owed."""
+    who = petrol_user(app, "Rider Ravi")
+    for start, end in (("1000", "1020"), ("1100", "1120")):
+        check_in(who, start)
+        check_out(who, end)
+        entry = PetrolEntry.query.order_by(PetrolEntry.id.desc()).first()
+        admin_client.post(f"/api/petrol/{entry.id}/approve")
+        # a second check-in the same day is refused, so move the first session to an earlier date
+        if start == "1000":
+            entry.work_date = entry.work_date.replace(day=1) if entry.work_date.day != 1 else entry.work_date.replace(day=2)
+            entry.attendance.work_date = entry.work_date
+            from app.extensions import db
+            db.session.commit()
+    return who
+
+
+def test_approved_petrol_accumulates_into_one_balance_to_ask_for(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["unpaid_total"] == 160.0 and mine["can_request_up_to"] == 160.0 and mine["settled"] is False
+
+
+def test_a_payout_defaults_to_the_whole_balance_and_only_one_waits_at_a_time(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    assert who.post("/api/petrol/payouts", json={}).status_code == 201
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["payouts"][0]["amount"] == 160.0 and mine["requested_total"] == 160.0 and mine["can_request_up_to"] == 0.0
+    assert who.post("/api/petrol/payouts", json={"amount": "10"}).status_code == 409
+
+
+def test_a_payout_cannot_be_more_than_what_is_owed(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    res = who.post("/api/petrol/payouts", json={"amount": "161"})
+    assert res.status_code == 422 and "amount" in res.get_json()["fields"]
+    assert who.post("/api/petrol/payouts", json={"amount": "0"}).status_code == 422
+
+
+def test_paying_part_of_a_payout_settles_that_part_and_the_rest_stays_owed(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    who.post("/api/petrol/payouts", json={"amount": "100"})
+    pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
+    res = admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"amount": "60", "payment_mode": "GR BB"})
+    assert res.status_code == 200
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["paid_total"] == 60.0 and mine["unpaid_total"] == 100.0 and mine["settled"] is False
+    assert mine["can_request_up_to"] == 100.0                                    # the unpaid 40 of that ask can be asked again
+    rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
+    assert [(r["reason"], r["kind"], r["amount"]) for r in rows] == [("Petrol", "debit", 60.0)]
+
+
+def test_paying_the_whole_balance_shows_settled(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    who.post("/api/petrol/payouts", json={})
+    pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
+    admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB"})      # amount defaults to what was asked
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["unpaid_total"] == 0.0 and mine["settled"] is True and mine["payouts"][0]["status"] == "paid"
+
+
+def test_only_the_admin_pays_a_payout_with_an_account_and_not_more_than_asked(app, admin_client, accounts_client):
+    who = _two_approved_days(app, admin_client)
+    who.post("/api/petrol/payouts", json={"amount": "100"})
+    pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
+    assert accounts_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB"}).status_code == 403
+    assert admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={}).status_code == 422                 # needs an account
+    assert admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB", "amount": "101"}).status_code == 422
+    assert admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB", "amount": "100"}).status_code == 200
+    assert admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB"}).status_code == 409
+
+
+def test_a_rejected_payout_frees_the_balance_to_be_asked_again(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    who.post("/api/petrol/payouts", json={})
+    pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
+    assert admin_client.post(f"/api/petrol/payouts/{pid}/reject").status_code == 200
+    assert who.get("/api/petrol/me").get_json()["can_request_up_to"] == 160.0
+    assert who.post("/api/petrol/payouts", json={}).status_code == 201
+
+
+def test_the_admins_request_list_carries_payouts_and_the_waiting_count(app, admin_client):
+    who = _two_approved_days(app, admin_client)
+    who.post("/api/petrol/payouts", json={"amount": "50"})
+    data = admin_client.get("/api/petrol/requests").get_json()
+    assert data["payouts"][0]["amount"] == 50.0 and data["payouts"][0]["balance"] == 160.0 and "payee" in data["payouts"][0]
+    assert admin_client.get("/api/petrol").get_json()["cash_waiting"] == 1

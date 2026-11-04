@@ -16,13 +16,13 @@ def add_worker(name="Deepak Daily"):
     return worker.id
 
 
-def worker_user(app, name="Deepak Daily", pin="285193", employment_type="contractor"):
+def worker_user(app, name="Deepak Daily", pin="285193", employment_type="contractor", role="project_manager"):
     """A signed-in User with a matching Worker, linked the way sync_worker_for_user would. Defaults to
     contractor, not daily_wages, despite the name - most tests here are about the cash-purchase feature
     itself, not employment type, and a daily-wage worker can't request cash at all any more (kohal,
     2026-10-21: "daily wages employee should not be able to request for cash" - see
     test_a_daily_wage_worker_cannot_request_cash, which overrides this specifically to prove that ban)."""
-    user = make_user(name, pin=pin)
+    user = make_user(name, pin=pin, role=role)
     worker = Worker(name=name, category="manpower", employment_type=employment_type, user_code=user.code)
     db.session.add(worker)
     db.session.commit()
@@ -824,3 +824,15 @@ def test_only_the_admin_can_use_admin_purchases(app, accounts_client, client):
     assert accounts_client.get("/api/admin-purchases").status_code == 403
     assert accounts_client.post("/api/admin-purchases", json={}).status_code == 403
     assert client.get("/api/admin-purchases").status_code == 403
+
+
+def test_only_project_managers_and_accountants_can_request_cash(app):
+    """kohal, 2026-11-04: "remove cash request for all except project manager and accountant"."""
+    for name, role, allowed in (("Pm Person", "project_manager", True), ("Acc Person", "accounts", True),
+                                ("Helper Person", "helper", False), ("Welder Person", "welder", False)):
+        who, _ = worker_user(app, name=name, pin="285193", role=role)
+        assert who.get("/api/cash-purchases/me").get_json()["can_request"] is allowed, role
+        res = who.post("/api/cash-purchases/requests", json={"amount": "500"})
+        assert (res.status_code == 201) is allowed, role
+        if not allowed:
+            assert res.status_code == 403

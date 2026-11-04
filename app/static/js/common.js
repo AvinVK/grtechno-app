@@ -608,7 +608,7 @@ window.LD = (() => {
      app() is the chosen app's key or '' (so the caller can relabel its main button, and knows "Mark paid" is meant).
      `onChange` fires on every change, `onError` gets a message to show inside the sheet (a toast would sit underneath it).
      UPI apps often refuse a payment to a person that arrives from a link, so the copy actions are the dependable way. */
-  function payAppPicker({ name, amount, payee = {}, note = '', currency, initial = '', onChange = () => {}, onError = () => {} }) {
+  function payAppPicker({ name, amount, payee = {}, note = '', currency, initial = '', missing = '', onChange = () => {}, onError = () => {} }) {
     const val = (v) => (typeof v === 'function' ? v() : v);
     const sel = selectField([{ value: '', label: 'Not using an app' }, ...PAY_APPS.map((a) => ({ value: a.key, label: a.label }))],
       initial, { title: 'Pay with', placeholder: 'Not using an app' });
@@ -632,7 +632,8 @@ window.LD = (() => {
         copyToBtn.textContent = p.upi_id ? 'Copy UPI ID' : 'Copy number';
         copyToBtn.hidden = !dest;
         copyAmtBtn.hidden = !dest;
-        to.textContent = dest ? `${dest} \u00b7 ${sum}` : `No UPI ID or mobile number saved for ${val(name)} - add one in Employee management.`;
+        to.textContent = dest ? `${dest} \u00b7 ${sum}` : (missing || `No UPI ID or mobile number saved for ${val(name)} - add one in Employee management.`);
+        row.hidden = !dest;
       }
       onChange(app ? app.key : '');
     };

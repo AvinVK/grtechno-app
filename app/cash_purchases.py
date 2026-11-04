@@ -26,7 +26,7 @@ from decimal import Decimal, InvalidOperation
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
 from .constants import PAYMENT_ACCOUNTS
-from .auth import can_manage_cash_purchases
+from .auth import PROJECT_MANAGER_ROLE_KEYS, can_manage_cash_purchases
 from .extensions import db
 from .fooding import FOODING_SOURCE, raise_auto_topup
 from .models import (
@@ -72,7 +72,9 @@ def _can_request_cash(worker) -> bool:
     before this restriction."""
     # (kohal, 2026-11-02: "for daily wages, remove this request cash" - their money comes through the fooding wallet,
     # which asks the admin for a top-up by itself when it runs low.)
-    return worker.employment_type != "daily_wages"
+    # And only project managers and accountants raise one (kohal, 2026-11-04: "remove cash request for all except
+    # project manager and accountant") - everyone else is given cash by the admin unprompted, as before.
+    return worker.employment_type != "daily_wages" and (g.user.role_key in PROJECT_MANAGER_ROLE_KEYS or g.user.role_key == "accounts")
 
 
 def account_for(worker, *, create=False):
@@ -204,7 +206,7 @@ def request_cash():
     if worker is None:
         abort(404)
     if not _can_request_cash(worker):
-        abort(403, "Daily-wage pay settles day by day - cash requests aren't available for this role.")
+        abort(403, "Only project managers and accountants can request cash.")
     if _own_pending_request(worker) is not None:
         abort(409, "You already have a request waiting on the admin.")
     payload = _payload()
