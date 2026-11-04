@@ -30,7 +30,7 @@ from .auth import can_manage_cash_purchases
 from .extensions import db
 from .fooding import FOODING_SOURCE, raise_auto_topup
 from .models import (
-    CashAccount, CashPurchase, CashRequest, CashTopup, FoodingEntry, Material, MaterialUnit, Worker, settings_for_client, utcnow,
+    AdminPurchase, CashAccount, CashPurchase, CashRequest, CashTopup, FoodingEntry, Material, MaterialUnit, Supplier, Worker, settings_for_client, utcnow,
 )
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
@@ -181,7 +181,8 @@ def my_cash_purchases():
         entries=[p.to_dict() for p in account.purchases] if account else [],
         requests=[r.to_dict() for r in worker.cash_requests],
         can_request=_can_request_cash(worker),
-        material_names=[m.name for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
+        materials=[{"name": m.name, "unit": m.unit} for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
+        suppliers=[name for (name,) in db.session.query(Supplier.name).order_by(Supplier.name)],
         units=[u.name for u in MaterialUnit.query.order_by(MaterialUnit.name)],
         currency=settings_for_client()["currency"],
     )
@@ -232,6 +233,7 @@ def _purchase_fields(payload):
     f.text("note", 500)
     f.money("quantity", nullable=True)
     f.money("amount", nullable=False)
+    f.money("gst_percent", nullable=True)
     errors = f.errors
 
     if f.data.get("quantity") is not None and f.data["quantity"] <= 0:
@@ -239,6 +241,14 @@ def _purchase_fields(payload):
     amount = f.data.get("amount")
     if "amount" not in errors and (amount is None or amount <= 0):
         errors["amount"] = "Enter a cost greater than 0"
+    gst_percent = f.data.get("gst_percent") if f.data.get("category") == "material" else None     # GST is for material only
+    if gst_percent is not None and (gst_percent < 0 or gst_percent > 100):
+        errors["gst_percent"] = "Enter a percentage from 0 to 100"
+    elif "amount" not in errors and amount is not None and amount > 0:
+        # The cost typed is before GST; what was spent - and comes off the balance - is cost plus GST.
+        gst_percent = gst_percent or Decimal("0")
+        gst_amount = (amount * gst_percent / Decimal("100")).quantize(Decimal("0.01"))
+        f.data["gst_percent"], f.data["gst_amount"], f.data["amount"] = gst_percent, gst_amount, amount + gst_amount
     if "category" not in f.data:                  # mandatory (kohal, 2026-11-04) - missing or blank
         errors["category"] = "Choose a category"
     # A material purchase becomes a stock-in once approved, and a stock-in needs a count and a unit.
@@ -272,7 +282,8 @@ def add_purchase():
         account=account, entry_date=f.data.get("entry_date") or today_local(),
         material_name=f.data["material_name"], quantity=f.data.get("quantity"),
         unit=f.data.get("unit", ""), amount=f.data["amount"], supplier=f.data.get("supplier", ""),
-        category=f.data["category"], note=f.data.get("note", ""), created_by_code=g.user.code, status="pending",
+        category=f.data["category"], gst_percent=f.data.get("gst_percent") or 0, gst_amount=f.data.get("gst_amount") or 0,
+        note=f.data.get("note", ""), created_by_code=g.user.code, status="pending",
     )
     db.session.add(purchase)
     db.session.commit()
@@ -322,7 +333,7 @@ def page():
     admin/accountant only, nothing for an ordinary employee to see here (their own balance and log stay on
     the Me hub itself - see app/static/js/me.js)."""
     _manage_only()
-    return render_template("purchase_approvals.html", page_title="Purchase approval")
+    return render_template("purchase_approvals.html", page_title="Purchase approval", is_admin=g.user.is_admin)
 
 
 @bp.get("/api/cash-purchases/accounts")
@@ -489,19 +500,19 @@ def approve(purchase_id):
     purchase.approved_at = utcnow()
     purchase.account.spent_total += purchase.amount
     if purchase.category == "material":
-        _stock_in_purchase(purchase)
+        _stock_in_purchase(purchase, f"Cash purchase by {purchase.account.worker.name}")
     db.session.commit()
     return jsonify(entry=purchase.to_dict())
 
 
-def _stock_in_purchase(purchase):
+def _stock_in_purchase(purchase, default_note):
     """An approved material purchase goes straight into Inventory as an (already approved) cash stock-in
     (kohal, 2026-11-04) - the material is found by name, or added if it is new. No payment account is set on
     it: the money already left an account when the cash was given (CashTopup), so naming one here would count
-    it twice on the Accounts page. The employee's supplier text becomes a Supplier (new ones are added) so it
+    it twice on the Accounts page. Also used for an admin purchase, whose own row is what Accounts reads. The employee's supplier text becomes a Supplier (new ones are added) so it
     shows up on the supplier's own history."""
     from .inventory import _recompute_material
-    from .models import MaterialMovement, Supplier
+    from .models import MaterialMovement
 
     if purchase.movement_id is not None:
         return
@@ -521,10 +532,12 @@ def _stock_in_purchase(purchase):
             supplier = Supplier(name=purchase.supplier[:160])
             db.session.add(supplier)
     qty = purchase.quantity
+    cost = purchase.amount - purchase.gst_amount         # before GST - a stock-in values stock pre-GST
     movement = MaterialMovement(
-        material=material, kind="in", quantity=qty, rate=(purchase.amount / qty).quantize(Decimal("0.01")),
-        amount=purchase.amount, total_cost=purchase.amount, supplier=supplier, payment_mode="cash",
-        note=(purchase.note or f"Cash purchase by {purchase.account.worker.name}")[:200], entry_date=purchase.entry_date,
+        material=material, kind="in", quantity=qty, rate=(cost / qty).quantize(Decimal("0.01")),
+        amount=cost, gst_percent=purchase.gst_percent, gst_amount=purchase.gst_amount, total_cost=purchase.amount,
+        supplier=supplier, payment_mode="cash",
+        note=(purchase.note or default_note)[:200], entry_date=purchase.entry_date,
         bill_filename=None, created_by_code=purchase.created_by_code, status="approved",
         approved_by_code=g.user.code, approved_at=utcnow(),
     )
@@ -545,3 +558,75 @@ def reject(purchase_id):
     purchase.approved_at = utcnow()
     db.session.commit()
     return jsonify(entry=purchase.to_dict())
+
+
+# ---------- Admin purchases: what the admin buys directly (kohal, 2026-11-04) ----------
+#
+# The admin pays from one of their own accounts, so there is no cash to allot and no approval step: it is saved
+# straight away and, for a material, stocked into Inventory in the same step. Admin only - it is paid out through
+# the bank accounts, same reasoning as every other payout here (_admin_decides).
+
+def _admin_purchase_or_404(purchase_id):
+    purchase = db.session.get(AdminPurchase, purchase_id)
+    if purchase is None:
+        abort(404)
+    return purchase
+
+
+@bp.get("/api/admin-purchases")
+def list_admin_purchases():
+    _manage_only()
+    _admin_decides()
+    rows = AdminPurchase.query.order_by(AdminPurchase.entry_date.desc(), AdminPurchase.id.desc()).all()
+    return jsonify(
+        entries=[p.to_dict() for p in rows],
+        materials=[{"name": m.name, "unit": m.unit} for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
+        suppliers=[name for (name,) in db.session.query(Supplier.name).order_by(Supplier.name)],
+        units=[u.name for u in MaterialUnit.query.order_by(MaterialUnit.name)],
+        payment_accounts=list(PAYMENT_ACCOUNTS),
+        currency=settings_for_client()["currency"],
+    )
+
+
+@bp.post("/api/admin-purchases")
+def add_admin_purchase():
+    _manage_only()
+    _admin_decides()
+    payload = _payload()
+    f, errors = _purchase_fields(payload)
+    account = payload.get("payment_account")
+    if account not in PAYMENT_ACCOUNTS:
+        errors["payment_account"] = "Choose the account it was paid from"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    purchase = AdminPurchase(
+        category=f.data["category"], entry_date=f.data.get("entry_date") or today_local(),
+        material_name=f.data["material_name"], quantity=f.data.get("quantity"), unit=f.data.get("unit", ""),
+        gst_percent=f.data.get("gst_percent") or 0, gst_amount=f.data.get("gst_amount") or 0, amount=f.data["amount"],
+        supplier=f.data.get("supplier", ""), note=f.data.get("note", ""), payment_account=account,
+        created_by_code=g.user.code,
+    )
+    db.session.add(purchase)
+    if purchase.category == "material":
+        _stock_in_purchase(purchase, f"Admin purchase ({account})")
+    db.session.commit()
+    return jsonify(entry=purchase.to_dict()), 201
+
+
+@bp.post("/api/admin-purchases/<int:purchase_id>/bill")
+def upload_admin_purchase_bill(purchase_id):
+    _manage_only()
+    _admin_decides()
+    purchase = _admin_purchase_or_404(purchase_id)
+    files = request.files.getlist("bill")
+    if not files:
+        abort(422, "Choose a file")
+    try:
+        filename = save_upload(files[0], "admin_purchases", allowed=DOCUMENT_TYPES)
+    except UploadError as err:
+        abort(422, err.message)
+    if purchase.bill_filename:
+        delete_upload("admin_purchases", purchase.bill_filename)
+    purchase.bill_filename = filename
+    db.session.commit()
+    return jsonify(entry=purchase.to_dict()), 201

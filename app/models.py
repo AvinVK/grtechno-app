@@ -1119,6 +1119,10 @@ class CashPurchase(db.Model):
     # movement_id is that stock-in (a plain id, no FK: if it is later deleted from Inventory the purchase stays).
     # Rows from before this existed are "other".
     category = db.Column(db.String(10), nullable=False, default="other", server_default="other")
+    # Optional GST (kohal, 2026-11-04): `amount` is what was actually spent - cost plus GST - so the balance maths
+    # never changes; gst_amount says how much of it was GST (the cost before GST is amount - gst_amount).
+    gst_percent = db.Column(db.Numeric(5, 2), nullable=False, default=0, server_default="0")
+    gst_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     movement_id = db.Column(db.Integer, nullable=True)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
@@ -1137,12 +1141,53 @@ class CashPurchase(db.Model):
             "quantity": float(self.quantity) if self.quantity is not None else None, "unit": self.unit,
             "amount": float(self.amount), "supplier": self.supplier, "note": self.note,
             "category": self.category, "stocked": self.movement_id is not None,
+            "gst_percent": float(self.gst_percent), "gst_amount": float(self.gst_amount),
             "bill_url": f"/uploads/cash_purchases/{self.bill_filename}" if self.bill_filename else None,
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),
             "status": self.status,
             "approved_by_name": self.approved_by.name if self.approved_by else None,
             "approved_at": _iso(self.approved_at),
+        }
+
+
+class AdminPurchase(db.Model):
+    """Something the admin bought directly (kohal, 2026-11-04) - paid from one of their own accounts, so there is no
+    cash allotted to anyone and nothing to approve. Same shape as an employee's CashPurchase (category, material or
+    free-text name, quantity/unit, GST, supplier, bill) plus `payment_account`. A material one is also stocked into
+    Inventory straight away (movement_id is that stock-in); the Accounts page reads the debit from this row, for both
+    categories, which is why that stock-in carries no account of its own. `amount` is what was paid - cost plus GST."""
+
+    __tablename__ = "admin_purchases"
+
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(10), nullable=False, default="other", server_default="other")
+    entry_date = db.Column(db.Date, nullable=False)
+    material_name = db.Column(db.String(120), nullable=False)
+    quantity = db.Column(db.Numeric(12, 2), nullable=True)
+    unit = db.Column(db.String(20), nullable=False, default="", server_default="")
+    gst_percent = db.Column(db.Numeric(5, 2), nullable=False, default=0, server_default="0")
+    gst_amount = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    supplier = db.Column(db.String(120), nullable=False, default="", server_default="")
+    note = db.Column(db.String(500), nullable=False, default="", server_default="")
+    payment_account = db.Column(db.String(40), nullable=False)
+    bill_filename = db.Column(db.String(80), nullable=True)
+    movement_id = db.Column(db.Integer, nullable=True)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "category": self.category, "entry_date": self.entry_date.isoformat(),
+            "material_name": self.material_name, "quantity": float(self.quantity) if self.quantity is not None else None,
+            "unit": self.unit, "gst_percent": float(self.gst_percent), "gst_amount": float(self.gst_amount),
+            "amount": float(self.amount), "supplier": self.supplier, "note": self.note,
+            "payment_account": self.payment_account, "stocked": self.movement_id is not None,
+            "bill_url": f"/uploads/admin_purchases/{self.bill_filename}" if self.bill_filename else None,
+            "created_by_name": self.created_by.name if self.created_by else None,
         }
 
 

@@ -22,8 +22,9 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, confirm, field, selectField, searchField, money, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, confirm, field, selectField, searchField, searchAddField, dateField, showFieldErrors, money, closeOnBack } = window.LD;
   const view = $('#view');
+  const isAdmin = view.dataset.admin === '1';       // the Admin purchase subtab is the admin's alone
 
   function fmtDate(iso) {
     const [y, m, d] = iso.split('-').map(Number);
@@ -37,7 +38,8 @@
         'Expense approval', badge(approvalBadge)),
       h('a', { class: 'filter-chip', href: '#requests', 'aria-current': active === 'requests' ? 'page' : null },
         'Cash requests', badge(requestBadge)),
-      h('a', { class: 'filter-chip', href: '#balances', 'aria-current': active === 'balances' ? 'page' : null }, 'Allocated cash & balance'));
+      h('a', { class: 'filter-chip', href: '#balances', 'aria-current': active === 'balances' ? 'page' : null }, 'Allocated cash & balance'),
+      isAdmin ? h('a', { class: 'filter-chip', href: '#admin', 'aria-current': active === 'admin' ? 'page' : null }, 'Admin purchase') : null);
   }
 
   /* ---------- Approvals: every pending purchase, approve or reject it ---------- */
@@ -56,7 +58,7 @@
 
   function row(r, cur, canDecide) {
     const sub = [fmtDate(r.entry_date), r.quantity != null ? `${r.quantity} ${r.unit || ''}`.trim() : null,
-      r.supplier || null, r.created_by_name ? `Logged by ${r.created_by_name}` : null, r.note || null].filter(Boolean).join(' · ');
+      r.gst_percent ? `incl. ${r.gst_percent}% GST` : null, r.supplier || null, r.created_by_name ? `Logged by ${r.created_by_name}` : null, r.note || null].filter(Boolean).join(' · ');
     return h('li', {}, h('div', { class: 'card me-row approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.worker_name} · ${r.material_name}`),
@@ -230,7 +232,7 @@
 
   function historyRow(e, cur) {
     const sub = [fmtDate(e.entry_date), e.quantity != null ? `${e.quantity} ${e.unit || ''}`.trim() : null,
-      e.supplier || null, e.created_by_name ? `Logged by ${e.created_by_name}` : null,
+      e.gst_percent ? `incl. ${e.gst_percent}% GST` : null, e.supplier || null, e.created_by_name ? `Logged by ${e.created_by_name}` : null,
       e.approved_by_name ? `${e.status === 'approved' ? 'Approved' : 'Rejected'} by ${e.approved_by_name}` : null,
       e.note || null].filter(Boolean).join(' · ');
     return h('li', { class: 'p-row' },
@@ -275,8 +277,160 @@
           : h('p', { class: 'hint' }, 'Nothing logged yet.'))));
   }
 
+  /* ---------- Admin purchase: what the admin buys directly, paid from one of their own accounts ---------- */
+
+  const todayIso = () => new Date().toLocaleDateString('en-CA');
+
+  function adminBill(e, onChanged) {
+    if (e.bill_url) return h('a', { href: e.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill');
+    const fileInput = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,application/pdf', hidden: true });
+    fileInput.onchange = async () => {
+      if (!fileInput.files.length) return;
+      const fd = new FormData();
+      fd.append('bill', fileInput.files[0]);
+      try {
+        const res = await fetch(`/api/admin-purchases/${e.id}/bill`, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Could not upload the bill');
+        toast('Bill added');
+        onChanged();
+      } catch (err) { toast(err.message, true); }
+    };
+    return h('label', { class: 'link-btn' }, 'Add bill', fileInput);
+  }
+
+  function adminRow(e, cur, onChanged) {
+    const sub = [fmtDate(e.entry_date), e.quantity != null ? `${e.quantity} ${e.unit || ''}`.trim() : null,
+      e.gst_percent ? `incl. ${e.gst_percent}% GST` : null, e.supplier || null, e.payment_account, e.note || null].filter(Boolean).join(' · ');
+    return h('li', { class: 'p-row' },
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, e.material_name),
+        h('span', { class: 'row-sub' }, [e.category === 'material' ? 'Material' : 'Other expenses', sub].join(' · ')),
+        h('span', { class: 'bill-links' }, adminBill(e, onChanged))),
+      h('span', { class: 'row-value' }, money(e.amount, cur)));
+  }
+
+  // Same form as an employee's Log purchase, plus the account it was paid from. GST and the material/supplier pickers
+  // are for a Material purchase only; Other expenses keeps the plain fields.
+  function openAdminSheet(data, onDone) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const cur = data.currency;
+    const categorySel = selectField([{ value: 'material', label: 'Material' }, { value: 'other', label: 'Other expenses' }], '',
+      { title: 'Category', placeholder: 'Choose a category' });
+    const accountSel = selectField(data.payment_accounts.map((a) => ({ value: a, label: a })), '', { title: 'Paid from', placeholder: 'Choose an account' });
+    const materialPick = searchAddField((data.materials || []).map((m) => ({ value: m.name, label: m.name, unit: m.unit })), '', { placeholder: 'Search or add a material' });
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const supplierPick = searchAddField(data.suppliers || [], '', { placeholder: 'Search or add a supplier' });
+    const supplierText = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres', list: 'admin-units' });
+    const unitList = h('datalist', { id: 'admin-units' }, (data.units || []).map((n) => h('option', { value: n })));
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
+    const gstInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' });
+    const totalInput = h('input', { type: 'text', disabled: true, value: money(0, cur) });
+    const dateInput = dateField(todayIso());
+    const noteInput = h('textarea', { rows: 2, maxlength: 500 });
+    const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save purchase');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (ev) => { if (ev.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+
+    const isMaterial = () => categorySel.value === 'material';
+    const recalc = () => {
+      const base = Number(amountInput.value) || 0;
+      totalInput.value = money(base + base * (isMaterial() ? (Number(gstInput.value) || 0) : 0) / 100, cur);
+    };
+    amountInput.addEventListener('input', recalc);
+    gstInput.addEventListener('input', recalc);
+    materialPick.addEventListener('change', () => { const it = materialPick.item; if (it && it.unit) unitInput.value = it.unit; });
+
+    const materialField = field('material_pick', 'Material', materialPick, { wide: true });
+    const plainField = field('material_name', 'What did you buy', nameInput, { wide: true });
+    const supplierPickField = field('supplier_pick', 'Supplier', supplierPick, { wide: true });
+    const supplierTextField = field('supplier', 'Supplier', supplierText, { wide: true });
+    const costField = field('amount', 'Cost', amountInput);
+    const gstRow = h('div', { class: 'field-row' }, field('gst_percent', 'GST %', gstInput), field('total', 'Total', totalInput));
+    const syncCategory = () => {
+      materialField.hidden = !isMaterial();
+      plainField.hidden = isMaterial();
+      supplierPickField.hidden = !isMaterial();
+      supplierTextField.hidden = isMaterial();
+      gstRow.hidden = !isMaterial();
+      costField.querySelector('label').textContent = isMaterial() ? 'Cost (before GST)' : 'Cost';
+      if (!isMaterial()) gstInput.value = '';
+      recalc();
+    };
+    categorySel.addEventListener('change', syncCategory);
+    syncCategory();
+
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form',
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        errorBox.hidden = true;
+        showFieldErrors(form, {});
+        const pending = {};
+        if (isMaterial() && materialPick.unresolved) pending.material_pick = 'Pick a material from the list, or tap + Add';
+        if (isMaterial() && supplierPick.unresolved) pending.supplier_pick = 'Pick a supplier from the list, or tap + Add';
+        if (Object.keys(pending).length) { (showFieldErrors(form, pending) || errorBox).focus?.(); return; }
+        saveBtn.disabled = true;
+        try {
+          await api('/api/admin-purchases', {
+            method: 'POST', body: {
+              category: categorySel.value, payment_account: accountSel.value, entry_date: dateInput.value,
+              material_name: isMaterial() ? materialPick.value : nameInput.value, quantity: qtyInput.value || null, unit: unitInput.value,
+              amount: amountInput.value, gst_percent: isMaterial() ? (gstInput.value || '0') : '0',
+              supplier: isMaterial() ? supplierPick.value : supplierText.value, note: noteInput.value,
+            },
+          });
+          toast('Purchase saved');
+          finish();
+          onDone();
+        } catch (err) {
+          errorBox.textContent = err.message;
+          errorBox.hidden = false;
+          const fields = { ...(err.fields || {}) };
+          if (isMaterial() && fields.material_name) { fields.material_pick = fields.material_name; delete fields.material_name; }
+          (showFieldErrors(form, fields) || errorBox).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      h('p', { class: 'hint' }, 'If it is a material purchase, choose Material as the category.'),
+      errorBox,
+      field('category', 'Category', categorySel, { wide: true }),
+      materialField, plainField, unitList,
+      h('div', { class: 'field-row' }, field('quantity', 'Quantity', qtyInput), field('unit', 'Unit', unitInput)),
+      h('div', { class: 'field-row' }, costField, field('entry_date', 'Date', dateInput)),
+      gstRow,
+      field('payment_account', 'Paid from', accountSel, { wide: true }),
+      supplierPickField, supplierTextField,
+      field('note', 'Note', noteInput, { wide: true }),
+      h('p', { class: 'hint' }, 'A material purchase goes straight into Inventory stock, and the amount shows as a debit on the account.'),
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Admin purchase' },
+      h('h2', {}, 'Admin purchase'), form));
+    document.body.append(overlay);
+  }
+
+  async function showAdminPurchases() {
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/admin-purchases'); }
+    catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    clear(view).append(h('div', {},
+      tabs('admin', 0, 0),
+      h('div', { class: 'list-head' }, h('h2', {}, `${data.entries.length} purchase${data.entries.length === 1 ? '' : 's'}`),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openAdminSheet(data, showAdminPurchases) }, '+ Admin purchase')),
+      data.entries.length
+        ? h('ul', { class: 'card-group' }, data.entries.map((e) => adminRow(e, data.currency, showAdminPurchases)))
+        : h('p', { class: 'empty-state' }, 'Nothing bought directly yet.')));
+  }
+
   function route() {
     const hash = window.location.hash;
+    if (hash === '#admin' && isAdmin) return showAdminPurchases();
     let m = /^#balances\/person\/(\d+)$/.exec(hash);
     if (m) return showPersonHistory(Number(m[1]));
     if (hash === '#balances') return showBalances();

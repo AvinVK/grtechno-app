@@ -347,6 +347,67 @@ window.LD = (() => {
     return wrap;
   }
 
+  /* searchField's twin for a list you can also add to (kohal, 2026-11-04: material and supplier dropdowns "with search
+     ... and add new"): type to search the items, tap one to pick it, or - when what you typed matches none exactly - tap
+     the "+ Add" row at the bottom to use it as a new entry. `.value` is the picked item's value (or the new name once
+     "+ Add" is tapped) and '' while nothing is settled yet; `.unresolved` is true when there is typed text that was
+     neither picked nor added, so the form can ask for one or the other; `.item` is the picked item (so a caller can read
+     extra properties off it, such as a material's unit), or null for a new one. Fires 'change' when something settles. */
+  function searchAddField(items, value, opts = {}) {
+    const list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
+    const input = h('input', { type: 'text', autocomplete: 'off', maxlength: opts.maxlength || 120, placeholder: opts.placeholder || 'Search or add…' });
+    const start = value ? list.find((i) => String(i.value) === String(value)) : null;
+    let state = value ? (start ? 'picked' : 'added') : '';      // '' | 'picked' | 'added'
+    let item = start || null;
+    input.value = start ? start.label : (value || '');
+    const dropdown = h('ul', { class: 'name-suggest-list', role: 'listbox' });
+    dropdown.hidden = true;
+    const wrap = h('div', { class: 'name-suggest' }, input, dropdown);
+    const closeList = () => { dropdown.hidden = true; clear(dropdown); };
+    let justSet = false;
+    const settle = () => {
+      closeList();
+      justSet = true;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const showMatches = () => {
+      const q = input.value.trim();
+      const lower = q.toLowerCase();
+      const matches = (q ? list.filter((i) => i.label.toLowerCase().includes(lower)) : list).slice(0, 50);
+      clear(dropdown);
+      matches.forEach((i) => dropdown.append(h('li', {
+        class: 'name-suggest-row', role: 'option', tabindex: '-1',
+        onmousedown: (e) => e.preventDefault(),
+        onclick: () => { state = 'picked'; item = i; input.value = i.label; settle(); },
+      }, i.label)));
+      if (q && !list.some((i) => i.label.toLowerCase() === lower)) {
+        dropdown.append(h('li', {
+          class: 'name-suggest-row name-suggest-add', role: 'option', tabindex: '-1',
+          onmousedown: (e) => e.preventDefault(),
+          onclick: () => { state = 'added'; item = null; input.value = q; settle(); },
+        }, `+ Add \u201c${q}\u201d`));
+      }
+      dropdown.hidden = !dropdown.children.length;
+    };
+    input.addEventListener('input', () => {
+      if (justSet) { justSet = false; return; }
+      state = '';
+      item = null;
+      showMatches();
+    });
+    input.addEventListener('focus', showMatches);
+    input.addEventListener('blur', () => { setTimeout(closeList, 120); });
+    Object.defineProperty(wrap, 'value', {
+      get: () => (state === 'picked' && item ? String(item.value) : (state === 'added' ? input.value.trim() : '')),
+      configurable: true,
+    });
+    Object.defineProperty(wrap, 'unresolved', { get: () => !state && input.value.trim() !== '', configurable: true });
+    Object.defineProperty(wrap, 'item', { get: () => item, configurable: true });
+    wrap.focus = () => input.focus();
+    return wrap;
+  }
+
   /* An in-app month calendar, instead of the phone's own native date popup. Resolves the chosen date as an
      ISO string ('' for "cleared"), or undefined if closed without choosing. */
   function pickDate(currentIso, opts = {}) {
@@ -607,7 +668,7 @@ window.LD = (() => {
   return {
     PAY_APPS, payLink, openPayApp, payAppPicker,
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
-    pickList, selectField, searchField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
+    pickList, selectField, searchField, searchAddField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
   };
 })();
 

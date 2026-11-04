@@ -390,7 +390,7 @@
   const section = document.getElementById('me-cash-purchases');
   if (!section) return;
   const body = document.getElementById('me-cash-purchases-body');
-  const { h, clear, api, toast, field, dateField, selectField, showFieldErrors, money, closeOnBack } = window.LD;
+  const { h, clear, api, toast, field, dateField, selectField, searchAddField, showFieldErrors, money, closeOnBack } = window.LD;
 
   let activeTab = null; // 'request' | 'log' - chosen on first load, see load() below
 
@@ -431,7 +431,7 @@
 
   function entryRow(e, cur, onChanged) {
     const sub = [fmtDate(e.entry_date), e.quantity != null ? `${e.quantity} ${e.unit || ''}`.trim() : null,
-      e.supplier || null, e.note || null].filter(Boolean).join(' · ');
+      e.gst_percent ? `incl. ${e.gst_percent}% GST` : null, e.supplier || null, e.note || null].filter(Boolean).join(' · ');
     return h('li', { class: 'p-row' },
       h('span', { class: `chip ${STATUS_CLASS[e.status]}` }, STATUS_LABEL[e.status]),
       h('span', { class: 'p-main' },
@@ -454,13 +454,26 @@
     // Inventory once approved, so it also needs a quantity and unit and suggests the names already there.
     const categorySel = selectField([{ value: 'material', label: 'Material' }, { value: 'other', label: 'Other expenses' }], '',
       { title: 'Category', placeholder: 'Choose a category' });
-    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off', list: 'log-material-names' });
-    const nameList = h('datalist', { id: 'log-material-names' }, (info.material_names || []).map((n) => h('option', { value: n })));
+    // Material: search the catalog or add a new one (a new name becomes a material once the purchase is approved);
+    // Other expenses: just say what it was. Supplier works the same search-or-add way for both.
+    const materialPick = searchAddField((info.materials || []).map((m) => ({ value: m.name, label: m.name, unit: m.unit })), '',
+      { placeholder: 'Search or add a material' });
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const supplierPick = searchAddField(info.suppliers || [], '', { placeholder: 'Search or add a supplier' });
+    const supplierText = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });     // Other expenses: as it always was
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
     const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres', list: 'log-units' });
     const unitList = h('datalist', { id: 'log-units' }, (info.units || []).map((n) => h('option', { value: n })));
     const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
-    const supplierInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    const gstInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' });
+    const totalInput = h('input', { type: 'text', disabled: true, value: money(0, info.currency) });
+    // The cost is before GST; the total shown is what comes off the balance.
+    const recalc = () => {
+      const base = Number(amountInput.value) || 0;
+      totalInput.value = money(base + base * (Number(gstInput.value) || 0) / 100, info.currency);
+    };
+    amountInput.addEventListener('input', recalc);
+    gstInput.addEventListener('input', recalc);
     const noteInput = h('textarea', { rows: 2, maxlength: 500 });
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -469,17 +482,45 @@
     overlay.onclick = (ev) => { if (ev.target === overlay) finish(); };
     cancelBtn.onclick = () => finish();
 
+    const isMaterial = () => categorySel.value === 'material';
+    const materialField = field('material_pick', 'Material', materialPick, { wide: true });
+    const plainField = field('material_name', 'What did you buy', nameInput, { wide: true });
+    // GST is for material purchases only (kohal, 2026-11-04) - Other expenses keep the plain cost.
+    const costField = field('amount', 'Cost', amountInput);
+    const gstRow = h('div', { class: 'field-row' }, field('gst_percent', 'GST %', gstInput), field('total', 'Total', totalInput));
+    const supplierPickField = field('supplier_pick', 'Supplier', supplierPick, { wide: true });
+    const supplierTextField = field('supplier', 'Supplier', supplierText, { wide: true });
+    const stockHint = h('p', { class: 'hint' }, 'A material purchase is added to Inventory stock once it is approved.');
+    const syncCategory = () => {
+      supplierPickField.hidden = !isMaterial();
+      supplierTextField.hidden = isMaterial();
+      stockHint.hidden = !isMaterial();
+      materialField.hidden = !isMaterial();
+      plainField.hidden = isMaterial();
+      gstRow.hidden = !isMaterial();
+      costField.querySelector('label').textContent = isMaterial() ? 'Cost (before GST)' : 'Cost';
+      if (!isMaterial()) { gstInput.value = ''; recalc(); }
+    };
+    categorySel.addEventListener('change', syncCategory);
+    // Picking an existing material fills in the unit it is counted in.
+    materialPick.addEventListener('change', () => { const it = materialPick.item; if (it && it.unit) unitInput.value = it.unit; });
+    syncCategory();
+
     const form = h('form', { novalidate: true, class: 'amount-sheet-form',
       onsubmit: async (ev) => {
         ev.preventDefault();
         errorBox.hidden = true;
         showFieldErrors(form, {});
+        const pending = {};
+        if (isMaterial() && materialPick.unresolved) pending.material_pick = 'Pick a material from the list, or tap + Add';
+        if (isMaterial() && supplierPick.unresolved) pending.supplier_pick = 'Pick a supplier from the list, or tap + Add';
+        if (Object.keys(pending).length) { (showFieldErrors(form, pending) || errorBox).focus?.(); return; }
         saveBtn.disabled = true;
         try {
           await api('/api/cash-purchases/me', {
             method: 'POST', body: {
-              category: categorySel.value, entry_date: dateInput.value, material_name: nameInput.value, quantity: qtyInput.value || null,
-              unit: unitInput.value, amount: amountInput.value, supplier: supplierInput.value, note: noteInput.value,
+              category: categorySel.value, entry_date: dateInput.value, material_name: isMaterial() ? materialPick.value : nameInput.value,
+              quantity: qtyInput.value || null, unit: unitInput.value, amount: amountInput.value, gst_percent: isMaterial() ? (gstInput.value || '0') : '0', supplier: isMaterial() ? supplierPick.value : supplierText.value, note: noteInput.value,
             },
           });
           toast('Purchase logged');
@@ -488,28 +529,31 @@
         } catch (err) {
           errorBox.textContent = err.message;
           errorBox.hidden = false;
-          (showFieldErrors(form, err.fields) || errorBox).focus?.();
+          const fields = { ...(err.fields || {}) };
+          if (isMaterial() && fields.material_name) { fields.material_pick = fields.material_name; delete fields.material_name; }
+          (showFieldErrors(form, fields) || errorBox).focus?.();
           saveBtn.disabled = false;
         }
       } },
+      h('p', { class: 'hint' }, 'If it is a material purchase, choose Material as the category.'),
       errorBox,
       field('category', 'Category', categorySel, { wide: true }),
-      field('material_name', 'What did you buy', nameInput, { wide: true }),
-      nameList, unitList,
+      materialField, plainField,
+      unitList,
       h('div', { class: 'field-row' },
         field('quantity', 'Quantity', qtyInput),
         field('unit', 'Unit', unitInput)),
       h('div', { class: 'field-row' },
-        field('amount', 'Cost', amountInput),
+        costField,
         field('entry_date', 'Date', dateInput)),
-      field('supplier', 'Supplier', supplierInput, { wide: true }),
+      gstRow,
+      supplierPickField, supplierTextField,
       field('note', 'Note', noteInput, { wide: true }),
-      h('p', { class: 'hint' }, 'A material purchase is added to Inventory stock once it is approved.'),
+      stockHint,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Log purchase' },
       h('h2', {}, 'Log purchase'), form));
     document.body.append(overlay);
-    nameInput.focus?.();
   }
 
   // A bottom sheet too, same reasoning and same amount-sheet pattern as openLogSheet above.
