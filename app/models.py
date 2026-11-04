@@ -1115,6 +1115,11 @@ class CashPurchase(db.Model):
     supplier = db.Column(db.String(120), nullable=False, default="", server_default="")
     note = db.Column(db.String(500), nullable=False, default="", server_default="")
     bill_filename = db.Column(db.String(80), nullable=True)
+    # material | other (kohal, 2026-11-04) - an approved *material* purchase is stocked into Inventory on the spot;
+    # movement_id is that stock-in (a plain id, no FK: if it is later deleted from Inventory the purchase stays).
+    # Rows from before this existed are "other".
+    category = db.Column(db.String(10), nullable=False, default="other", server_default="other")
+    movement_id = db.Column(db.Integer, nullable=True)
     created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")
@@ -1131,6 +1136,7 @@ class CashPurchase(db.Model):
             "entry_date": self.entry_date.isoformat(), "material_name": self.material_name,
             "quantity": float(self.quantity) if self.quantity is not None else None, "unit": self.unit,
             "amount": float(self.amount), "supplier": self.supplier, "note": self.note,
+            "category": self.category, "stocked": self.movement_id is not None,
             "bill_url": f"/uploads/cash_purchases/{self.bill_filename}" if self.bill_filename else None,
             "created_by_name": self.created_by.name if self.created_by else None,
             "created_at": _iso(self.created_at),

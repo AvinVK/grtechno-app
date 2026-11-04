@@ -390,7 +390,7 @@
   const section = document.getElementById('me-cash-purchases');
   if (!section) return;
   const body = document.getElementById('me-cash-purchases-body');
-  const { h, clear, api, toast, field, dateField, showFieldErrors, money, closeOnBack } = window.LD;
+  const { h, clear, api, toast, field, dateField, selectField, showFieldErrors, money, closeOnBack } = window.LD;
 
   let activeTab = null; // 'request' | 'log' - chosen on first load, see load() below
 
@@ -436,7 +436,7 @@
       h('span', { class: `chip ${STATUS_CLASS[e.status]}` }, STATUS_LABEL[e.status]),
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, e.material_name),
-        h('span', { class: 'row-sub' }, sub),
+        h('span', { class: 'row-sub' }, [e.category === 'material' ? (e.stocked ? 'Material \u00b7 in stock' : 'Material') : 'Other expenses', sub].join(' \u00b7 ')),
         h('span', { class: 'bill-links' }, billControl(e, onChanged))),
       h('span', { class: 'row-value' }, money(e.amount, cur)));
   }
@@ -447,12 +447,18 @@
   // or with the keyboard up its own buttons can land off-screen with nothing to scroll them into view.
   // Same amount-sheet/sheet-overlay pattern as the admin's own Give cash sheet (app/static/js/
   // purchase_approvals.js's openGiveSheet) - scrolls internally, capped at 90vh, buttons always reachable.
-  function openLogSheet() {
+  function openLogSheet(info) {
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const dateInput = dateField(todayIso());
-    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    // Material or other expenses - mandatory (kohal, 2026-11-04). A material purchase is stocked into
+    // Inventory once approved, so it also needs a quantity and unit and suggests the names already there.
+    const categorySel = selectField([{ value: 'material', label: 'Material' }, { value: 'other', label: 'Other expenses' }], '',
+      { title: 'Category', placeholder: 'Choose a category' });
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off', list: 'log-material-names' });
+    const nameList = h('datalist', { id: 'log-material-names' }, (info.material_names || []).map((n) => h('option', { value: n })));
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
-    const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres' });
+    const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres', list: 'log-units' });
+    const unitList = h('datalist', { id: 'log-units' }, (info.units || []).map((n) => h('option', { value: n })));
     const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
     const supplierInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
     const noteInput = h('textarea', { rows: 2, maxlength: 500 });
@@ -472,7 +478,7 @@
         try {
           await api('/api/cash-purchases/me', {
             method: 'POST', body: {
-              entry_date: dateInput.value, material_name: nameInput.value, quantity: qtyInput.value || null,
+              category: categorySel.value, entry_date: dateInput.value, material_name: nameInput.value, quantity: qtyInput.value || null,
               unit: unitInput.value, amount: amountInput.value, supplier: supplierInput.value, note: noteInput.value,
             },
           });
@@ -487,7 +493,9 @@
         }
       } },
       errorBox,
+      field('category', 'Category', categorySel, { wide: true }),
       field('material_name', 'What did you buy', nameInput, { wide: true }),
+      nameList, unitList,
       h('div', { class: 'field-row' },
         field('quantity', 'Quantity', qtyInput),
         field('unit', 'Unit', unitInput)),
@@ -496,6 +504,7 @@
         field('entry_date', 'Date', dateInput)),
       field('supplier', 'Supplier', supplierInput, { wide: true }),
       field('note', 'Note', noteInput, { wide: true }),
+      h('p', { class: 'hint' }, 'A material purchase is added to Inventory stock once it is approved.'),
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Log purchase' },
       h('h2', {}, 'Log purchase'), form));
@@ -590,7 +599,7 @@
     return h('div', {},
       h('div', { class: 'p-section-head' },
         h('p', { class: 'wk-legend' }, `Given ${money(a.given_total, cur)} · Spent ${money(a.spent_total, cur)} · Remaining ${money(a.remaining, cur)}`),
-        h('button', { class: 'btn small', type: 'button', onclick: openLogSheet }, '+ Log purchase')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openLogSheet(data) }, '+ Log purchase')),
       data.entries.length
         ? h('ul', { class: 'card-group' }, data.entries.map((e) => entryRow(e, cur, load)))
         : h('p', { class: 'hint' }, 'Nothing logged yet.'));

@@ -121,6 +121,9 @@ def _extra_tiles():
         n = CashPurchase.query.filter_by(status="pending").count() + CashRequest.query.filter_by(status="pending").count()
         tiles.append({"href": "/purchase-approvals", "icon": "cash", "name": "Purchase approval",
                        "sum": f"{n} pending" if n else None})
+    if has_module(g.user, "inventory"):
+        # What is owed to each supplier on credit stock-ins (kohal, 2026-11-04).
+        tiles.append({"href": "/suppliers", "icon": "suppliers", "name": "Suppliers", "sum": None})
     if tiles:
         return tiles
     worker = Worker.query.filter_by(user_code=g.user.code).first()

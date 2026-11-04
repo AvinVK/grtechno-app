@@ -104,20 +104,23 @@ def _material_fields(payload, required=False):
     return f
 
 
-def _supply_fields(payload, *, require_quantity):
+def _supply_fields(payload, *, require_quantity, require_supplier=False, keep_payment=False):
     """Supply detail for a purchase - quantity, cost, who it was bought from, the bill and GST. Required
     together for an explicit stock-in; on Add material, a brand-new material's first purchase is optional,
     but once either quantity or rate is given, both are needed (so it's never stocked with a quantity but
     no cost, or vice versa). GST amount and total cost are always computed here, never trusted from the
-    client - see _apply_stock_in."""
+    client - see _apply_stock_in.
+
+    A manual stock-in is always on credit (kohal, 2026-11-04) - what was bought is owed to the supplier, so a
+    supplier is required (require_supplier) and the payment fields are not read from the client at all. Cash
+    purchases come in through an employee's approved material purchase instead (see cash_purchases.py).
+    keep_payment is for editing one of those (or an older cash entry): its payment fields are left untouched."""
     f = Fields(payload)
     f.money("quantity", nullable=True)
     f.money("rate", nullable=True)
     f.date("entry_date")
     f.text("note", 200)
     f.text("bill_no", 60)
-    f.choice("payment_mode", ("credit", "cash"))
-    f.choice("payment_account", ["", *PAYMENT_ACCOUNTS])
     f.money("gst_percent", nullable=True)
     has_qty = f.data.get("quantity") is not None
     has_rate = f.data.get("rate") is not None
@@ -131,11 +134,8 @@ def _supply_fields(payload, *, require_quantity):
             f.errors.setdefault("rate", "Enter a cost per unit")
     if f.data.get("gst_percent") is not None and f.data["gst_percent"] > 100:
         f.errors["gst_percent"] = "Enter a percentage from 0 to 100"
-    # A cash purchase says which account it was paid from (kohal, 2026-10-31); a credit one has nothing paid yet.
-    if f.data.get("payment_mode") == "cash":
-        if not f.data.get("payment_account"):
-            f.errors.setdefault("payment_account", "Choose the account it was paid from")
-    else:
+    if not keep_payment:
+        f.data["payment_mode"] = "credit"
         f.data["payment_account"] = ""
     if not f.data.get("entry_date") and "entry_date" not in f.errors:
         f.data["entry_date"] = today_local()
@@ -146,6 +146,8 @@ def _supply_fields(payload, *, require_quantity):
             f.errors["supplier_id"] = "Pick a supplier"
         else:
             f.data["supplier_id"] = supplier.id
+    if wants_stock and require_supplier and "supplier_id" not in f.data and "supplier_id" not in f.errors:
+        f.errors["supplier_id"] = "Pick the supplier this credit purchase is with"
     return f, wants_stock
 
 
@@ -349,7 +351,7 @@ def list_materials():
 def add_material():
     payload = _payload()
     f = _material_fields(payload, required=True)
-    sf, wants_stock = _supply_fields(payload, require_quantity=False)
+    sf, wants_stock = _supply_fields(payload, require_quantity=False, require_supplier=True)
     f.errors.update(sf.errors)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
@@ -398,6 +400,49 @@ def add_supplier():
     return jsonify(supplier={"id": supplier.id, "name": supplier.name}), 201
 
 
+# ---------- Suppliers: what is owed on credit purchases (kohal, 2026-11-04) ----------
+#
+# Every manual stock-in is on credit, so a supplier's credit is simply the total cost (GST included) of the
+# approved credit stock-ins naming them. Opened from the Suppliers tile on the Me tab.
+
+def _credit_rows(supplier_id=None):
+    q = MaterialMovement.query.filter_by(kind="in", status="approved", payment_mode="credit")
+    q = q.filter(MaterialMovement.supplier_id == supplier_id) if supplier_id else q.filter(MaterialMovement.supplier_id.isnot(None))
+    return q.order_by(MaterialMovement.entry_date.desc(), MaterialMovement.id.desc()).all()
+
+
+@bp.get("/suppliers")
+def suppliers_page():
+    return render_template("suppliers.html")
+
+
+@bp.get("/api/inventory/suppliers/credit")
+def supplier_credit_list():
+    owed, count = {}, {}
+    for mv in _credit_rows():
+        owed[mv.supplier_id] = owed.get(mv.supplier_id, Decimal("0")) + mv.total_cost
+        count[mv.supplier_id] = count.get(mv.supplier_id, 0) + 1
+    rows = [{"id": s.id, "name": s.name, "credit": float(owed.get(s.id, 0)), "purchases": count.get(s.id, 0)}
+            for s in Supplier.query.order_by(Supplier.name).all()]
+    rows.sort(key=lambda r: (-r["credit"], r["name"].lower()))
+    return jsonify(suppliers=rows, total=float(sum(owed.values(), start=Decimal("0"))),
+                   currency=settings_for_client()["currency"])
+
+
+@bp.get("/api/inventory/suppliers/<int:supplier_id>/credit")
+def supplier_credit_detail(supplier_id):
+    supplier = db.session.get(Supplier, supplier_id)
+    if supplier is None:
+        abort(404)
+    rows = _credit_rows(supplier.id)
+    return jsonify(
+        name=supplier.name, credit=float(sum((mv.total_cost for mv in rows), start=Decimal("0"))),
+        entries=[{"id": mv.id, "material_id": mv.material_id, "material_name": mv.material.name, "unit": mv.material.unit,
+                  "quantity": float(mv.quantity), "bill_no": mv.bill_no, "note": mv.note,
+                  "entry_date": mv.entry_date.isoformat(), "total_cost": float(mv.total_cost)} for mv in rows],
+        currency=settings_for_client()["currency"])
+
+
 @bp.patch("/api/inventory/materials/<int:material_id>")
 def update_material(material_id):
     material = _material_or_404(material_id)
@@ -416,7 +461,7 @@ def update_material(material_id):
 @bp.post("/api/inventory/materials/<int:material_id>/stock-in")
 def stock_in(material_id):
     material = _material_or_404(material_id)
-    f, _ = _supply_fields(_payload(), require_quantity=True)
+    f, _ = _supply_fields(_payload(), require_quantity=True, require_supplier=True)
     if f.errors:
         return jsonify(error="Check the highlighted fields", fields=f.errors), 422
     movement = _apply_stock_in(material, f.data)
@@ -474,7 +519,8 @@ def update_movement(material_id, movement_id):
     movement = _movement_or_404(material, movement_id)
     payload = _payload()
     if movement.kind == "in":
-        f, _ = _supply_fields(payload, require_quantity=True)
+        keep_payment = movement.payment_mode == "cash"      # an employee's cash purchase stays cash
+        f, _ = _supply_fields(payload, require_quantity=True, keep_payment=keep_payment)
         if f.errors:
             return jsonify(error="Check the highlighted fields", fields=f.errors), 422
         amount = f.data["quantity"] * f.data["rate"]
@@ -487,8 +533,9 @@ def update_movement(material_id, movement_id):
         movement.note = f.data.get("note", "")
         movement.supplier_id = f.data.get("supplier_id")
         movement.bill_no = f.data.get("bill_no", "")
-        movement.payment_mode = f.data.get("payment_mode", "")
-        movement.payment_account = f.data.get("payment_account", "")
+        if not keep_payment:
+            movement.payment_mode = f.data["payment_mode"]
+            movement.payment_account = f.data["payment_account"]
         movement.gst_percent = gst_percent
         movement.gst_amount = gst_amount
         movement.total_cost = amount + gst_amount

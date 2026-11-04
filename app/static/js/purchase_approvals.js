@@ -60,6 +60,7 @@
     return h('li', {}, h('div', { class: 'card me-row approval-row' },
       h('div', { class: 'approval-main' },
         h('strong', {}, `${r.worker_name} · ${r.material_name}`),
+        h('span', { class: 'hint' }, r.category === 'material' ? 'Material - will be added to Inventory stock on approval' : 'Other expenses'),
         h('span', { class: 'hint' }, `${money(r.amount, cur)} · ${sub}`),
         r.bill_url ? h('a', { href: r.bill_url, target: '_blank', rel: 'noopener noreferrer', class: 'link-btn' }, 'View bill') : null),
       canDecide ? h('div', { class: 'approval-actions' },
