@@ -297,22 +297,27 @@ def _two_approved_days(app, admin_client):
 def test_approved_petrol_accumulates_into_one_balance_to_ask_for(app, admin_client):
     who = _two_approved_days(app, admin_client)
     mine = who.get("/api/petrol/me").get_json()
-    assert mine["unpaid_total"] == 160.0 and mine["can_request_up_to"] == 160.0 and mine["settled"] is False
+    assert mine["unpaid_total"] == 160.0 and mine["suggested_amount"] == 160.0 and mine["settled"] is False
 
 
 def test_a_payout_defaults_to_the_whole_balance_and_only_one_waits_at_a_time(app, admin_client):
     who = _two_approved_days(app, admin_client)
     assert who.post("/api/petrol/payouts", json={}).status_code == 201
     mine = who.get("/api/petrol/me").get_json()
-    assert mine["payouts"][0]["amount"] == 160.0 and mine["requested_total"] == 160.0 and mine["can_request_up_to"] == 0.0
+    assert mine["payouts"][0]["amount"] == 160.0 and mine["requested_total"] == 160.0 and mine["suggested_amount"] == 0.0
     assert who.post("/api/petrol/payouts", json={"amount": "10"}).status_code == 409
 
 
-def test_a_payout_cannot_be_more_than_what_is_owed(app, admin_client):
+def test_a_payout_can_be_any_amount_even_more_than_is_owed(app, admin_client):
+    """kohal, 2026-11-05: "no restrictions on amount"."""
     who = _two_approved_days(app, admin_client)
-    res = who.post("/api/petrol/payouts", json={"amount": "161"})
-    assert res.status_code == 422 and "amount" in res.get_json()["fields"]
+    assert who.post("/api/petrol/payouts", json={"amount": "5000"}).status_code == 201
+
+
+def test_a_payout_still_needs_a_positive_amount(app, admin_client):
+    who = _two_approved_days(app, admin_client)
     assert who.post("/api/petrol/payouts", json={"amount": "0"}).status_code == 422
+    assert who.post("/api/petrol/payouts", json={"amount": "abc"}).status_code == 422
 
 
 def test_paying_part_of_a_payout_settles_that_part_and_the_rest_stays_owed(app, admin_client):
@@ -323,7 +328,7 @@ def test_paying_part_of_a_payout_settles_that_part_and_the_rest_stays_owed(app, 
     assert res.status_code == 200
     mine = who.get("/api/petrol/me").get_json()
     assert mine["paid_total"] == 60.0 and mine["unpaid_total"] == 100.0 and mine["settled"] is False
-    assert mine["can_request_up_to"] == 100.0                                    # the unpaid 40 of that ask can be asked again
+    assert mine["suggested_amount"] == 100.0                                      # what is still owed, offered next time
     rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
     assert [(r["reason"], r["kind"], r["amount"]) for r in rows] == [("Petrol", "debit", 60.0)]
 
@@ -353,7 +358,7 @@ def test_a_rejected_payout_frees_the_balance_to_be_asked_again(app, admin_client
     who.post("/api/petrol/payouts", json={})
     pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
     assert admin_client.post(f"/api/petrol/payouts/{pid}/reject").status_code == 200
-    assert who.get("/api/petrol/me").get_json()["can_request_up_to"] == 160.0
+    assert who.get("/api/petrol/me").get_json()["suggested_amount"] == 160.0
     assert who.post("/api/petrol/payouts", json={}).status_code == 201
 
 
@@ -363,3 +368,27 @@ def test_the_admins_request_list_carries_payouts_and_the_waiting_count(app, admi
     data = admin_client.get("/api/petrol/requests").get_json()
     assert data["payouts"][0]["amount"] == 50.0 and data["payouts"][0]["balance"] == 160.0 and "payee" in data["payouts"][0]
     assert admin_client.get("/api/petrol").get_json()["cash_waiting"] == 1
+
+
+def test_petrol_can_be_asked_for_before_any_is_recorded_and_the_balance_goes_negative(app, admin_client):
+    who = petrol_user(app, "Rider Ravi")                                   # no petrol recorded at all
+    assert who.post("/api/petrol/payouts", json={}).status_code == 422     # nothing owed, so no amount to default to
+    assert who.post("/api/petrol/payouts", json={"amount": "1000"}).status_code == 201
+    pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
+    assert admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB"}).status_code == 200
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["unpaid_total"] == -1000.0 and mine["advance"] == 1000.0 and mine["settled"] is False
+
+
+def test_petrol_ridden_afterwards_is_taken_off_the_advance_automatically(app, admin_client):
+    who = petrol_user(app, "Rider Ravi")
+    who.post("/api/petrol/payouts", json={"amount": "50"})
+    pid = who.get("/api/petrol/me").get_json()["payouts"][0]["id"]
+    admin_client.post(f"/api/petrol/payouts/{pid}/approve", json={"payment_mode": "GR BB"})
+    check_in(who, "1000")
+    check_out(who, "1020")                                                 # 20 km = 80
+    entry = PetrolEntry.query.order_by(PetrolEntry.id.desc()).first()
+    admin_client.post(f"/api/petrol/{entry.id}/approve")
+    mine = who.get("/api/petrol/me").get_json()
+    assert mine["unpaid_total"] == 30.0 and mine["advance"] == 0.0         # 80 earned - 50 already paid
+    assert admin_client.get("/api/petrol").get_json()["workers"][0]["unpaid_total"] == 30.0
