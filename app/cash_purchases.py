@@ -29,7 +29,9 @@ from .constants import PAYMENT_ACCOUNTS
 from .auth import can_manage_cash_purchases
 from .extensions import db
 from .fooding import FOODING_SOURCE, raise_auto_topup
-from .models import CashAccount, CashPurchase, CashRequest, CashTopup, FoodingEntry, Worker, settings_for_client, utcnow
+from .models import (
+    CashAccount, CashPurchase, CashRequest, CashTopup, FoodingEntry, Material, MaterialUnit, Worker, settings_for_client, utcnow,
+)
 from .timeutil import today_local
 from .uploads import DOCUMENT_TYPES, UploadError, delete_upload, save_upload
 from .validation import Fields, api_errors
@@ -40,6 +42,7 @@ api_errors(bp)
 # Same fixed pair fooding uses (kohal, 2026-10-18, reused here 2026-10-21) - handing over cash or a UPI
 # transfer in person, not the general PAYMENT_MODES list (Cheque/Bank transfer/Other don't apply).
 PAYMENT_MODES = tuple(PAYMENT_ACCOUNTS)       # the same accounts as everywhere else (kohal, 2026-10-31)
+CATEGORIES = ("material", "other")             # what a purchase was for (kohal, 2026-11-04) - material gets stocked in on approval
 
 
 def _manage_only():
@@ -178,6 +181,8 @@ def my_cash_purchases():
         entries=[p.to_dict() for p in account.purchases] if account else [],
         requests=[r.to_dict() for r in worker.cash_requests],
         can_request=_can_request_cash(worker),
+        material_names=[m.name for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
+        units=[u.name for u in MaterialUnit.query.order_by(MaterialUnit.name)],
         currency=settings_for_client()["currency"],
     )
 
@@ -221,6 +226,7 @@ def _purchase_fields(payload):
     f = Fields(payload)
     f.date("entry_date")
     f.text("material_name", 120, required=True, label="what was bought")
+    f.choice("category", CATEGORIES)
     f.text("unit", 20)
     f.text("supplier", 120)
     f.text("note", 500)
@@ -233,6 +239,14 @@ def _purchase_fields(payload):
     amount = f.data.get("amount")
     if "amount" not in errors and (amount is None or amount <= 0):
         errors["amount"] = "Enter a cost greater than 0"
+    if "category" not in f.data:                  # mandatory (kohal, 2026-11-04) - missing or blank
+        errors["category"] = "Choose a category"
+    # A material purchase becomes a stock-in once approved, and a stock-in needs a count and a unit.
+    if f.data.get("category") == "material":
+        if f.data.get("quantity") is None:
+            errors.setdefault("quantity", "Enter how many you bought")
+        if not f.data.get("unit"):
+            errors["unit"] = "Enter the unit (bags, kg, pcs...)"
 
     return f, errors
 
@@ -258,7 +272,7 @@ def add_purchase():
         account=account, entry_date=f.data.get("entry_date") or today_local(),
         material_name=f.data["material_name"], quantity=f.data.get("quantity"),
         unit=f.data.get("unit", ""), amount=f.data["amount"], supplier=f.data.get("supplier", ""),
-        note=f.data.get("note", ""), created_by_code=g.user.code, status="pending",
+        category=f.data["category"], note=f.data.get("note", ""), created_by_code=g.user.code, status="pending",
     )
     db.session.add(purchase)
     db.session.commit()
@@ -474,8 +488,50 @@ def approve(purchase_id):
     purchase.approved_by_code = g.user.code
     purchase.approved_at = utcnow()
     purchase.account.spent_total += purchase.amount
+    if purchase.category == "material":
+        _stock_in_purchase(purchase)
     db.session.commit()
     return jsonify(entry=purchase.to_dict())
+
+
+def _stock_in_purchase(purchase):
+    """An approved material purchase goes straight into Inventory as an (already approved) cash stock-in
+    (kohal, 2026-11-04) - the material is found by name, or added if it is new. No payment account is set on
+    it: the money already left an account when the cash was given (CashTopup), so naming one here would count
+    it twice on the Accounts page. The employee's supplier text becomes a Supplier (new ones are added) so it
+    shows up on the supplier's own history."""
+    from .inventory import _recompute_material
+    from .models import MaterialMovement, Supplier
+
+    if purchase.movement_id is not None:
+        return
+    name = purchase.material_name.strip()
+    material = Material.query.filter(db.func.lower(Material.name) == name.lower()).first()
+    if material is None:
+        material = Material(name=name[:120], unit=purchase.unit)
+        db.session.add(material)
+    elif not material.unit and purchase.unit:
+        material.unit = purchase.unit
+    if purchase.unit and not MaterialUnit.query.filter(db.func.lower(MaterialUnit.name) == purchase.unit.lower()).first():
+        db.session.add(MaterialUnit(name=purchase.unit))
+    supplier = None
+    if purchase.supplier:
+        supplier = Supplier.query.filter(db.func.lower(Supplier.name) == purchase.supplier.lower()).first()
+        if supplier is None:
+            supplier = Supplier(name=purchase.supplier[:160])
+            db.session.add(supplier)
+    qty = purchase.quantity
+    movement = MaterialMovement(
+        material=material, kind="in", quantity=qty, rate=(purchase.amount / qty).quantize(Decimal("0.01")),
+        amount=purchase.amount, total_cost=purchase.amount, supplier=supplier, payment_mode="cash",
+        note=(purchase.note or f"Cash purchase by {purchase.account.worker.name}")[:200], entry_date=purchase.entry_date,
+        bill_filename=None, created_by_code=purchase.created_by_code, status="approved",
+        approved_by_code=g.user.code, approved_at=utcnow(),
+    )
+    db.session.add(movement)
+    db.session.flush()
+    purchase.movement_id = movement.id
+    _recompute_material(material)
 
 
 @bp.post("/api/cash-purchases/<int:purchase_id>/reject")

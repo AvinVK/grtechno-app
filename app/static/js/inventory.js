@@ -333,8 +333,6 @@
     const rate = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.rate }) : null;
     const supplierSel = isIn ? supplierPicker(data.suppliers.map((s) => ({ value: s.id, label: s.name })), mv.supplier_id ?? '') : null;
     const billNo = isIn ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off', value: mv.bill_no || '' }) : null;
-    const paymentMode = isIn ? selectField(PAYMENT_MODES, mv.payment_mode || 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
-    const account = isIn ? accountPicker(paymentMode, data.payment_accounts, mv.payment_account) : null;
     const gstPercent = isIn ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: mv.gst_percent }) : null;
     const gstAmount = isIn ? h('input', { type: 'text', disabled: true, value: money(mv.gst_amount, currency) }) : null;
     const totalCost = isIn ? h('input', { type: 'text', disabled: true, value: money(mv.total_cost, currency) }) : null;
@@ -387,7 +385,7 @@
       const body = { quantity: qty.value, entry_date: date.value, note: note.value };
       if (isIn) Object.assign(body, {
         rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
-        payment_mode: paymentMode.value, payment_account: account.value(), gst_percent: gstPercent.value || '0',
+        gst_percent: gstPercent.value || '0',
       });
       else Object.assign(body, { project_id: project.value ? Number(project.value) : null, given_by_worker_id: givenBy.value ? Number(givenBy.value) : null });
       try {
@@ -406,8 +404,6 @@
       isIn ? field('rate', 'Purchase cost', rate) : field('project_id', 'Project', project),
       isIn ? field('supplier_id', 'Supplier name', supplierSel) : field('given_by_worker_id', 'Given by', givenBy),
       isIn ? field('bill_no', 'Bill no', billNo) : null,
-      isIn ? field('payment_mode', 'Credit or cash', paymentMode) : null,
-      isIn ? account.node : null,
       isIn ? field('gst_percent', 'GST %', gstPercent) : null,
       isIn ? field('gst_amount', 'GST amt', gstAmount) : null,
       isIn ? field('total_cost', 'Total cost', totalCost) : null,
@@ -540,8 +536,6 @@
     const rate = showSupply ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit', value: SM.rate ?? '' }) : null;
     const supplierSel = showSupply ? supplierPicker((data.suppliers || []).map((s) => ({ value: s.id, label: s.name })), SM.supplier_id ?? '') : null;
     const billNo = showSupply ? h('input', { type: 'text', maxlength: 60, autocomplete: 'off', value: SM.bill_no || '' }) : null;
-    const paymentMode = showSupply ? selectField(PAYMENT_MODES, SM.payment_mode || 'cash', { title: 'Credit or cash', placeholder: 'Choose one' }) : null;
-    const account = showSupply ? accountPicker(paymentMode, data && data.payment_accounts, SM.payment_account) : null;
     const gstPercent = showSupply ? h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0', value: SM.gst_percent ?? '' }) : null;
     const gstAmount = showSupply ? h('input', { type: 'text', disabled: true, value: money(SM.gst_amount || 0, currency) }) : null;
     const totalCost = showSupply ? h('input', { type: 'text', disabled: true, value: money(SM.total_cost || 0, currency) }) : null;
@@ -584,7 +578,7 @@
         }
         const supplyBody = showSupply ? {
           quantity: qty.value, rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
-          payment_mode: paymentMode.value, payment_account: account.value(), gst_percent: gstPercent.value || '0', note: remarks.value,
+          gst_percent: gstPercent.value || '0', note: remarks.value,
         } : null;
         const body = {};
         for (const [name, el] of Object.entries(controls)) body[name] = el.value;
@@ -620,8 +614,6 @@
         showSupply ? field('rate', 'Purchase cost', rate) : null,
         showSupply ? field('supplier_id', 'Supplier name', supplierSel) : null,
         showSupply ? field('bill_no', 'Bill no', billNo) : null,
-        showSupply ? field('payment_mode', 'Credit or cash', paymentMode) : null,
-        showSupply ? account.node : null,
         showSupply ? field('gst_percent', 'GST %', gstPercent) : null,
         showSupply ? field('gst_amount', 'GST amt', gstAmount) : null,
         showSupply ? field('total_cost', 'Total cost', totalCost) : null,
@@ -794,20 +786,6 @@
     return wrap;
   }
 
-  const PAYMENT_MODES = [{ value: 'cash', label: 'Cash' }, { value: 'credit', label: 'Credit' }];
-
-  /* Which account a cash purchase was paid from (kohal, 2026-10-31: "if its cash selected then show the bank
-     options") - the account list appears only while Cash is the chosen payment, and is sent as '' otherwise. */
-  function accountPicker(paymentMode, accounts, initial) {
-    const sel = selectField((accounts || []).map((a) => ({ value: a, label: a })), initial || '',
-      { title: 'Account', placeholder: 'Choose an account' });
-    const node = field('payment_account', 'Account paid from', sel);
-    const sync = () => { node.hidden = paymentMode.value !== 'cash'; };
-    paymentMode.addEventListener('change', sync);
-    sync();
-    return { sel, node, value: () => (paymentMode.value === 'cash' ? sel.value : '') };
-  }
-
   // kohal, 2026-10-19: "even issue to project should have the same process as material request" - the old
   // direct-issue-from-Inventory shortcut (self-approved on the spot) is gone; stock only ever leaves via a
   // project's own request now (see projects.js's openRequestMaterial), so this form is stock-in only.
@@ -817,8 +795,6 @@
     const rate = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'Cost per unit' });
     const supplierSel = supplierPicker(data.suppliers.map((s) => ({ value: s.id, label: s.name })), '');
     const billNo = h('input', { type: 'text', maxlength: 60, autocomplete: 'off' });
-    const paymentMode = selectField(PAYMENT_MODES, 'cash', { title: 'Credit or cash', placeholder: 'Choose one' });
-    const account = accountPicker(paymentMode, data.payment_accounts, '');
     const gstPercent = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: '0' });
     const gstAmount = h('input', { type: 'text', disabled: true, value: money(0, currency) });
     const totalCost = h('input', { type: 'text', disabled: true, value: money(0, currency) });
@@ -862,7 +838,7 @@
         const body = {
           quantity: qty.value, entry_date: date.value, note: note.value,
           rate: rate.value, supplier_id: supplierSel.value || null, bill_no: billNo.value,
-          payment_mode: paymentMode.value, payment_account: account.value(), gst_percent: gstPercent.value || '0',
+          gst_percent: gstPercent.value || '0',
         };
         try {
           await api(`/api/inventory/materials/${material.id}/stock-in`, { method: 'POST', body });
@@ -875,21 +851,19 @@
           saveBtn.disabled = false;
         }
       } },
+      h('p', { class: 'hint' }, 'Credit purchase - the total is added to what you owe this supplier (see Suppliers on the Me tab). Employee cash purchases are stocked in automatically once approved. You can attach the bill later from the material history.'),
       errorBox,
       h('div', { class: 'form-grid' },
         field('quantity', 'Quantity', qty),
         field('rate', 'Purchase cost', rate),
         field('supplier_id', 'Supplier name', supplierSel),
         field('bill_no', 'Bill no', billNo),
-        field('payment_mode', 'Credit or cash', paymentMode),
-        account.node,
         field('gst_percent', 'GST %', gstPercent),
         field('gst_amount', 'GST amt', gstAmount),
         field('total_cost', 'Total cost', totalCost),
         field('entry_date', 'Date', date),
         field('note', 'Remarks', note, { wide: true })),
-      h('div', { class: 'form-actions' }, saveBtn),
-      h('p', { class: 'hint' }, "You can attach the bill afterwards, from the material's history, once you have it to hand."));
+      h('div', { class: 'form-actions' }, saveBtn));
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' },

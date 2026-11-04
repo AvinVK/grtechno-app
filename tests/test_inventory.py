@@ -958,17 +958,57 @@ def test_restock_count_badge_appears_on_the_materials_and_requests_responses(app
     assert requests_data["restock_count"] == 1
 
 
-def test_a_cash_purchase_says_which_account_it_was_paid_from(admin_client):
-    """kohal, 2026-10-31: "if its cash selected then show the bank options"."""
+def test_a_manual_stock_in_is_always_on_credit_whatever_the_client_sends(admin_client):
+    """kohal, 2026-11-04: stock-in has only the credit option - cash purchases arrive through an employee's
+    approved material purchase instead."""
     sid = add_supplier(admin_client)
-    base = {"name": "Angles", "unit": "kg", "quantity": 10, "rate": 5, "supplier_id": sid}
-    no_account = admin_client.post("/api/inventory/materials", json={**base, "payment_mode": "cash"})
-    assert no_account.status_code == 422 and "payment_account" in no_account.get_json()["fields"]
-    assert Material.query.filter_by(name="Angles").first() is None
-    wrong = admin_client.post("/api/inventory/materials", json={**base, "payment_mode": "cash", "payment_account": "Nowhere"})
-    assert wrong.status_code == 422 and "payment_account" in wrong.get_json()["fields"]
-    ok = admin_client.post("/api/inventory/materials", json={**base, "payment_mode": "cash", "payment_account": "GR BOB"})
-    assert ok.status_code == 201 and ok.get_json()["movement"]["payment_account"] == "GR BOB"
+    res = admin_client.post("/api/inventory/materials", json={
+        "name": "Angles", "unit": "kg", "quantity": 10, "rate": 5, "supplier_id": sid,
+        "payment_mode": "cash", "payment_account": "GR BOB"})
+    movement = res.get_json()["movement"]
+    assert res.status_code == 201 and movement["payment_mode"] == "credit" and movement["payment_account"] == ""
+
+
+def test_a_credit_stock_in_needs_a_supplier(admin_client):
+    material = add_material(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in",
+                            json={"quantity": 10, "rate": 5, "no_default_supplier": True})
+    assert res.status_code == 422 and "supplier_id" in res.get_json()["fields"]
+
+
+def test_editing_an_employees_cash_purchase_keeps_it_cash(app, admin_client):
+    from app.models import MaterialMovement
+    material = add_material(admin_client)
+    res = admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 5})
+    mid = res.get_json()["movement"]["id"]
+    with app.app_context():
+        mv = db.session.get(MaterialMovement, mid)
+        mv.payment_mode = "cash"
+        db.session.commit()
+    res = admin_client.patch(f"/api/inventory/materials/{material['id']}/movements/{mid}", json={"quantity": 12, "rate": 5})
+    assert res.status_code == 200 and res.get_json()["movement"]["payment_mode"] == "cash"
+
+
+def test_supplier_credit_is_the_total_of_their_credit_stock_ins(admin_client):
+    a = add_supplier(admin_client, "Shree")
+    b = add_supplier(admin_client, "Om Traders")
+    material = add_material(admin_client)
+    url = f"/api/inventory/materials/{material['id']}/stock-in"
+    admin_client.post(url, json={"quantity": 10, "rate": 10, "supplier_id": a, "gst_percent": 18, "bill_no": "B1"})    # 118
+    admin_client.post(url, json={"quantity": 5, "rate": 20, "supplier_id": a})                                      # 100
+    admin_client.post(url, json={"quantity": 1, "rate": 50, "supplier_id": b})                                      # 50
+    data = admin_client.get("/api/inventory/suppliers/credit").get_json()
+    assert data["total"] == 268.0
+    assert [(s["name"], s["credit"]) for s in data["suppliers"] if s["id"] in (a, b)] == [("Shree", 218.0), ("Om Traders", 50.0)]
+    detail = admin_client.get(f"/api/inventory/suppliers/{a}/credit").get_json()
+    assert detail["name"] == "Shree" and detail["credit"] == 218.0 and len(detail["entries"]) == 2
+    assert admin_client.get("/api/inventory/suppliers/999999/credit").status_code == 404
+
+
+def test_the_suppliers_page_and_me_tile_are_there_for_inventory_access(admin_client, client):
+    assert admin_client.get("/suppliers").status_code == 200
+    assert b'href="/suppliers"' in admin_client.get("/me").data
+    assert client.get("/suppliers").status_code in (302, 403)
 
 
 def test_a_credit_purchase_has_no_account_and_the_list_is_served(admin_client):

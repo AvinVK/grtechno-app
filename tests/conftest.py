@@ -156,3 +156,26 @@ def win_lead(client, admin_client, lead_id, client_id=None):
     res = admin_client.patch(f"/api/leads/{lead_id}", json=body)
     assert res.status_code == 200, res.get_json()
     return res.get_json()
+
+
+@pytest.fixture(autouse=True)
+def default_supplier_for_stock_ins(monkeypatch):
+    """A manual stock-in is on credit and names its supplier (kohal, 2026-11-04). Most inventory tests are
+    about stock and cost, not suppliers, so when a stock-in payload names none, this one fills in a default
+    supplier. A test about the supplier rule itself sends "no_default_supplier": True to switch it off."""
+    from app import inventory
+    real = inventory._supply_fields
+
+    def with_supplier(payload, **kwargs):
+        payload = dict(payload)
+        if not payload.pop("no_default_supplier", False) and payload.get("supplier_id") in (None, ""):
+            from app.models import Supplier
+            supplier = Supplier.query.filter_by(name="Default Supplier").first()
+            if supplier is None:
+                supplier = Supplier(name="Default Supplier")
+                db.session.add(supplier)
+                db.session.flush()
+            payload["supplier_id"] = supplier.id
+        return real(payload, **kwargs)
+
+    monkeypatch.setattr(inventory, "_supply_fields", with_supplier)
