@@ -737,3 +737,90 @@ def test_other_expenses_and_rejected_purchases_never_touch_stock(app, admin_clie
     assert admin_client.post(f"/api/cash-purchases/{other}/approve").status_code == 200
     assert admin_client.post(f"/api/cash-purchases/{rejected}/reject").status_code == 200
     assert Material.query.count() == 0 and MaterialMovement.query.count() == 0
+
+
+def test_the_log_form_gets_the_materials_and_suppliers_to_search(app, admin_client):
+    admin_client.post("/api/inventory/materials", json={"name": "Cement", "unit": "bags"})
+    admin_client.post("/api/inventory/suppliers", json={"name": "Shree Traders"})
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    data = who.get("/api/cash-purchases/me").get_json()
+    assert {"name": "Cement", "unit": "bags"} in data["materials"]
+    assert "Shree Traders" in data["suppliers"]
+
+
+def test_gst_makes_the_amount_spent_cost_plus_gst_and_flows_into_stock(app, admin_client):
+    from app.models import Material, MaterialMovement
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "5000", "payment_mode": "CASH"})
+    res = who.post("/api/cash-purchases/me", json={"category": "material", "material_name": "Cement", "quantity": "10",
+                                                    "unit": "bags", "amount": "1000", "gst_percent": "18"})
+    entry = res.get_json()["entry"]
+    assert res.status_code == 201 and entry["amount"] == 1180.0 and entry["gst_amount"] == 180.0 and entry["gst_percent"] == 18.0
+    admin_client.post(f"/api/cash-purchases/{entry['id']}/approve")
+    assert who.get("/api/cash-purchases/me").get_json()["account"]["spent_total"] == 1180.0   # GST is cash spent too
+    mv = MaterialMovement.query.one()
+    assert float(mv.amount) == 1000.0 and float(mv.gst_amount) == 180.0 and float(mv.total_cost) == 1180.0
+    assert float(Material.query.one().avg_rate) == 100.0                                       # stock is valued before GST
+
+
+def test_gst_percent_must_be_between_0_and_100(app, admin_client):
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "5000", "payment_mode": "CASH"})
+    res = who.post("/api/cash-purchases/me", json={"category": "material", "material_name": "Cement", "quantity": "1", "unit": "bag", "amount": "80", "gst_percent": "101"})
+    assert res.status_code == 422 and "gst_percent" in res.get_json()["fields"]
+
+
+def test_gst_only_applies_to_material_purchases(app, admin_client):
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "5000", "payment_mode": "CASH"})
+    res = who.post("/api/cash-purchases/me", json={"category": "other", "material_name": "Toll", "amount": "100", "gst_percent": "18"})
+    entry = res.get_json()["entry"]
+    assert res.status_code == 201 and entry["amount"] == 100.0 and entry["gst_amount"] == 0.0
+
+
+# ---------- admin purchases (kohal, 2026-11-04) ----------
+
+def _admin_purchase(admin_client, **extra):
+    body = {"category": "material", "material_name": "Cement", "quantity": "10", "unit": "bags", "amount": "1000",
+            "gst_percent": "18", "supplier": "Shree Traders", "payment_account": "GR BB", **extra}
+    return admin_client.post("/api/admin-purchases", json=body)
+
+
+def test_an_admin_material_purchase_is_saved_and_stocked_in_at_once(app, admin_client):
+    from app.models import Material, MaterialMovement
+    res = _admin_purchase(admin_client)
+    entry = res.get_json()["entry"]
+    assert res.status_code == 201 and entry["amount"] == 1180.0 and entry["gst_amount"] == 180.0 and entry["stocked"] is True
+    assert float(Material.query.filter_by(name="Cement").one().stock_qty) == 10.0
+    mv = MaterialMovement.query.one()
+    assert mv.status == "approved" and mv.payment_mode == "cash" and mv.payment_account == "" and float(mv.total_cost) == 1180.0
+
+
+def test_an_admin_purchase_shows_as_a_debit_on_its_account_once(app, admin_client):
+    _admin_purchase(admin_client)
+    admin_client.post("/api/admin-purchases", json={"category": "other", "material_name": "Fuel", "amount": "300", "payment_account": "GR BB"})
+    rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
+    debits = sorted((r["reason"], r["amount"]) for r in rows if r["kind"] == "debit")
+    assert debits == [("Material purchase", 1180.0), ("Other expense", 300.0)]       # the stock-in is not counted twice
+
+
+def test_an_admin_other_expense_touches_no_stock(app, admin_client):
+    from app.models import Material
+    res = admin_client.post("/api/admin-purchases", json={"category": "other", "material_name": "Fuel", "amount": "300", "payment_account": "CASH"})
+    assert res.status_code == 201 and res.get_json()["entry"]["stocked"] is False and Material.query.count() == 0
+
+
+def test_an_admin_purchase_needs_an_account_and_a_category(app, admin_client):
+    res = admin_client.post("/api/admin-purchases", json={"category": "other", "material_name": "Fuel", "amount": "300"})
+    assert res.status_code == 422 and "payment_account" in res.get_json()["fields"]
+    res = admin_client.post("/api/admin-purchases", json={"material_name": "Fuel", "amount": "300", "payment_account": "CASH"})
+    assert res.status_code == 422 and "category" in res.get_json()["fields"]
+    res = _admin_purchase(admin_client, payment_account="Nowhere")
+    assert res.status_code == 422 and "payment_account" in res.get_json()["fields"]
+
+
+def test_only_the_admin_can_use_admin_purchases(app, accounts_client, client):
+    assert accounts_client.get("/api/admin-purchases").status_code == 403
+    assert accounts_client.post("/api/admin-purchases", json={}).status_code == 403
+    assert client.get("/api/admin-purchases").status_code == 403

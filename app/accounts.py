@@ -7,7 +7,8 @@ through (constants.PAYMENT_ACCOUNTS), so this page reads them all and lines them
 
   Credits (money in):  project payments received, lead advances, self transfers in.
   Debits (money out):  salary and wages paid, fooding allotted, cash handed to an employee for purchases, petrol
-                       paid out, inventory bought for cash, self transfers out.
+                       paid out, inventory bought for cash, what the admin bought directly (admin purchases), self
+                       transfers out.
 
 Left out on purpose, because the money already left through one of the above: an employee's own fooding expense
 and what they buy with the cash they were handed. Entries made before the account list existed carry an older
@@ -21,7 +22,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 from .constants import PAYMENT_ACCOUNTS
 from .extensions import db
 from .models import (
-    AccountTransfer, CashTopup, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
+    AccountTransfer, AdminPurchase, CashTopup, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
 )
 from .timeutil import today_local
 from .validation import Fields, api_errors, parse_money
@@ -83,6 +84,10 @@ def ledger(account):
         rows.append(_row("debit", m.entry_date, m.total_cost or m.amount, "Inventory purchase",
                          m.supplier.name if m.supplier else "", m.material.name,
                          requested_by=m.created_by.name if m.created_by else None, approved_by=_name(m.approved_by_code)))
+
+    for p in AdminPurchase.query.filter_by(payment_account=account).all():
+        rows.append(_row("debit", p.entry_date, p.amount, "Material purchase" if p.category == "material" else "Other expense",
+                         p.supplier, p.material_name, requested_by=p.created_by.name if p.created_by else None))
 
     # Self transfers: the same row is the debit of the account it left and the credit of the one it reached.
     for t in AccountTransfer.query.filter((AccountTransfer.from_account == account) | (AccountTransfer.to_account == account)).all():

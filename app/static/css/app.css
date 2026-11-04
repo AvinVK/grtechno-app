@@ -1921,3 +1921,4 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .pay-box { margin: -4px 0 12px; }
 .pay-to { margin: 0 0 8px; font-size: 14px; color: var(--muted); word-break: break-all; }
 .pay-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.name-suggest-add { color: var(--accent, #d9381e); font-weight: 600; }
