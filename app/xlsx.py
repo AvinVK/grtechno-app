@@ -5,7 +5,7 @@ openpyxl this writes the handful of XML parts a workbook needs straight into a z
 several sheets, a bold header row, text / number / date cells, column widths and a frozen header.
 
     build_workbook([
-        {"name": "Leads", "rows": [["Company", "Value"], ["Acme", 1200.5]], "bold_rows": {0}, "freeze": 1},
+        {"name": "Leads", "rows": [["Company", "Value"], ["Acme", 1200.5]], "bold_rows": {0}, "freeze": 1, "filter": True},
     ]) -> bytes
 
 A cell value is a str, an int / float / Decimal (a number), a date or datetime (shown as a date), a bool, or None
@@ -78,7 +78,7 @@ def _cell(ref: str, value, bold: bool):
             max((len(line) for line in text.splitlines()), default=0))
 
 
-def _sheet_xml(rows, bold_rows, freeze):
+def _sheet_xml(rows, bold_rows, freeze, filter_row=False):
     widths = {}
     body = []
     for r, row in enumerate(rows):
@@ -91,11 +91,12 @@ def _sheet_xml(rows, bold_rows, freeze):
         body.append(f'<row r="{r + 1}">{"".join(cells)}</row>')
     cols = "".join(f'<col min="{c + 1}" max="{c + 1}" width="{min(max(w + 2, 8), 60)}" customWidth="1"/>'
                    for c, w in sorted(widths.items()))
+    flt = (f'<autoFilter ref="A1:{_col(max(widths) if widths else 0)}{len(rows)}"/>' if filter_row and rows and widths else "")
     pane = (f'<sheetViews><sheetView workbookViewId="0"><pane ySplit="{freeze}" topLeftCell="A{freeze + 1}" '
             f'activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>') if freeze else ""
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-            f'{pane}<cols>{cols}</cols><sheetData>{"".join(body)}</sheetData></worksheet>') if cols else (
+            f'{pane}<cols>{cols}</cols><sheetData>{"".join(body)}</sheetData>{flt}</worksheet>') if cols else (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
             f'{pane}<sheetData>{"".join(body)}</sheetData></worksheet>')
@@ -123,7 +124,8 @@ _STYLES = (
 
 
 def build_workbook(sheets) -> bytes:
-    """`sheets` is a list of {"name", "rows", optional "bold_rows" (row indexes, 0-based), optional "freeze" (rows)}."""
+    """`sheets` is a list of {"name", "rows", optional "bold_rows" (row indexes, 0-based), optional "freeze" (rows),
+    optional "filter" (true puts Excel's filter buttons on the first row)}."""
     if not sheets:
         raise ValueError("A workbook needs at least one sheet")
     taken: set = set()
@@ -161,5 +163,5 @@ def build_workbook(sheets) -> bytes:
                    '</Relationships>')
         z.writestr("xl/styles.xml", _STYLES)
         for i, s in enumerate(sheets):
-            z.writestr(f"xl/worksheets/sheet{i + 1}.xml", _sheet_xml(s["rows"], set(s.get("bold_rows", ())), s.get("freeze", 0)))
+            z.writestr(f"xl/worksheets/sheet{i + 1}.xml", _sheet_xml(s["rows"], set(s.get("bold_rows", ())), s.get("freeze", 0), s.get("filter", False)))
     return buf.getvalue()

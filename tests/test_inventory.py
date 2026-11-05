@@ -1122,3 +1122,66 @@ def test_only_the_admin_can_delete_a_supplier(admin_client, accounts_client):
     sid = add_supplier(admin_client, "Unused Traders")
     assert accounts_client.delete(f"/api/inventory/suppliers/{sid}").status_code == 403
     assert admin_client.delete("/api/inventory/suppliers/999999").status_code == 404
+
+
+# ---------- supplier details and a starting balance (kohal, 2026-11-05) ----------
+
+FULL = {"name": "Nandkishor and sons", "contact_person": "Nandkishor", "phone": "9822000000", "email": "n@nandkishor.in",
+        "gstin": "27abcde1234f1z5", "address": "Plot 4, MIDC, Nagpur", "upi_id": "nandkishor@okaxis", "opening_balance": "50000"}
+
+
+def test_the_admin_can_add_a_supplier_with_details_and_a_starting_balance(admin_client):
+    res = admin_client.post("/api/inventory/suppliers", json=FULL)
+    assert res.status_code == 201
+    sid = res.get_json()["supplier"]["id"]
+    d = admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()
+    assert d["contact_person"] == "Nandkishor" and d["phone"] == "9822000000" and d["email"] == "n@nandkishor.in"
+    assert d["gstin"] == "27ABCDE1234F1Z5" and d["address"] == "Plot 4, MIDC, Nagpur" and d["upi_id"] == "nandkishor@okaxis"
+    assert d["starting"] == 50000.0 and d["credit"] == 50000.0 and d["bought"] == 0.0
+
+
+def test_a_starting_balance_counts_in_what_is_owed_and_in_the_totals(admin_client):
+    sid = admin_client.post("/api/inventory/suppliers", json={"name": "Old Ledger Co", "opening_balance": "50000"}).get_json()["supplier"]["id"]
+    material = add_material(admin_client)
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 10, "rate": 10, "supplier_id": sid})   # + 100
+    assert admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["credit"] == 50100.0
+    listing = admin_client.get("/api/inventory/suppliers/credit").get_json()
+    assert next(r for r in listing["suppliers"] if r["id"] == sid)["credit"] == 50100.0 and listing["total"] == 50100.0
+    # paying settles against it, and cannot go past it
+    assert admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "50101", "payment_account": "GR BB", "mode": "Cash"}).status_code == 422
+    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "20000", "payment_account": "GR BB", "mode": "Cash"})
+    assert res.status_code == 201 and res.get_json()["credit"] == 30100.0 and res.get_json()["starting"] == 50000.0
+
+
+def test_the_admin_can_edit_a_suppliers_details_and_starting_balance(admin_client):
+    sid = add_supplier(admin_client, "Shree")
+    res = admin_client.patch(f"/api/inventory/suppliers/{sid}", json={"name": "Shree Traders", "phone": "9999900000", "opening_balance": "1200.50", "gstin": ""})
+    assert res.status_code == 200 and res.get_json()["name"] == "Shree Traders" and res.get_json()["credit"] == 1200.5
+    again = admin_client.patch(f"/api/inventory/suppliers/{sid}", json={"opening_balance": ""})            # blank clears it to 0
+    assert again.get_json()["credit"] == 0.0 and again.get_json()["phone"] == "9999900000"                 # what was not sent stays
+
+
+def test_supplier_details_are_checked(admin_client):
+    sid = add_supplier(admin_client, "Shree")
+    other = add_supplier(admin_client, "Om Traders")
+    bad = admin_client.patch(f"/api/inventory/suppliers/{sid}", json={"email": "nope", "gstin": "123", "upi_id": "x", "opening_balance": "-5", "name": ""})
+    assert bad.status_code == 422 and set(bad.get_json()["fields"]) == {"email", "gstin", "upi_id", "opening_balance", "name"}
+    clash = admin_client.patch(f"/api/inventory/suppliers/{sid}", json={"name": "om traders"})
+    assert clash.status_code == 422 and "already exists" in clash.get_json()["fields"]["name"]
+    assert admin_client.patch(f"/api/inventory/suppliers/{sid}", json={"name": "SHREE"}).status_code == 200      # its own name is fine
+    assert admin_client.post("/api/inventory/suppliers", json={"name": "Shree"}).status_code == 422             # a duplicate on create
+
+
+def test_only_the_admin_sets_supplier_details_but_anyone_can_still_add_by_name(admin_client, accounts_client):
+    assert accounts_client.post("/api/inventory/suppliers", json={"name": "Quick Add Co"}).status_code == 201     # from a stock-in form, as before
+    assert accounts_client.post("/api/inventory/suppliers", json={"name": "Sneaky", "opening_balance": "100"}).status_code == 403
+    assert accounts_client.post("/api/inventory/suppliers", json={"name": "Sneaky 2", "phone": "9"}).status_code == 403
+    sid = add_supplier(admin_client, "Shree")
+    assert accounts_client.patch(f"/api/inventory/suppliers/{sid}", json={"phone": "9"}).status_code == 403
+    assert accounts_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["can_edit"] is False
+
+
+def test_a_supplier_with_a_starting_balance_cannot_be_deleted(admin_client):
+    sid = admin_client.post("/api/inventory/suppliers", json={"name": "Old Ledger Co", "opening_balance": "500"}).get_json()["supplier"]["id"]
+    assert admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["can_delete"] is False
+    assert admin_client.delete(f"/api/inventory/suppliers/{sid}").status_code == 409

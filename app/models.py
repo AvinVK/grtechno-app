@@ -1298,6 +1298,14 @@ class Supplier(db.Model):
     # Who to pay and how (kohal, 2026-11-04) - both optional; "Make payment" fills them in and saves any change.
     phone = db.Column(EncryptedText, nullable=True)
     upi_id = db.Column(EncryptedText, nullable=True)
+    # The rest of who they are, and what was already owed to them in the ledger kept before this app (kohal, 2026-11-05:
+    # "a field called starting balance ... since we had this ledger earlier and we are migrating to the app") - what is
+    # owed now is this plus the credit stock-ins, less the payments.
+    contact_person = db.Column(db.String(120), nullable=False, default="", server_default="")
+    email = db.Column(EncryptedText, nullable=True)
+    gstin = db.Column(db.String(20), nullable=False, default="", server_default="")
+    address = db.Column(EncryptedText, nullable=True)
+    opening_balance = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
 
