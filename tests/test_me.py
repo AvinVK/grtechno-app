@@ -54,8 +54,9 @@ def test_a_tile_per_service_with_cheap_summaries(app, admin_client, admin):
         db.session.add(Attendance(user_code=admin.code, work_date=monday, check_in_at=utcnow()))
         db.session.commit()
     html = admin_client.get("/me").get_data(as_text=True)
-    for path in ("/", "/clients", "/projects", "/attendance"):
+    for path in ("/lead-analysis", "/client-analysis", "/projects", "/attendance"):   # Leads and Clients open their analysis from here (2026-11-05)
         assert f'class="me-tile" href="{path}"' in html
+    assert 'class="me-tile" href="/"' not in html and 'class="me-tile" href="/clients"' not in html
     assert "0 open" in html and "1 client<" in html and "1 running" in html
     assert "Team attendance" in html and "checked in today" in html        # the admin's tile: the team, not a week
     assert 'id="me-today"' not in html                                     # no check-in card - that's the Attendance tab's job now

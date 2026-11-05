@@ -460,7 +460,6 @@
       { placeholder: 'Search or add a material' });
     const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
     const supplierPick = searchAddField(info.suppliers || [], '', { placeholder: 'Search or add a supplier' });
-    const supplierText = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });     // Other expenses: as it always was
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
     const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres', list: 'log-units' });
     const unitList = h('datalist', { id: 'log-units' }, (info.units || []).map((n) => h('option', { value: n })));
@@ -489,11 +488,11 @@
     const costField = field('amount', 'Cost', amountInput);
     const gstRow = h('div', { class: 'field-row' }, field('gst_percent', 'GST %', gstInput), field('total', 'Total', totalInput));
     const supplierPickField = field('supplier_pick', 'Supplier', supplierPick, { wide: true });
-    const supplierTextField = field('supplier', 'Supplier', supplierText, { wide: true });
+    const qtyRow = h('div', { class: 'field-row' }, field('quantity', 'Quantity', qtyInput), field('unit', 'Unit', unitInput));
     const stockHint = h('p', { class: 'hint' }, 'A material purchase is added to Inventory stock once it is approved.');
     const syncCategory = () => {
       supplierPickField.hidden = !isMaterial();
-      supplierTextField.hidden = isMaterial();
+      qtyRow.hidden = !isMaterial();
       stockHint.hidden = !isMaterial();
       materialField.hidden = !isMaterial();
       plainField.hidden = isMaterial();
@@ -520,7 +519,7 @@
           await api('/api/cash-purchases/me', {
             method: 'POST', body: {
               category: categorySel.value, entry_date: dateInput.value, material_name: isMaterial() ? materialPick.value : nameInput.value,
-              quantity: qtyInput.value || null, unit: unitInput.value, amount: amountInput.value, gst_percent: isMaterial() ? (gstInput.value || '0') : '0', supplier: isMaterial() ? supplierPick.value : supplierText.value, note: noteInput.value,
+              quantity: isMaterial() ? (qtyInput.value || null) : null, unit: isMaterial() ? unitInput.value : '', amount: amountInput.value, gst_percent: isMaterial() ? (gstInput.value || '0') : '0', supplier: isMaterial() ? supplierPick.value : '', note: noteInput.value,
             },
           });
           toast('Purchase logged');
@@ -540,14 +539,12 @@
       field('category', 'Category', categorySel, { wide: true }),
       materialField, plainField,
       unitList,
-      h('div', { class: 'field-row' },
-        field('quantity', 'Quantity', qtyInput),
-        field('unit', 'Unit', unitInput)),
+      qtyRow,
       h('div', { class: 'field-row' },
         costField,
         field('entry_date', 'Date', dateInput)),
       gstRow,
-      supplierPickField, supplierTextField,
+      supplierPickField,
       field('note', 'Note', noteInput, { wide: true }),
       stockHint,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));

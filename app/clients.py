@@ -1,8 +1,9 @@
 """Clients (the Client Management service): the customers work is done for."""
 
 import re
+from decimal import Decimal
 
-from flask import Blueprint, g, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, redirect, render_template, request, url_for
 from werkzeug.exceptions import abort
 
 from . import categories
@@ -10,7 +11,8 @@ from .auth import create_user, visible_clients, visible_projects
 from .extensions import db
 from .models import Client, Lead, Project, settings_for_client
 from .projects import brought_by
-from .modules import check_module
+from .modules import check_module, has_module
+from .timeutil import months_back, today_local
 from .validation import Fields, api_errors
 
 bp = Blueprint("clients", __name__)
@@ -79,6 +81,109 @@ def _project_rows(client):
         }
         for p in rows
     ]
+
+
+# ---------- Client tally (kohal, 2026-11-05) ----------
+#
+# "The way i see supplier tally, i wanna see client tally ... for each client whats the total worth of the client, how much is
+# paid and how much is left." Per client: worth is what their projects are worth (each project's own net amount - the final
+# amount once it is in, else the estimate less any discount), paid is what has actually been received on them (the payment
+# steps with a date of payment), and left is the difference. Computed from the live records, never stored. Scoped like the
+# Clients list: only the clients this person may see, and only the projects they may see.
+
+def _tally_for(client, projects):
+    worth = sum((p.net_amount for p in projects if p.net_amount is not None), Decimal("0"))
+    paid = sum((p.paid_amount for p in projects), Decimal("0"))
+    return {"id": client.id, "name": client.name, "contact_name": client.contact_name, "city": client.city,
+            "projects": len(projects), "worth": float(worth), "paid": float(paid), "left": float(worth - paid)}
+
+
+def _tally_projects(client):
+    return visible_projects().filter(Project.client_id == client.id).order_by(Project.id.desc()).all()
+
+
+@bp.get("/client-analysis")
+def analysis_page():
+    return render_template("client_analysis.html")
+
+
+@bp.get("/client-tally")
+def tally_page():
+    # The tally is the second subtab of Client analysis now; the old address still works for anyone who saved it.
+    return redirect(url_for("clients.analysis_page") + "#tally")
+
+
+@bp.get("/api/clients/tally")
+def client_tally():
+    clients = visible_clients().filter(Client.is_adhoc.is_(False)).order_by(Client.name).all()
+    rows = [_tally_for(c, _tally_projects(c)) for c in clients]
+    rows.sort(key=lambda r: (-r["left"], r["name"].lower()))
+    return jsonify(clients=rows, totals={k: round(sum(r[k] for r in rows), 2) for k in ("worth", "paid", "left")},
+                   can_open_projects=has_module(g.user, "projects"), currency=settings_for_client()["currency"])
+
+
+# ---------- Client analysis (kohal, 2026-11-05: "client rename to client analysis and have 2 subtabs, analysis and tally") ----------
+#
+# The Analysis subtab: charts over the same clients and projects the tally covers (never adhoc customers). Worth and paid are worked out
+# exactly as in the tally; money received per month is the payment steps by the day they were received.
+
+PROJECT_STATUS = {"planned": "Planned", "running": "Running", "on_hold": "On hold", "final_estimate_sent": "Final estimate sent",
+                  "completed": "Completed"}
+RECEIVED_RANGES = {"3": "Last 3 months", "6": "Last 6 months", "12": "Last 12 months"}
+MONTH_ABBR = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+@bp.get("/api/clients/analysis")
+def client_analysis():
+    span = request.args.get("range") or "12"
+    if span not in RECEIVED_RANGES:
+        abort(422, "Pick a valid range")
+    today = today_local()
+    clients = visible_clients().filter(Client.is_adhoc.is_(False)).order_by(Client.name).all()
+    projects_of = {c.id: _tally_projects(c) for c in clients}
+    rows = [_tally_for(c, projects_of[c.id]) for c in clients]
+    worth_rows = sorted((r for r in rows if r["worth"] > 0), key=lambda r: (-r["worth"], r["name"].lower()))
+
+    by_status = {}
+    for projects in projects_of.values():
+        for p in projects:
+            row = by_status.setdefault(p.status, {"status": p.status, "label": PROJECT_STATUS.get(p.status, p.status), "projects": 0, "worth": 0.0})
+            row["projects"] += 1
+            row["worth"] += float(p.net_amount) if p.net_amount is not None else 0.0
+
+    n = int(span)
+    first = months_back(today, n - 1)
+    received = {}
+    for projects in projects_of.values():
+        for p in projects:
+            for x in p.payments:
+                if x.paid_date is not None and x.paid_date >= first:
+                    received[(x.paid_date.year, x.paid_date.month)] = received.get((x.paid_date.year, x.paid_date.month), 0.0) + float(x.amount)
+    points = []
+    for i in range(n):
+        m = months_back(today, n - 1 - i)
+        points.append({"key": f"{m.year}-{m.month:02d}", "label": f"{MONTH_ABBR[m.month]} {str(m.year)[2:]}",
+                       "count": round(received.get((m.year, m.month), 0.0), 2)})
+
+    return jsonify(
+        totals={k: round(sum(r[k] for r in rows), 2) for k in ("worth", "paid", "left")}, clients=len(rows),
+        top_clients=worth_rows, status=sorted(by_status.values(), key=lambda r: (-r["worth"], r["label"])),
+        received={"range": span, "label": RECEIVED_RANGES[span], "unit": "month", "points": points, "total": round(sum(p["count"] for p in points), 2)},
+        ranges=[{"value": k, "label": v} for k, v in RECEIVED_RANGES.items()], currency=settings_for_client()["currency"])
+
+
+@bp.get("/api/clients/<int:client_id>/tally")
+def client_tally_detail(client_id):
+    client = _client_or_404(client_id)
+    projects = _tally_projects(client)
+    return jsonify(
+        client=_tally_for(client, projects),
+        projects=[{"id": p.id, "code": p.code, "title": p.title, "status": p.status,
+                   "worth": float(p.net_amount) if p.net_amount is not None else None, "paid": float(p.paid_amount),
+                   "left": float(p.net_amount - p.paid_amount) if p.net_amount is not None else None,
+                   # the project's payment schedule, for the slide-up on the tally (read only)
+                   "payments": [x.to_dict() for x in p.payments]} for p in projects],
+        can_open_projects=has_module(g.user, "projects"), currency=settings_for_client()["currency"])
 
 
 @bp.get("/clients")

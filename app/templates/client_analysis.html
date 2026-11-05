@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Client analysis - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Client analysis{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/charts.js') }}" defer></script>
+<script src="{{ asset('js/client_analysis.js') }}" defer></script>
+{% endblock %}
