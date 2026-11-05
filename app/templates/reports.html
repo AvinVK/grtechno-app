@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Reports - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Reports{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/reports.js') }}" defer></script>
+{% endblock %}

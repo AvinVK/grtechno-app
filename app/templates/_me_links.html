@@ -41,6 +41,7 @@
       ('workers_page.workforce_page', 'manpower', 'Employee management', show_workforce),
       ('payroll.page', 'wages', 'Payroll', show_workforce),
       ('accounts.page', 'wages', 'Accounts', current_user.is_admin),
+      ('reports.page', 'reports', 'Reports', current_user.is_admin),
     ] %}
     {% if shown %}
     <a class="me-row" href="{{ url_for(endpoint) }}">{{ icon(ic) }}<span>{{ text }}</span><span class="me-chevron" aria-hidden="true">›</span></a>
