@@ -1,7 +1,9 @@
 /* Suppliers: what is owed to each supplier on credit stock-ins (kohal, 2026-11-04) - a list of suppliers with
    what is still owed, and tapping one lists the purchases behind it and the payments made. The admin can Make
    payment from there: the supplier's name and contact come in filled, the amount and account are chosen, and
-   with UPI as the mode the same PhonePe / Google Pay step as every other payout (LD.payAppPicker). See
+   with UPI as the mode the same PhonePe / Google Pay step as every other payout (LD.payAppPicker). The admin can also add
+   a supplier with its details and a starting balance (what was owed in the ledger kept before this app) and edit them
+   later - one form for both (openSupplierSheet). See
    app/inventory.py's supplier_credit_list / supplier_credit_detail / pay_supplier. */
 (() => {
   'use strict';
@@ -15,6 +17,63 @@
   const stat = (label, value) => h('div', { class: 'client-stats' },
     h('div', { class: 'stat' }, h('span', { class: 'stat-label' }, label), h('span', { class: 'stat-value is-text' }, value)));
 
+  // One form for adding a supplier and for editing one (kohal, 2026-11-05): who they are, how to pay them, and the starting
+  // balance carried over from the ledger kept before this app. `existing` is a supplier's detail response, or null to add.
+  function openSupplierSheet(existing, onDone) {
+    const e = existing || {};
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const text = (value, extra = {}) => h('input', { type: 'text', autocomplete: 'off', value: value || '', ...extra });
+    const name = text(e.name, { maxlength: 160 });
+    const contact = text(e.contact_person, { maxlength: 120 });
+    const phone = text(e.phone, { inputmode: 'tel', maxlength: 40 });
+    const email = text(e.email, { inputmode: 'email', maxlength: 160 });
+    const gstin = text(e.gstin, { maxlength: 20 });
+    const address = h('textarea', { rows: 3, maxlength: 400 });
+    address.value = e.address || '';
+    const upi = text(e.upi_id, { maxlength: 80, placeholder: 'name@bank' });
+    const starting = text(e.starting ? String(e.starting) : '', { inputmode: 'decimal' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, existing ? 'Save details' : 'Add supplier');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (ev) => { if (ev.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form',
+      onsubmit: async (ev) => {
+        ev.preventDefault();
+        errEl.textContent = '';
+        showFieldErrors(form, {});
+        saveBtn.disabled = true;
+        const body = { name: name.value, contact_person: contact.value, phone: phone.value, email: email.value, gstin: gstin.value,
+          address: address.value, upi_id: upi.value.trim(), opening_balance: starting.value };
+        try {
+          const res = existing
+            ? await api(`/api/inventory/suppliers/${existing.id}`, { method: 'PATCH', body })
+            : await api('/api/inventory/suppliers', { method: 'POST', body });
+          toast(existing ? 'Details saved' : 'Supplier added');
+          finish();
+          onDone(existing ? existing.id : res.supplier.id);
+        } catch (err) {
+          errEl.textContent = err.fields ? '' : err.message;
+          (showFieldErrors(form, err.fields) || errEl).focus?.();
+          saveBtn.disabled = false;
+        }
+      } },
+      field('name', 'Supplier name', name, { wide: true }),
+      field('opening_balance', 'Starting balance', starting, { wide: true, hint: 'What was already owed to this supplier in your earlier ledger. Leave blank if nothing.' }),
+      field('contact_person', 'Contact person', contact, { wide: true }),
+      field('phone', 'Contact number', phone, { wide: true }),
+      field('email', 'Email', email, { wide: true }),
+      field('gstin', 'GST number', gstin, { wide: true }),
+      field('address', 'Address', address, { wide: true }),
+      field('upi_id', 'UPI ID', upi, { wide: true }),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': existing ? 'Edit supplier' : 'Add supplier' },
+      h('h2', {}, existing ? 'Edit supplier' : 'Add supplier'), form));
+    document.body.append(overlay);
+  }
+
   async function showList() {
     resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
@@ -22,6 +81,8 @@
     try { data = await api('/api/inventory/suppliers/credit'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     const cur = data.currency;
     clear(view).append(h('div', { class: 'project-detail' },
+      data.can_edit ? h('div', { class: 'supplier-actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => openSupplierSheet(null, (newId) => setTimeout(() => { window.location.hash = `#s${newId}`; }, 250)) }, '+ Supplier')) : null,
       stat('Total credit owed to suppliers', money(data.total, cur)),
       h('section', { class: 'p-section' },
         data.suppliers.length
@@ -29,7 +90,7 @@
               h('a', { class: 'p-row', href: `#s${s.id}` },
                 h('span', { class: 'p-main' },
                   h('span', { class: 'row-title' }, s.name),
-                  h('span', { class: 'row-sub' }, s.purchases ? `${s.purchases} credit purchase${s.purchases === 1 ? '' : 's'}` : 'No credit purchases')),
+                  h('span', { class: 'row-sub' }, [s.purchases ? `${s.purchases} credit purchase${s.purchases === 1 ? '' : 's'}` : 'No credit purchases', s.starting ? `starting ${money(s.starting, cur)}` : null].filter(Boolean).join(' · '))),
                 h('span', { class: 'row-value' }, money(s.credit, cur))))))
           : h('p', { class: 'hint' }, 'No suppliers yet - they are added when you stock in material on credit.'))));
   }
@@ -104,6 +165,14 @@
     document.body.append(overlay);
   }
 
+  // Who the supplier is - only the lines that are filled in.
+  function detailsCard(data) {
+    const lines = [['Contact person', data.contact_person], ['Contact number', data.phone], ['Email', data.email], ['GST number', data.gstin],
+      ['UPI ID', data.upi_id], ['Address', data.address]].filter(([, v]) => v);
+    if (!lines.length) return data.can_edit ? h('p', { class: 'hint' }, 'No details saved yet - use Edit details to add contact, address and UPI ID.') : null;
+    return h('div', { class: 'card supplier-details' }, lines.map(([k, v]) => h('p', { class: 'supplier-line' }, h('span', { class: 'hint' }, `${k}: `), v)));
+  }
+
   async function deleteSupplier(id, data) {
     const sure = await confirm(`Delete ${data.name}? It is removed from the supplier list for good.`, { ok: 'Delete', danger: true, title: 'Delete supplier' });
     if (!sure) return;
@@ -122,10 +191,13 @@
     const cur = data.currency;
     clear(view).append(h('div', { class: 'project-detail' },
       data.can_pay ? h('div', { class: 'supplier-actions' },
-        h('button', { class: 'btn small primary', type: 'button', disabled: data.credit <= 0, onclick: () => openPaySheet(id, data, () => showSupplier(id)) }, 'Make payment')) : null,
+        h('button', { class: 'btn small primary', type: 'button', disabled: data.credit <= 0, onclick: () => openPaySheet(id, data, () => showSupplier(id)) }, 'Make payment'),
+        data.can_edit ? h('button', { class: 'btn small', type: 'button', onclick: () => openSupplierSheet({ ...data, id }, () => showSupplier(id)) }, 'Edit details') : null) : null,
       h('div', { class: 'p-head' }, h('h2', {}, data.name)),
+      detailsCard(data),
       stat('Credit owed', money(data.credit, cur)),
-      data.paid ? h('p', { class: 'hint' }, `Bought ${money(data.bought, cur)} on credit · Paid ${money(data.paid, cur)}`) : null,
+      data.paid || data.starting ? h('p', { class: 'hint' }, [data.starting ? `Starting balance ${money(data.starting, cur)}` : null,
+        `Bought ${money(data.bought, cur)} on credit`, data.paid ? `Paid ${money(data.paid, cur)}` : null].filter(Boolean).join(' · ')) : null,
       data.payments.length ? h('section', { class: 'p-section' },
         h('h3', {}, 'Payments made'),
         h('ul', { class: 'card-group' }, data.payments.map((p) => h('li', { class: 'p-row' },
@@ -144,7 +216,7 @@
           : h('p', { class: 'hint' }, 'Nothing on credit with this supplier.')),
       data.can_delete ? h('div', { class: 'supplier-actions' },
         h('button', { class: 'btn small', type: 'button', onclick: () => deleteSupplier(id, data) }, 'Delete supplier'))
-        : (data.can_pay ? h('p', { class: 'hint' }, 'A supplier with purchases or payments on record cannot be deleted.') : null)));
+        : (data.can_pay ? h('p', { class: 'hint' }, 'A supplier with purchases, payments or a starting balance on record cannot be deleted.') : null)));
   }
 
   function route() {

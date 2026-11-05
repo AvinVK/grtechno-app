@@ -1924,5 +1924,6 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .pay-row { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .name-suggest-add { color: var(--accent, #d9381e); font-weight: 600; }
 .supplier-actions { display: flex; justify-content: flex-start; margin: 4px 0 12px; }
-.report-card { padding: 14px 16px; margin-top: 12px; }
-.report-card h3 { margin: 0 0 4px; }
+.supplier-actions { gap: 8px; flex-wrap: wrap; }
+.supplier-details { padding: 12px 16px; margin: 0 0 12px; }
+.supplier-line { margin: 2px 0; white-space: pre-line; word-break: break-word; }

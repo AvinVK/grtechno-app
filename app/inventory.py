@@ -389,19 +389,77 @@ def get_material(material_id):
     )
 
 
+SUPPLIER_DETAIL_FIELDS = ("contact_person", "phone", "email", "gstin", "address", "upi_id", "opening_balance")
+EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+GSTIN = re.compile(r"^[0-9A-Z]{15}$")
+
+
+def _supplier_fields(payload, *, create):
+    """Name and details of a supplier, checked. Only what is sent is checked, so the same code serves create and edit;
+    a name is needed to create one."""
+    f = Fields(payload)
+    if create or "name" in payload:
+        f.text("name", 160, required=True, label="a supplier name")
+    f.text("contact_person", 120)
+    f.text("phone", 40)
+    f.text("email", 160)
+    f.text("gstin", 20)
+    f.text("address", 400)
+    f.text("upi_id", 80)
+    f.money("opening_balance", nullable=True)
+    if f.data.get("email") and not EMAIL.match(f.data["email"]):
+        f.errors["email"] = "Enter an email like name@company.com"
+    if "gstin" in f.data:
+        f.data["gstin"] = f.data["gstin"].upper().replace(" ", "")
+        if f.data["gstin"] and not GSTIN.match(f.data["gstin"]):
+            f.errors["gstin"] = "A GST number is 15 letters and digits"
+    if f.data.get("upi_id") and not UPI_ID.match(f.data["upi_id"]):
+        f.errors["upi_id"] = "Enter a UPI ID like name@bank"
+    if "opening_balance" in f.data and f.data["opening_balance"] is None:
+        f.data["opening_balance"] = Decimal("0.00")
+    name = f.data.get("name")
+    if name and "name" not in f.errors:
+        clash = Supplier.query.filter(db.func.lower(Supplier.name) == name.lower())
+        if payload.get("_editing_id"):
+            clash = clash.filter(Supplier.id != payload["_editing_id"])
+        if clash.first():
+            f.errors["name"] = "That supplier already exists"
+    return f
+
+
 @bp.post("/api/inventory/suppliers")
 def add_supplier():
-    """Add a supplier, same "add new on the fly" pattern as Role (see app/roles.py) - just a name, no
-    slug/key needed since nothing else references a supplier by a stable string key."""
-    name = str(_payload().get("name") or "").strip()[:160]
-    if not name:
-        return jsonify(error="Check the highlighted fields", fields={"name": "Enter a supplier name"}), 422
-    if Supplier.query.filter(db.func.lower(Supplier.name) == name.lower()).first():
-        return jsonify(error="Check the highlighted fields", fields={"name": "That supplier already exists"}), 422
-    supplier = Supplier(name=name)
+    """Add a supplier, same "add new on the fly" pattern as Role (see app/roles.py) - just a name from a stock-in or a
+    purchase form. With details or a starting balance (kohal, 2026-11-05) it is the admin's own form on the Suppliers page."""
+    payload = _payload()
+    detailed = any(str(payload.get(k) or "").strip() not in ("", "0") for k in SUPPLIER_DETAIL_FIELDS)
+    if detailed and not g.user.is_admin:
+        abort(403, "Only the admin can set a supplier's details or starting balance.")
+    f = _supplier_fields(payload, create=True)
+    if f.errors:
+        return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+    supplier = Supplier(**f.data)
     db.session.add(supplier)
     db.session.commit()
     return jsonify(supplier={"id": supplier.id, "name": supplier.name}), 201
+
+
+@bp.patch("/api/inventory/suppliers/<int:supplier_id>")
+def update_supplier(supplier_id):
+    """Fill in or correct a supplier's details and starting balance - the admin's alone."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can change a supplier's details.")
+    supplier = db.session.get(Supplier, supplier_id)
+    if supplier is None:
+        abort(404)
+    payload = dict(_payload(), _editing_id=supplier.id)
+    f = _supplier_fields(payload, create=False)
+    if f.errors:
+        return jsonify(error="Check the highlighted fields", fields=f.errors), 422
+    for key, value in f.data.items():
+        setattr(supplier, key, value)
+    db.session.commit()
+    return jsonify(**_supplier_detail(supplier))
 
 
 # ---------- Suppliers: what is owed on credit purchases (kohal, 2026-11-04) ----------
@@ -424,11 +482,12 @@ SUPPLIER_PAY_MODES = ("Cash", "UPI", "Bank transfer", "Cheque")
 UPI_ID = re.compile(r"^[A-Za-z0-9._\-]{2,64}@[A-Za-z][A-Za-z0-9]{1,30}$")
 
 
-def _owed(supplier_id):
-    """(credit bought, paid so far) for one supplier - what is still owed is the first minus the second."""
-    bought = sum((mv.total_cost for mv in _credit_rows(supplier_id)), Decimal("0"))
-    paid = sum((p.amount for p in SupplierPayment.query.filter_by(supplier_id=supplier_id).all()), Decimal("0"))
-    return bought, paid
+def _owed(supplier):
+    """(starting balance, credit bought since, paid so far) for one supplier - what is still owed is the first two
+    added up, less the third."""
+    bought = sum((mv.total_cost for mv in _credit_rows(supplier.id)), Decimal("0"))
+    paid = sum((p.amount for p in SupplierPayment.query.filter_by(supplier_id=supplier.id).all()), Decimal("0"))
+    return supplier.opening_balance or Decimal("0"), bought, paid
 
 
 @bp.get("/api/inventory/suppliers/credit")
@@ -440,28 +499,33 @@ def supplier_credit_list():
     paid = {}
     for p in SupplierPayment.query.all():
         paid[p.supplier_id] = paid.get(p.supplier_id, Decimal("0")) + p.amount
-    rows = [{"id": s.id, "name": s.name, "credit": float(bought.get(s.id, 0) - paid.get(s.id, 0)), "purchases": count.get(s.id, 0)}
+    rows = [{"id": s.id, "name": s.name, "credit": float((s.opening_balance or 0) + bought.get(s.id, 0) - paid.get(s.id, 0)),
+             "purchases": count.get(s.id, 0), "starting": float(s.opening_balance or 0)}
             for s in Supplier.query.order_by(Supplier.name).all()]
     rows.sort(key=lambda r: (-r["credit"], r["name"].lower()))
-    return jsonify(suppliers=rows, total=round(sum(r["credit"] for r in rows), 2),
+    return jsonify(suppliers=rows, total=round(sum(r["credit"] for r in rows), 2), can_edit=g.user.is_admin,
                    currency=settings_for_client()["currency"])
 
 
 def _supplier_has_history(supplier_id):
     """Anything at all on record for this supplier - a stock-in of any status or a payment. Deleting one that has
     history would blank the supplier off those stock-ins and drop its payments from the Accounts page."""
+    supplier = db.session.get(Supplier, supplier_id)
     return (MaterialMovement.query.filter_by(supplier_id=supplier_id).first() is not None
-            or SupplierPayment.query.filter_by(supplier_id=supplier_id).first() is not None)
+            or SupplierPayment.query.filter_by(supplier_id=supplier_id).first() is not None
+            or bool(supplier and supplier.opening_balance))
 
 
 def _supplier_detail(supplier):
     rows = _credit_rows(supplier.id)
-    bought, paid = _owed(supplier.id)
+    opening, bought, paid = _owed(supplier)
     payments = (SupplierPayment.query.filter_by(supplier_id=supplier.id)
                 .order_by(SupplierPayment.entry_date.desc(), SupplierPayment.id.desc()).all())
     return dict(
-        name=supplier.name, credit=float(bought - paid), bought=float(bought), paid=float(paid),
-        phone=supplier.phone or "", upi_id=supplier.upi_id or "", can_pay=g.user.is_admin,
+        name=supplier.name, credit=float(opening + bought - paid), starting=float(opening), bought=float(bought), paid=float(paid),
+        phone=supplier.phone or "", upi_id=supplier.upi_id or "", contact_person=supplier.contact_person or "",
+        email=supplier.email or "", gstin=supplier.gstin or "", address=supplier.address or "",
+        can_pay=g.user.is_admin, can_edit=g.user.is_admin,
         can_delete=g.user.is_admin and not _supplier_has_history(supplier.id),
         entries=[{"id": mv.id, "material_id": mv.material_id, "material_name": mv.material.name, "unit": mv.material.unit,
                   "quantity": float(mv.quantity), "bill_no": mv.bill_no, "note": mv.note,
@@ -517,8 +581,8 @@ def pay_supplier(supplier_id):
     for key, msg in (("payment_account", "Choose the account it is paid from"), ("mode", "Choose how it is paid")):
         if key not in f.data and key not in errors:
             errors[key] = msg
-    bought, paid = _owed(supplier.id)
-    owed = bought - paid
+    opening, bought, paid = _owed(supplier)
+    owed = opening + bought - paid
     amount = f.data.get("amount")
     if "amount" not in errors:
         shown = f"{owed:,.2f}".rstrip("0").rstrip(".")
