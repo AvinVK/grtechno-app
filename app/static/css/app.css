@@ -1927,3 +1927,40 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .supplier-actions { gap: 8px; flex-wrap: wrap; }
 .supplier-details { padding: 12px 16px; margin: 0 0 12px; }
 .supplier-line { margin: 2px 0; white-space: pre-line; word-break: break-word; }
+.tally-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 12px; }
+.tally-stats .stat { padding: 10px 12px; min-width: 0; }
+.tally-stats .stat-value { font-size: 15px; line-height: 1.25; word-break: break-word; }
+.tally-project { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+/* Lead analysis (plain markup, no chart library): every chart is a boxed panel like the rest of the app, its filter sits in the
+   heading's right corner, and all the filters are the same size. */
+.analysis-panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); padding: 16px; margin: 0 0 14px; }
+.analysis-panel > .hint { margin: 4px 0 0; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; }
+.panel-head h3 { margin: 0; font-size: 17px; line-height: 1.2; }
+.panel-head .field-picker.compact { flex: none; width: 150px; min-height: 38px; padding: 0 10px; font-size: 14px; }
+.panel-head .field-picker.compact::after { font-size: 16px; }
+.col-chart { display: flex; align-items: flex-end; gap: 4px; height: 150px; margin-top: 16px; }
+.col-chart.dense { gap: 2px; }
+.col-chart .col { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; }
+.col-chart .col-bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; }
+.col-chart .col-n { font-size: 11px; line-height: 1; color: var(--ink); }
+.col-chart .col-n.zero { color: var(--muted); }
+.col-chart .col-label { font-size: 10px; line-height: 1.2; color: var(--muted); white-space: nowrap; height: 12px; }
+.col-chart.dense .col-label { font-size: 9px; overflow: visible; }
+.bar-rows { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 14px; }
+.bar-head { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.bar-name { font-weight: 600; min-width: 0; word-break: break-word; }
+.bar-val { font-variant-numeric: tabular-nums; }
+.bar-track { height: 8px; background: var(--track); border-radius: 4px; margin: 5px 0 3px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.bar-fill-soft { background: var(--accent-soft, rgba(217, 57, 31, 0.22)); }
+.bar-fill-soft > .bar-fill { background: var(--accent); }
+.bar-note { display: block; font-size: 12px; color: var(--muted); }
+.pie-chart { display: flex; flex-direction: column; align-items: center; gap: 16px; margin-top: 16px; }
+.pie-wrap { width: 180px; height: 180px; }
+.pie-svg { width: 100%; height: 100%; display: block; }
+.pie-legend { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; gap: 12px; }
+.pie-legend li { display: flex; gap: 10px; align-items: flex-start; }
+.pie-swatch { flex: none; width: 14px; height: 14px; border-radius: 3px; margin-top: 2px; }
+.pie-text { min-width: 0; display: grid; gap: 1px; }
+.stage-filter + .tally-stats { margin-top: 12px; }

@@ -321,7 +321,6 @@
     const materialPick = searchAddField((data.materials || []).map((m) => ({ value: m.name, label: m.name, unit: m.unit })), '', { placeholder: 'Search or add a material' });
     const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
     const supplierPick = searchAddField(data.suppliers || [], '', { placeholder: 'Search or add a supplier' });
-    const supplierText = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
     const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres', list: 'admin-units' });
     const unitList = h('datalist', { id: 'admin-units' }, (data.units || []).map((n) => h('option', { value: n })));
@@ -349,14 +348,16 @@
     const materialField = field('material_pick', 'Material', materialPick, { wide: true });
     const plainField = field('material_name', 'What did you buy', nameInput, { wide: true });
     const supplierPickField = field('supplier_pick', 'Supplier', supplierPick, { wide: true });
-    const supplierTextField = field('supplier', 'Supplier', supplierText, { wide: true });
+    const qtyRow = h('div', { class: 'field-row' }, field('quantity', 'Quantity', qtyInput), field('unit', 'Unit', unitInput));
+    const stockHint = h('p', { class: 'hint' }, 'A material purchase goes straight into Inventory stock, and the amount shows as a debit on the account.');
     const costField = field('amount', 'Cost', amountInput);
     const gstRow = h('div', { class: 'field-row' }, field('gst_percent', 'GST %', gstInput), field('total', 'Total', totalInput));
     const syncCategory = () => {
       materialField.hidden = !isMaterial();
       plainField.hidden = isMaterial();
       supplierPickField.hidden = !isMaterial();
-      supplierTextField.hidden = isMaterial();
+      qtyRow.hidden = !isMaterial();
+      stockHint.hidden = !isMaterial();
       gstRow.hidden = !isMaterial();
       costField.querySelector('label').textContent = isMaterial() ? 'Cost (before GST)' : 'Cost';
       if (!isMaterial()) gstInput.value = '';
@@ -379,9 +380,9 @@
           await api('/api/admin-purchases', {
             method: 'POST', body: {
               category: categorySel.value, payment_account: accountSel.value, entry_date: dateInput.value,
-              material_name: isMaterial() ? materialPick.value : nameInput.value, quantity: qtyInput.value || null, unit: unitInput.value,
+              material_name: isMaterial() ? materialPick.value : nameInput.value, quantity: isMaterial() ? (qtyInput.value || null) : null, unit: isMaterial() ? unitInput.value : '',
               amount: amountInput.value, gst_percent: isMaterial() ? (gstInput.value || '0') : '0',
-              supplier: isMaterial() ? supplierPick.value : supplierText.value, note: noteInput.value,
+              supplier: isMaterial() ? supplierPick.value : '', note: noteInput.value,
             },
           });
           toast('Purchase saved');
@@ -400,13 +401,13 @@
       errorBox,
       field('category', 'Category', categorySel, { wide: true }),
       materialField, plainField, unitList,
-      h('div', { class: 'field-row' }, field('quantity', 'Quantity', qtyInput), field('unit', 'Unit', unitInput)),
+      qtyRow,
       h('div', { class: 'field-row' }, costField, field('entry_date', 'Date', dateInput)),
       gstRow,
       field('payment_account', 'Paid from', accountSel, { wide: true }),
-      supplierPickField, supplierTextField,
+      supplierPickField,
       field('note', 'Note', noteInput, { wide: true }),
-      h('p', { class: 'hint' }, 'A material purchase goes straight into Inventory stock, and the amount shows as a debit on the account.'),
+      stockHint,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Admin purchase' },
       h('h2', {}, 'Admin purchase'), form));

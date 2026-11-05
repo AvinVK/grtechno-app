@@ -5,6 +5,8 @@
 
 {% macro label(m) -%}
 {%- if m.key == 'attendance' -%}{{ 'Team attendance' if current_user.is_admin else 'Your attendance' }}
+{%- elif m.key == 'clients' -%}Client analysis
+{%- elif m.key == 'leads' -%}Lead analysis
 {%- else -%}{{ m.name }}{%- endif -%}
 {%- endmacro %}
 
@@ -13,7 +15,7 @@
 {% macro services(nav_modules, summaries={}, extra_tiles=[]) -%}
 <div class="me-tiles">
   {% for m in nav_modules %}
-  <a class="me-tile" href="{{ m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m) }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
+  <a class="me-tile" href="{{ '/client-analysis' if m.key == 'clients' else '/lead-analysis' if m.key == 'leads' else m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m) }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
   {% else %}
   {% if not extra_tiles %}<p class="sb-empty">No services are turned on yet.</p>{% endif %}
   {% endfor %}
