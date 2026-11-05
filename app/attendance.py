@@ -5,7 +5,7 @@ REQUIRE_ATTENDANCE_LOCATION is switched off in a local .env (kohal, 2026-10-16: 
 prod - see app/config.py). Admin and any sees_all role (Accounts) can see everyone's; everyone else sees
 only their own."""
 
-from datetime import date
+from datetime import date, time
 
 from flask import Blueprint, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
@@ -19,10 +19,10 @@ from .auth import (
     _is_daily_wage,
 )
 from .extensions import db
-from .models import AbsenceRequest, Attendance, Client, PetrolEntry, Project, User, utcnow
+from .models import AbsenceRequest, Attendance, Client, PetrolEntry, Project, User, Worker, WorkerAttendance, utcnow
 from .modules import check_module, has_module
 from .petrol import odometer_file, parse_reading, petrol_on, purge_old_photos, save_odometer
-from .timeutil import today_local, to_local
+from .timeutil import from_local, today_local, to_local
 from .validation import Fields, api_errors
 
 bp = Blueprint("attendance", __name__)
@@ -307,10 +307,108 @@ def team():
         except ValueError:
             abort(422, "Give the date as YYYY-MM-DD")
     rows = query.order_by(Attendance.work_date.desc(), Attendance.check_in_at.desc()).limit(500).all()
+    # The days recorded against an employee rather than checked in by themselves - the WhatsApp import and, since 2026-11-05, days the
+    # admin adds by hand (see add_manual below). Only asked for with a date, since that is how the register is read.
+    recorded = []
+    if day:
+        recorded = (WorkerAttendance.query.filter_by(work_date=date.fromisoformat(day)).join(Worker, WorkerAttendance.worker_id == Worker.id)
+                    .order_by(Worker.name).all())
     return jsonify(
         records=[a.to_dict() for a in rows],
+        recorded=[{**a.to_dict(), "worker_name": a.worker.name} for a in recorded],
         users=[{"code": u.code, "name": u.name} for u in User.query.filter_by(is_active=True).order_by(User.name)],
     )
+
+
+# ---------- the admin adds a day for an employee (kohal, 2026-11-05) ----------
+#
+# "give admin power to add attendance for employees because ... we are migrating and still using the app parallely" - while the
+# WhatsApp group is still how some people mark attendance, the admin keeps their days up to date here. It is stored as a
+# WorkerAttendance row, the same record the WhatsApp import makes: it is what Employee management, the Attendance sheet, payroll,
+# the project reports and the team register already read, for an employee with or without a login of their own. One row per
+# employee per day; a day that already has one is left alone (never overwritten).
+
+def _clock(raw, name, errors):
+    """"HH:MM" from a time input, or None when blank."""
+    if raw in (None, ""):
+        return None
+    try:
+        hh, mm = str(raw).split(":")[:2]
+        return time(int(hh), int(mm))
+    except (TypeError, ValueError):
+        errors[name] = "Enter a time like 09:30"
+        return None
+
+
+@bp.get("/api/attendance/manual/options")
+def manual_options():
+    """The employees and projects the admin can pick from when adding a day."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can add attendance for an employee.")
+    return jsonify(
+        workers=[{"id": w.id, "name": w.name, "category": w.category} for w in Worker.query.order_by(Worker.name).all()],
+        projects=[{"id": p.id, "title": p.title, "client_name": p.client.name} for p in _open_projects()],
+        today=today_local().isoformat())
+
+
+@bp.post("/api/attendance/manual")
+def add_manual():
+    if not g.user.is_admin:
+        abort(403, "Only the admin can add attendance for an employee.")
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    errors = {}
+    worker = None
+    try:
+        worker = db.session.get(Worker, int(payload.get("worker_id")))
+    except (TypeError, ValueError):
+        pass
+    if worker is None:
+        errors["worker_id"] = "Choose an employee from the list"
+    try:
+        day = date.fromisoformat(str(payload.get("work_date") or ""))
+    except ValueError:
+        day = None
+        errors["work_date"] = "Pick the day"
+    if day is not None and day > today_local():
+        errors["work_date"] = "That day hasn't happened yet"
+    status = payload.get("status") or "present"
+    if status not in ("present", "absent"):
+        errors["status"] = "Choose present or absent"
+    note = str(payload.get("note") or "").strip()
+    if len(note) > 300:
+        errors["note"] = "Keep the note under 300 characters"
+    project = None
+    if payload.get("project_id") not in (None, ""):
+        try:
+            project = db.session.get(Project, int(payload["project_id"]))
+        except (TypeError, ValueError):
+            project = None
+        if project is None:
+            errors["project_id"] = "Choose a project from the list"
+    check_in = _clock(payload.get("check_in"), "check_in", errors)
+    check_out = _clock(payload.get("check_out"), "check_out", errors)
+    if status == "absent":
+        check_in = check_out = project = None
+    elif check_out is not None and check_in is None:
+        errors["check_in"] = "Add the check-in time too"
+    elif check_in is not None and check_out is not None and check_out <= check_in:
+        errors["check_out"] = "Check-out has to be after check-in"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    if WorkerAttendance.query.filter_by(worker_id=worker.id, work_date=day).first() is not None:
+        return jsonify(error=f"{worker.name} already has attendance recorded for that day."), 409
+    row = WorkerAttendance(
+        worker_id=worker.id, work_date=day, status=status, project_id=project.id if project else None, note=note,
+        check_in_at=from_local(day, check_in) if check_in else None, check_out_at=from_local(day, check_out) if check_out else None)
+    # Nobody is counted absent from before they first turned up: for someone with no days at all yet, this first one is that
+    # day. (Never changed for anyone who already has a first/last day - their existing figures stay as they are.)
+    if status == "present" and worker.first_seen is None:
+        worker.first_seen = worker.last_seen = day
+    db.session.add(row)
+    db.session.commit()
+    return jsonify(record={**row.to_dict(), "worker_name": worker.name}), 201
 
 
 # ---------- absence notices (kohal, 2026-10-19) ----------

@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, dateField, pickList, field, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField, pickList, field, closeOnBack, selectField, searchField, showFieldErrors } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
@@ -421,6 +421,64 @@
       barBox));
   }
 
+  /* ---------- the admin adds a day for an employee ----------
+     (kohal, 2026-11-05: "give admin power to add attendance for employees because ... we are migrating and still using the app
+     parallely") - for anyone on the employee list, with or without a login of their own; stored the same way the WhatsApp
+     import stores a day (see app/attendance.py add_manual), so everything that reads attendance picks it up. */
+
+  const addBtn = $('#add-attendance');                      // in the top row; only there for the admin
+
+  async function openAddSheet(day, onDone) {
+    let options;
+    try { options = await api('/api/attendance/manual/options'); } catch (err) { toast(err.message, true); return; }
+    const employee = searchField(options.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Search by name' });
+    const dateInput = dateField(day || options.today, { clearable: false });
+    const status = selectField([{ value: 'present', label: 'Present' }, { value: 'absent', label: 'Absent' }], 'present', { title: 'Attendance', placeholder: 'Present' });
+    const checkIn = h('input', { type: 'time' });
+    const checkOut = h('input', { type: 'time' });
+    const project = selectField([{ value: '', label: 'No project (office work)' },
+      ...options.projects.map((p) => ({ value: p.id, label: `${p.title} - ${p.client_name}` }))], '', { title: 'Project', placeholder: 'No project (office work)' });
+    const note = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'Optional' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Save');
+    const present = h('div', {},
+      h('div', { class: 'field-row' }, field('check_in', 'Check-in', checkIn), field('check_out', 'Check-out', checkOut)),
+      field('project_id', 'Project', project));
+    status.addEventListener('change', () => { present.hidden = status.value === 'absent'; });
+    const form = h('form', { novalidate: true },
+      field('worker_id', 'Employee', employee),
+      field('work_date', 'Day', dateInput),
+      field('status', 'Attendance', status),
+      present,
+      field('note', 'Note', note),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    const finish = closeOnBack(() => overlay.remove());
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
+    cancelBtn.onclick = () => finish();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      try {
+        const body = { worker_id: employee.value, work_date: dateInput.value, status: status.value, note: note.value };
+        if (status.value === 'present') Object.assign(body, { check_in: checkIn.value, check_out: checkOut.value, project_id: project.value });
+        const { record } = await api('/api/attendance/manual', { method: 'POST', body });
+        finish();
+        toast(`Added for ${record.worker_name}`);
+        onDone(record.work_date);
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Add attendance' },
+      h('h2', {}, 'Add attendance'), form));
+    document.body.append(overlay);
+  }
+
   /* ---------- team register (admin, accounts) ---------- */
 
   async function showTeam() {
@@ -434,19 +492,36 @@
     const list = h('ul', { class: 'att-week-card att-team-list' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
 
+    // A day recorded for an employee (the WhatsApp import, or added by the admin): no delete here, and an absent day is marked as such.
+    const recordedRow = (a) => (a.status === 'absent'
+      ? dayRow({ title: a.worker_name, right: h('span', { class: 'chip chip-absent' }, 'Absent'), sub: a.note || null })
+      : dayRow({
+        title: a.worker_name,
+        right: h('span', { class: 'att-day-hours' }, a.hours != null ? `${a.hours} h` : ''),
+        sub: [a.project_title, a.check_in_at ? timesText(a) : 'Present', a.note].filter(Boolean).flatMap((x, i) => (i ? [' · ', x] : [x])),
+        hours: a.hours,
+      }));
+
     async function refresh() {
       clear(list).append(h('li', { class: 'loading' }, 'Loading…'));
       try {
         const data = await api(`/api/attendance/team?date=${encodeURIComponent(dateInput.value)}`);
-        count.textContent = plural(data.records.length, 'person', 'people') + ' checked in';
+        const recorded = data.recorded || [];
+        const here = data.records.length + recorded.filter((a) => a.status !== 'absent').length;
+        count.textContent = plural(here, 'person', 'people') + ' checked in';
         clear(list);
-        if (!data.records.length) { list.append(h('li', { class: 'empty-state' }, 'Nobody checked in on this day.')); return; }
+        if (!data.records.length && !recorded.length) { list.append(h('li', { class: 'empty-state' }, 'Nobody checked in on this day.')); return; }
         data.records.forEach((a) => list.append(recordRow(a.user_name, a, refresh)));
+        recorded.forEach((a) => list.append(recordedRow(a)));
       } catch (err) {
         clear(list).append(h('li', { class: 'empty-state' }, err.message));
       }
     }
     dateInput.onchange = refresh;
+    if (addBtn) {
+      addBtn.hidden = false;
+      addBtn.onclick = () => openAddSheet(dateInput.value, (day) => { if (dateInput.value !== day) dateInput.value = day; refresh(); });
+    }
 
     clear(view).append(h('div', {},
       tabs('today'),
@@ -534,6 +609,7 @@
   }
 
   function route() {
+    if (addBtn) addBtn.hidden = true;                       // shown again by the team register, the one screen it belongs to
     if (canSeeWorkforce && window.location.hash === '#register') return showRegister();
     if (teamOnly || window.location.hash === '#team') return showTeam();
     return showMine();
