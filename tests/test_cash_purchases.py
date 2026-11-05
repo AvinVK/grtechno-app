@@ -9,8 +9,11 @@ from app.models import CashAccount, Worker
 from conftest import make_user, signed_in
 
 
-def add_worker(name="Deepak Daily"):
-    worker = Worker(name=name, category="manpower", employment_type="daily_wages")
+def add_worker(name="Deepak Daily", role="project_manager"):
+    """A worker the admin may give cash to: signed up as a project manager (kohal, 2026-11-05: only project managers and
+    accountants can be given cash). Pass role="helper" (or similar) for one who may not."""
+    user = make_user(name, role=role)
+    worker = Worker(name=name, category="manpower", employment_type="contractor", user_code=user.code)
     db.session.add(worker)
     db.session.commit()
     return worker.id
@@ -78,9 +81,9 @@ def test_giving_cash_to_an_unknown_worker_is_a_404(admin_client):
     assert res.status_code == 404
 
 
-def test_any_worker_can_receive_cash_no_opt_in_needed(admin_client):
-    """Unlike fooding, there's no eligibility checkbox - anyone with a Worker row can be given cash."""
-    salaried = Worker(name="Sanjay Salary", category="staff", employment_type="regular")
+def test_a_project_manager_or_accountant_can_receive_cash_no_opt_in_needed(admin_client):
+    """Unlike fooding, there's no eligibility checkbox - a project manager or accountant (salaried or not) can be given cash."""
+    salaried = Worker(name="Sanjay Salary", category="staff", employment_type="regular", user_code=make_user("Sanjay Salary", role="accounts").code)
     db.session.add(salaried)
     db.session.commit()
     res = admin_client.post(f"/api/cash-purchases/{salaried.id}/give", json={"amount": "300", "payment_mode": "CASH"})
@@ -826,13 +829,73 @@ def test_only_the_admin_can_use_admin_purchases(app, accounts_client, client):
     assert client.get("/api/admin-purchases").status_code == 403
 
 
-def test_only_project_managers_and_accountants_can_request_cash(app):
-    """kohal, 2026-11-04: "remove cash request for all except project manager and accountant"."""
-    for name, role, allowed in (("Pm Person", "project_manager", True), ("Acc Person", "accounts", True),
-                                ("Helper Person", "helper", False), ("Welder Person", "welder", False)):
-        who, _ = worker_user(app, name=name, pin="285193", role=role)
-        assert who.get("/api/cash-purchases/me").get_json()["can_request"] is allowed, role
-        res = who.post("/api/cash-purchases/requests", json={"amount": "500"})
-        assert (res.status_code == 201) is allowed, role
-        if not allowed:
-            assert res.status_code == 403
+def test_the_employee_cash_flow_is_for_project_managers_and_accountants_only(app, admin_client):
+    """kohal, 2026-11-05: "everything of the cash flow stays but only for project manager, accountant and admin"."""
+    from app.models import Role
+    db.session.add(Role(key="project_manager_chandrapur", name="Project manager Chandrapur"))     # a custom role on prod, not in the seed
+    db.session.commit()
+    for name, role, allowed in (("Pm Person", "project_manager", True), ("Chandrapur Pm", "project_manager_chandrapur", True),
+                                ("Acc Person", "accounts", True), ("Helper Person", "helper", False), ("Welder Person", "welder", False)):
+        who, wid = worker_user(app, name=name, pin="285193", role=role)
+        admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+        mine = who.get("/api/cash-purchases/me")
+        assert (mine.status_code == 200) is allowed, role                       # the section's own data - a 404 hides it
+        request = who.post("/api/cash-purchases/requests", json={"amount": "500"})
+        logged = who.post("/api/cash-purchases/me", json={"category": "other", "material_name": "Toll", "amount": "80"})
+        assert (request.status_code == 201) is allowed and (logged.status_code == 201) is allowed, role
+        if allowed:
+            assert mine.get_json()["can_request"] is True and mine.get_json()["account"]["given_total"] == 2000.0
+        else:
+            assert request.status_code in (403, 404) and logged.status_code == 404
+
+
+# ---------- who the admin may give cash to (kohal, 2026-11-05) ----------
+
+def test_the_admin_can_give_cash_only_to_project_managers_accountants_and_daily_wage_workers(app, admin_client):
+    pm, acc = add_worker("Pm Person", "project_manager"), add_worker("Acc Person", "accounts")
+    helper, nobody = add_worker("Helper Person", "helper"), None
+    with app.app_context():
+        loose = Worker(name="No Sign In", category="manpower")              # no login at all, so no way to log a purchase
+        db.session.add(loose)
+        db.session.commit()
+        nobody = loose.id
+    for wid in (pm, acc):
+        assert admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "100", "payment_mode": "CASH"}).status_code == 200
+    for wid in (helper, nobody):
+        res = admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "100", "payment_mode": "CASH"})
+        assert res.status_code == 422 and "project managers and accountants" in res.get_json()["fields"]["worker_id"]
+    assert db.session.get(Worker, helper).cash_account is None                # nothing was created
+    with app.app_context():
+        wage = Worker(name="Daily Dev", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"))
+        db.session.add(wage)
+        db.session.commit()
+        wage_id = wage.id
+    # a daily-wage worker is eligible too (their cash comes from the fooding balance - refused here only for having none yet)
+    res = admin_client.post(f"/api/cash-purchases/{wage_id}/give", json={"amount": "100", "payment_mode": "CASH"})
+    assert "project managers and accountants" not in str(res.get_json().get("fields", {}).get("worker_id", ""))
+
+
+def test_the_allocate_cash_pickers_list_those_roles_and_daily_wage_workers(app, admin_client):
+    pm, acc, helper = add_worker("Pm Person", "project_manager"), add_worker("Acc Person", "accounts"), add_worker("Helper Person", "helper")
+    wage = Worker(name="Daily Dev", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"))
+    db.session.add(wage)
+    db.session.commit()
+    for url in ("/api/cash-purchases/pending", "/api/cash-purchases/accounts", "/api/cash-purchases/requests"):
+        ids = {w["id"] for w in admin_client.get(url).get_json()["workers"]}
+        assert ids == {pm, acc, wage.id}, url
+
+
+def test_cash_for_a_daily_wage_worker_still_comes_out_of_their_fooding_balance(app, admin_client):
+    """Three separate flows (kohal, 2026-11-05): cash for purchases (project managers and accountants), petrol cash (petrol
+    payouts) and fooding cash (the admin's allotment to daily-wage workers). A daily-wage worker can still be given cash for
+    small things such as petrol servicing - it comes out of their fooding balance, never out of an account."""
+    daily = Worker(name="Dinesh Daily", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"), fooding_opt_in=True)
+    db.session.add(daily)
+    db.session.commit()
+    asked = admin_client.post(f"/api/fooding/{daily.id}/allot", json={"amount": 1500, "payment_mode": "CASH"})
+    assert asked.status_code == 200, asked.get_json()
+    assert admin_client.post(f"/api/fooding/requests/{asked.get_json()['request']['id']}/approve").status_code == 200
+    given = admin_client.post(f"/api/cash-purchases/{daily.id}/give", json={"amount": "400", "note": "Bike service"})
+    assert given.status_code == 200 and given.get_json()["account"]["given_total"] == 400.0
+    listing = admin_client.get("/api/fooding").get_json()["workers"]
+    assert next(w for w in listing if w["worker_id"] == daily.id)["remaining"] == 1100.0

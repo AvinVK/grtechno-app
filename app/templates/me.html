@@ -81,6 +81,15 @@
     <div id="me-workplan-approvals-list" class="card-group me-rows"></div>
   </section>
 
+  {# Only a project manager, an accountant or the admin gets this (kohal, 2026-11-05: "everything of the cash flow stays but only for project manager, accountant and admin") - the server hides it from everyone else (cash_purchases.my_cash_purchases). #}
+  {# The signed-in person's own cash-purchase balance and log (kohal, 2026-10-21: "need this in me tab as
+     cash purchase block of employees") - hidden entirely until the admin/accountant has actually given
+     them cash at least once (see app/cash_purchases.py's my_cash_purchases). #}
+  <section class="me-section" id="me-cash-purchases" aria-labelledby="me-cash-purchases-h" hidden>
+    <div class="me-section-head"><h2 id="me-cash-purchases-h">Cash purchases</h2></div>
+    <div id="me-cash-purchases-body"></div>
+  </section>
+
   {# Admin only: site categories typed in by people wait here until approved or pointed at an existing one. #}
   {% if current_user.is_admin %}
   <section class="me-section" id="me-approvals" aria-labelledby="me-approvals-h" hidden>

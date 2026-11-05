@@ -236,3 +236,28 @@ def test_material_approvals_is_empty_for_someone_with_nothing_to_approve(app, cl
 
     welder_client = signed_in(app, make_user("Wendy Welder", role="welder"))
     assert welder_client.get("/api/me/material-approvals").get_json()["approvals"] == []
+
+
+def test_a_project_manager_on_petrol_still_gets_their_petrol_tile_next_to_suppliers(app):
+    """Reported 2026-11-05: giving project managers Inventory added a Suppliers tile, which made the page think they were a
+    manager with nothing of their own to show and dropped their Petrol tile."""
+    from app.models import Worker
+    pm = make_user("Priya Manager", role="project_manager")
+    db.session.add(Worker(name="Priya Manager", category="manpower", user_code=pm.code, petrol_enabled=True))
+    db.session.commit()
+    html = signed_in(app, pm).get("/me").data.decode()
+    assert 'href="/petrol"' in html and 'href="/suppliers"' in html
+
+
+def test_a_daily_wage_worker_with_inventory_keeps_their_own_tiles_too(app):
+    from app.models import Worker
+    oa = make_user("Oza Assistant", role="office_assistant")
+    db.session.add(Worker(name="Oza Assistant", category="manpower", user_code=oa.code, employment_type="daily_wages", petrol_enabled=True))
+    db.session.commit()
+    html = signed_in(app, oa).get("/me").data.decode()
+    assert 'href="/wages"' in html and 'href="/petrol"' in html and 'href="/suppliers"' in html
+
+
+def test_the_cash_purchases_section_is_back_on_the_me_page_with_no_separate_requests_one(client):
+    html = client.get("/me").data.decode()
+    assert 'id="me-cash-purchases"' in html and 'id="me-cash-requests"' not in html

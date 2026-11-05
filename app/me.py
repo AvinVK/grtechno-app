@@ -121,11 +121,18 @@ def _extra_tiles():
         n = CashPurchase.query.filter_by(status="pending").count() + CashRequest.query.filter_by(status="pending").count()
         tiles.append({"href": "/purchase-approvals", "icon": "cash", "name": "Purchase approval",
                        "sum": f"{n} pending" if n else None})
-    if has_module(g.user, "inventory"):
-        # What is owed to each supplier on credit stock-ins (kohal, 2026-11-04).
-        tiles.append({"href": "/suppliers", "icon": "suppliers", "name": "Suppliers", "sum": None})
-    if tiles:
-        return tiles
+    # An admin or accountant has the tiles above and no wage / fooding / petrol of their own to show; everyone else gets theirs
+    # below. The Suppliers tile (kohal, 2026-11-04) goes on either list - it must not be what decides which one applies, or a
+    # project manager given Inventory lost their own Petrol tile (reported 2026-11-05).
+    manager = bool(tiles)
+
+    def with_suppliers(rows):
+        if has_module(g.user, "inventory"):
+            rows.append({"href": "/suppliers", "icon": "suppliers", "name": "Suppliers", "sum": None})
+        return rows
+
+    if manager:
+        return with_suppliers(tiles)
     worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker and worker.employment_type == "daily_wages":
         tiles.append({"href": "/wages", "icon": "wages", "name": "Wages", "sum": None})
@@ -142,7 +149,7 @@ def _extra_tiles():
         cur = settings_for_client()["currency"]
         tiles.append({"href": "/commissions", "icon": "commission", "name": "Commission",
                        "sum": f"{cur}{worker.commission_total:.0f} earned" if worker.commission_total else None})
-    return tiles
+    return with_suppliers(tiles)
 
 
 @bp.get("/me")
