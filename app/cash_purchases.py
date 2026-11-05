@@ -64,6 +64,24 @@ def own_worker():
     return Worker.query.filter_by(user_code=g.user.code).first()
 
 
+def _in_cash_flow(user) -> bool:
+    """Who gets the employee-side cash flow - their balance, Request cash and Log purchase (kohal, 2026-11-05: "everything of
+    the cash flow stays but only for project manager, accountant and admin"). Everyone else never sees it. The admin has no
+    employee record of their own, so for them it is simply never shown - their own buying goes through Admin purchase."""
+    return user.is_admin or user.role_key in PROJECT_MANAGER_ROLE_KEYS or user.role_key == "accounts"
+
+
+def _cash_eligible(worker) -> bool:
+    """Whether the admin may give this person cash (kohal, 2026-11-05: "admin should be able to allocate cash to only" project
+    managers and accountants) - someone with a sign-in in one of those roles - and daily-wage workers, who are given cash for
+    small things like petrol servicing, taken from their fooding balance (see give()). Neither has to log purchases the way a
+    project manager does; a daily-wage worker just receives it. Anyone else is out."""
+    user = worker.linked_user
+    if user and (user.role_key in PROJECT_MANAGER_ROLE_KEYS or user.role_key == "accounts"):
+        return True
+    return worker.employment_type == "daily_wages" or worker.fooding_eligible
+
+
 def _can_request_cash(worker) -> bool:
     """Daily-wage pay settles day by day already (kohal, 2026-10-21: "daily wages employee should not be
     able to request for cash") - the request-ahead step is for everyone else, who don't have that same
@@ -74,7 +92,7 @@ def _can_request_cash(worker) -> bool:
     # which asks the admin for a top-up by itself when it runs low.)
     # And only project managers and accountants raise one (kohal, 2026-11-04: "remove cash request for all except
     # project manager and accountant") - everyone else is given cash by the admin unprompted, as before.
-    return worker.employment_type != "daily_wages" and (g.user.role_key in PROJECT_MANAGER_ROLE_KEYS or g.user.role_key == "accounts")
+    return worker.employment_type != "daily_wages" and _in_cash_flow(g.user)
 
 
 def account_for(worker, *, create=False):
@@ -104,6 +122,8 @@ def _fooding_left(worker):
 def _worker_rows():
     rows = []
     for w in Worker.query.order_by(Worker.name).all():
+        if not _cash_eligible(w):
+            continue                       # only project managers and accountants can be given cash
         left = _fooding_left(w)
         row = {"id": w.id, "name": w.name, "fooding_remaining": None if left is None else float(left)}
         if g.user.is_admin:        # who gets paid, for opening a payment app already filled in - only the admin pays
@@ -175,7 +195,7 @@ def _pending_or_409(purchase):
 @bp.get("/api/cash-purchases/me")
 def my_cash_purchases():
     worker = own_worker()
-    if worker is None:
+    if worker is None or not _in_cash_flow(g.user):
         abort(404)
     account = worker.cash_account
     return jsonify(
@@ -270,7 +290,7 @@ def add_purchase():
     account already (cash has to have been given before there's anything to log a purchase against), waits
     on the admin/accountant to approve before it touches the balance."""
     worker = own_worker()
-    if worker is None:
+    if worker is None or not _in_cash_flow(g.user):
         abort(404)
     account = worker.cash_account
     if account is None:
@@ -395,6 +415,9 @@ def give(worker_id):
     worker = db.session.get(Worker, worker_id)
     if worker is None:
         abort(404)
+    if not _cash_eligible(worker):
+        msg = "Cash can only be given to project managers and accountants"
+        return jsonify(error=msg, fields={"worker_id": msg}), 422
     payload = _payload()
     amount, mode, errors = _amount_and_mode(payload)
     note = str(payload.get("note") or "").strip()[:200]
