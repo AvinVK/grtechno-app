@@ -4,6 +4,12 @@
 
 {% block page_title %}Suppliers{% endblock %}
 
+{# "+ Supplier" lives in the top row beside the title like every other add button (kohal, 2026-11-05) - admin only, and
+   suppliers.js shows it on the list and hides it on a supplier's own page. #}
+{% block actions %}
+  {% if current_user.is_admin %}<button class="btn primary appbar-primary" id="add-supplier" type="button" hidden>+ Supplier</button>{% endif %}
+{% endblock %}
+
 {% block content %}
 <main id="view" class="view" tabindex="-1"><p class="loading">Loading…</p></main>
 <script src="{{ asset('js/suppliers.js') }}" defer></script>

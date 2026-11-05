@@ -1185,3 +1185,8 @@ def test_a_supplier_with_a_starting_balance_cannot_be_deleted(admin_client):
     sid = admin_client.post("/api/inventory/suppliers", json={"name": "Old Ledger Co", "opening_balance": "500"}).get_json()["supplier"]["id"]
     assert admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()["can_delete"] is False
     assert admin_client.delete(f"/api/inventory/suppliers/{sid}").status_code == 409
+
+
+def test_the_add_supplier_button_is_in_the_top_row_for_the_admin_only(admin_client, accounts_client):
+    assert b'id="add-supplier"' in admin_client.get("/suppliers").data
+    assert b'id="add-supplier"' not in accounts_client.get("/suppliers").data
