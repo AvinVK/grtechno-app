@@ -10,6 +10,9 @@
 
   const { $, h, clear, api, toast, confirm, money, field, selectField, dateField, showFieldErrors, closeOnBack, payAppPicker, setAppbarBack, resetAppbarBack } = window.LD;
   const view = $('#view');
+  const addBtn = $('#add-supplier');                        // in the top row; only there for the admin
+  const showAdd = (visible) => { if (addBtn) addBtn.hidden = !visible; };
+  if (addBtn) addBtn.onclick = () => openSupplierSheet(null, (newId) => setTimeout(() => { window.location.hash = `#s${newId}`; }, 250));   // after the sheet has closed
 
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const fmtDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
@@ -76,13 +79,13 @@
 
   async function showList() {
     resetAppbarBack?.();
+    showAdd(false);                                         // shown again once the list has loaded
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api('/api/inventory/suppliers/credit'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     const cur = data.currency;
+    showAdd(!!data.can_edit);
     clear(view).append(h('div', { class: 'project-detail' },
-      data.can_edit ? h('div', { class: 'supplier-actions' },
-        h('button', { class: 'btn small primary', type: 'button', onclick: () => openSupplierSheet(null, (newId) => setTimeout(() => { window.location.hash = `#s${newId}`; }, 250)) }, '+ Supplier')) : null,
       stat('Total credit owed to suppliers', money(data.total, cur)),
       h('section', { class: 'p-section' },
         data.suppliers.length
@@ -184,6 +187,7 @@
   }
 
   async function showSupplier(id) {
+    showAdd(false);
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
     try { data = await api(`/api/inventory/suppliers/${id}/credit`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
