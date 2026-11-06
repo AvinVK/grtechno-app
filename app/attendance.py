@@ -5,7 +5,7 @@ REQUIRE_ATTENDANCE_LOCATION is switched off in a local .env (kohal, 2026-10-16: 
 prod - see app/config.py). Admin and any sees_all role (Accounts) can see everyone's; everyone else sees
 only their own."""
 
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from flask import Blueprint, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import abort
@@ -349,6 +349,32 @@ def manual_options():
         workers=[{"id": w.id, "name": w.name, "category": w.category} for w in Worker.query.order_by(Worker.name).all()],
         projects=[{"id": p.id, "title": p.title, "client_name": p.client.name} for p in _open_projects()],
         today=today_local().isoformat())
+
+
+@bp.get("/api/attendance/manual/calendar")
+def manual_calendar():
+    """One employee's month, for the calendar on the add-attendance sheet (kohal, 2026-11-06: "have the calender prefilled with
+    existing marked yes and no attendance"): every day already recorded, as present or absent. Days the person checked in for
+    themselves in the app (approved) count as present; a recorded day wins when both exist, as everywhere else."""
+    if not g.user.is_admin:
+        abort(403, "Only the admin can add attendance for an employee.")
+    worker = db.session.get(Worker, request.args.get("worker_id", type=int) or 0)
+    if worker is None:
+        abort(404, "Choose an employee from the list")
+    try:
+        year, month = (int(x) for x in (request.args.get("month") or "").split("-"))
+        first = date(year, month, 1)
+    except ValueError:
+        abort(422, "Give the month as YYYY-MM")
+    last = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+    days = {}
+    if worker.user_code:
+        for a in (Attendance.query.filter_by(user_code=worker.user_code, status="approved")
+                  .filter(Attendance.work_date >= first, Attendance.work_date <= last).all()):
+            days[a.work_date] = {"date": a.work_date.isoformat(), "status": "present", "source": "app"}
+    for a in WorkerAttendance.query.filter_by(worker_id=worker.id).filter(WorkerAttendance.work_date >= first, WorkerAttendance.work_date <= last):
+        days[a.work_date] = {"date": a.work_date.isoformat(), "status": a.status, "source": "recorded"}
+    return jsonify(days=[days[d] for d in sorted(days)])
 
 
 @bp.post("/api/attendance/manual")

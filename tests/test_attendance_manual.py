@@ -112,3 +112,45 @@ def test_the_page_has_the_add_button_for_the_admin_only(admin_client, client, ac
     assert 'id="add-attendance"' in admin_client.get("/attendance").data.decode()
     assert 'id="add-attendance"' not in client.get("/attendance").data.decode()
     assert 'id="add-attendance"' not in accounts_client.get("/attendance").data.decode()
+
+
+def test_the_calendar_is_prefilled_with_the_days_already_recorded(app, admin_client):
+    from datetime import date
+    wid = _worker(app)
+    d1, d2 = today_local() - timedelta(days=1), today_local() - timedelta(days=2)
+    admin_client.post("/api/attendance/manual", json={"worker_id": wid, "work_date": d1.isoformat(), "check_in": "07:00", "check_out": "19:00"})
+    admin_client.post("/api/attendance/manual", json={"worker_id": wid, "work_date": d2.isoformat(), "status": "absent"})
+    month = f"{d1.year}-{d1.month:02d}"
+    days = {d["date"]: d["status"] for d in admin_client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month={month}").get_json()["days"]}
+    assert days.get(d1.isoformat()) == "present"
+    if d2.month == d1.month:
+        assert days.get(d2.isoformat()) == "absent"
+    other = _worker(app, "Someone Else")
+    assert admin_client.get(f"/api/attendance/manual/calendar?worker_id={other}&month={month}").get_json()["days"] == []   # only this employee's own days
+    assert admin_client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month=nope").status_code == 422
+    assert admin_client.get("/api/attendance/manual/calendar?worker_id=99999&month=2026-11").status_code == 404
+    assert date.fromisoformat(d1.isoformat())
+
+
+def test_the_calendar_counts_an_approved_check_in_on_the_app_as_present(app, admin_client):
+    from app.models import Attendance
+    from tests.conftest import make_user
+    from app.timeutil import from_local
+    from datetime import time
+    day = today_local() - timedelta(days=1)
+    with app.app_context():
+        u = make_user("App Person")
+        w = Worker(name="App Person", category="manpower", user_code=u.code)
+        db.session.add(w)
+        db.session.add(Attendance(user_code=u.code, work_date=day, check_in_at=from_local(day, time(9, 0)), status="approved"))
+        db.session.add(Attendance(user_code=u.code, work_date=day - timedelta(days=1), check_in_at=from_local(day, time(9, 0)), status="rejected"))
+        db.session.commit()
+        wid = w.id
+    days = admin_client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month={day.year}-{day.month:02d}").get_json()["days"]
+    assert [(d["date"], d["status"], d["source"]) for d in days if d["date"] == day.isoformat()] == [(day.isoformat(), "present", "app")]
+    assert all(d["date"] != (day - timedelta(days=1)).isoformat() for d in days)             # a rejected check-in is not a present day
+
+
+def test_only_the_admin_can_read_the_calendar(app, client):
+    wid = _worker(app)
+    assert client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month=2026-11").status_code in (403, 404)
