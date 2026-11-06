@@ -5,7 +5,7 @@
 {% block page_title %}{{ page_title }}{% endblock %}
 
 {% block actions %}
-  {% if current_user.is_admin %}<button class="btn primary appbar-primary" id="add-attendance" type="button" hidden>+ Attendance</button>{% endif %}
+  {% if can_add %}<button class="btn primary appbar-primary" id="add-attendance" type="button" hidden>+ Attendance</button>{% endif %}
 {% endblock %}
 
 {% block content %}

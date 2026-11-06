@@ -194,11 +194,48 @@ def page():
     return render_template("projects.html", page_title=title)
 
 
+def can_see_running_projects(user) -> bool:
+    """Who gets the "Running today" subtab (kohal, 2026-11-06: "visible to PM, admin" and then "have it for accountant as well") -
+    the admin, any project manager and the accountant."""
+    return user.is_admin or user.role_key in PROJECT_MANAGER_ROLE_KEYS or user.role_key == "accounts"
+
+
+@bp.get("/api/projects/running-today")
+def running_today():
+    """The projects running today (kohal, 2026-11-06: "running projects for any day means if there are attendance on that project ...
+    each day it will vary due to attendance"): a project is running on a day when someone's attendance is recorded against it that
+    day - an app check-in (approved, or still waiting for approval - the people are on site either way; rejected ones are not) or a
+    present day recorded for an employee (the WhatsApp import, or added by the admin). Only the projects this person may see."""
+    if not can_see_running_projects(g.user):
+        abort(403, "Only the admin, a project manager or the accountant can see this.")
+    today = today_local()
+    visible = {p.id: p for p in visible_projects().all()}
+    people = {}                                              # project id -> {person key -> {name, pending}}
+
+    def add(project_id, key, name, pending=False):
+        if project_id in visible:
+            row = people.setdefault(project_id, {}).setdefault(key, {"name": name, "pending": pending})
+            row["pending"] = row["pending"] and pending       # on site by one record or another: only pending when every record is
+
+    for a in Attendance.query.filter(Attendance.work_date == today, Attendance.project_id.isnot(None), Attendance.status.in_(["approved", "pending"])):
+        add(a.project_id, ("user", a.user_code), a.user.name, a.status == "pending")
+    for a in WorkerAttendance.query.filter(WorkerAttendance.work_date == today, WorkerAttendance.project_id.isnot(None), WorkerAttendance.status == "present"):
+        # An employee with a login of their own is the same person as that login's check-in - counted once.
+        add(a.project_id, ("user", a.worker.user_code) if a.worker.user_code else ("worker", a.worker_id), a.worker.name)
+    rows = []
+    for pid, on_site in people.items():
+        names = sorted(on_site.values(), key=lambda r: r["name"].lower())
+        rows.append({**visible[pid].to_dict(), "on_site": [{"name": r["name"], "pending": r["pending"]} for r in names]})
+    rows.sort(key=lambda r: (-len(r["on_site"]), r["title"].lower()))
+    return jsonify(date=today.isoformat(), projects=rows, currency=settings_for_client()["currency"])
+
+
 @bp.get("/api/projects")
 def list_projects():
     projects = visible_projects().order_by(Project.id.desc()).all()
     settings = settings_for_client()
     return jsonify(
+        can_see_running=can_see_running_projects(g.user),
         projects=[p.to_dict() for p in projects],
         statuses=PROJECT_STATUSES,
         currency=settings["currency"],

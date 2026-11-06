@@ -33,6 +33,7 @@ from decimal import Decimal
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
+from .advances import deduction_to_date, slot_deduction
 from .extensions import db
 from .models import Attendance, Worker, WorkerAttendance, settings_for_client
 from .modules import can_write, check_module
@@ -163,11 +164,14 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     earned = round(wage * days, 2)
     paid = float(sum((p.amount for p in w.payments if p.period_start == slot_start and p.paid_date is not None),
                       start=Decimal("0")))
+    # What is being taken back from this period for any salary advance (kohal, 2026-11-06) - see app/advances.py.
+    deduction = float(slot_deduction(w, slot_start))
     return {
         "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
         "months": None, "days": days, "absent": absent,
         "period_start": slot_start.isoformat(), "period_end": slot_end.isoformat(), "period_label": label,
-        "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2), "last_paid": _last_paid(w),
+        "earned": earned, "paid": paid, "advance_deduction": deduction, "outstanding": round(earned - paid - deduction, 2),
+        "last_paid": _last_paid(w),
     }
 
 
@@ -226,10 +230,13 @@ def _payroll_rows() -> list:
             months = max(0, _months_elapsed(_payroll_start(w), today))
             earned = round(wage * months, 2)
             paid = float(w.paid_amount)
+            # Every advance instalment due up to this month, counted in full like the month's salary (kohal, 2026-11-06).
+            deduction = float(deduction_to_date(w, today))
             rows.append({
                 "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
                 "months": months, "days": None, "period_start": None, "period_end": None, "period_label": None,
-                "earned": earned, "paid": paid, "outstanding": round(earned - paid, 2), "last_paid": _last_paid(w),
+                "earned": earned, "paid": paid, "advance_deduction": deduction, "outstanding": round(earned - paid - deduction, 2),
+                "last_paid": _last_paid(w),
             })
         else:
             for slot_start, slot_end, label in slots:

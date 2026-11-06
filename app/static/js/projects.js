@@ -63,6 +63,13 @@
     let data;
     try { data = await api('/api/projects'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     const cur = data.currency;
+    // "Running today" (kohal, 2026-11-06): the projects somebody's attendance is recorded against today - for the admin, project
+    // managers and the accountant only.
+    let running = null;
+    if (data.can_see_running) {
+      try { running = await api('/api/projects/running-today'); } catch (err) { running = null; }
+    }
+    if (filter.kind === 'running' && !running) filter.kind = 'normal';
 
     const wrap = h('div', {});
     const kindTabs = h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Kind of project' });
@@ -70,16 +77,17 @@
     // Normal projects and adhoc projects are two lists (kohal, 2026-10-30: "adhoc projects should also be under
     // adhoc projects subtab"), the status chips below counting whichever one is showing.
     const ofKind = () => data.projects.filter((p) => !!p.is_adhoc === (filter.kind === 'adhoc'));
+    const isRunning = () => filter.kind === 'running';
     // Adhoc projects are Unbilled or Billed (any older adhoc project left in another status still gets its chip).
     const statusList = () => (filter.kind === 'adhoc'
       ? ['unbilled', 'billed', ...data.statuses.filter((s) => ofKind().some((p) => p.status === s))]
       : data.statuses);
     function renderKindTabs() {
       clear(kindTabs);
-      [['normal', 'Projects'], ['adhoc', 'Adhoc projects']].forEach(([key, label]) => kindTabs.append(h('button', {
+      [['normal', 'Projects'], ['adhoc', 'Adhoc projects'], ...(running ? [['running', 'Running today']] : [])].forEach(([key, label]) => kindTabs.append(h('button', {
         class: 'filter-chip', type: 'button', 'aria-pressed': String((filter.kind || 'normal') === key),
         onclick: () => { filter.kind = key; filter.status = ''; renderKindTabs(); renderChips(); refresh(); },
-      }, label, h('span', { class: 'n' }, data.projects.filter((p) => !!p.is_adhoc === (key === 'adhoc')).length))));
+      }, label, h('span', { class: 'n' }, key === 'running' ? running.projects.length : data.projects.filter((p) => !!p.is_adhoc === (key === 'adhoc')).length))));
     }
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
     const results = h('div', {});
@@ -90,6 +98,8 @@
 
     function renderChips() {
       clear(chips);
+      chips.hidden = isRunning();
+      search.hidden = isRunning();
       const options = [['', 'All', ofKind().length],
         ...statusList().map((s) => [s, STATUS[s][0], ofKind().filter((p) => p.status === s).length])];
       for (const [value, label, n] of options) {
@@ -101,7 +111,7 @@
     }
 
     // Tiled by status, then a chevron - or, when the project has a progress value, a small bar instead.
-    function projectRow(p) {
+    function projectRow(p, extra = null) {
       const side = p.progress != null
         ? h('span', { class: 'p-side' },
             h('span', { class: 'p-progress-pct' }, `${Math.round(p.progress)}%`),
@@ -114,11 +124,32 @@
           h('span', { class: 'row-sub' }, [p.client_name, STATUS[p.status][0]].filter(Boolean).join(' · ')),
           h('span', { class: 'p-foot' }, h('span', { class: 'p-code' }, p.code),
             fmtShort(p.net_amount, cur) ? h('span', {}, fmtShort(p.net_amount, cur)) : null,
-            p.manager_name ? h('span', { class: 'p-manager' }, `PM: ${p.manager_name}`) : h('span', { class: 'p-manager none' }, 'No manager yet'))),
+            p.manager_name ? h('span', { class: 'p-manager' }, `PM: ${p.manager_name}`) : h('span', { class: 'p-manager none' }, 'No manager yet')),
+          extra),
         side));
     }
 
+    // Who is on site today, under the project: "3 on site: Ravi, Sita, Mohan" (a check-in still waiting for approval says so).
+    const onSite = (p) => {
+      const waiting = p.on_site.filter((x) => x.pending).length;
+      const names = p.on_site.map((x) => x.name);
+      const shown = names.length > 4 ? [...names.slice(0, 4), `+${names.length - 4} more`] : names;
+      return h('span', { class: 'row-sub on-site' }, `${p.on_site.length} on site: ${shown.join(', ')}${waiting ? ` \u00b7 ${waiting} awaiting approval` : ''}`);
+    };
+
+    function showRunning() {
+      const day = fmtDate(running.date);
+      count.textContent = `${plural(running.projects.length, 'project', 'projects')} running today, ${day}`;
+      clear(results);
+      if (!running.projects.length) {
+        results.append(h('p', { class: 'empty-state' }, 'No project has attendance today yet. A project shows here once someone checks in to it or is marked present on it.'));
+        return;
+      }
+      results.append(h('ul', { class: 'card-group rows' }, running.projects.map((p) => projectRow(p, onSite(p)))));
+    }
+
     function refresh() {
+      if (isRunning()) { showRunning(); return; }
       const q = filter.q.trim().toLowerCase();
       const items = ofKind().filter((p) => {
         if (filter.status && p.status !== filter.status) return false;
