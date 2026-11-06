@@ -6,21 +6,52 @@
   'use strict';
 
   const { $, h, clear, api, selectField } = window.LD;
-  const { panel, columnChart, barRows, pieChart } = window.LD.charts;
+  const { panel, columnChart, barRows, pieSlices, pieSvg } = window.LD.charts;
   const view = $('#view');
-  let period = 'all';
-  let trend = '12';
+  let period = '30d';                    // the page opens on the last 30 days (kohal, 2026-11-06)
+  let trend = '30d';
   let scrollTo = null;                   // the id of the panel whose filter was just changed, kept in view across the reload
 
   const days = (v) => `${v} day${v === 1 ? '' : 's'}`;
 
-  // Who brought the leads: the smallest few are grouped into one "Others" slice, with their outcomes added up.
-  const broughtPie = (people) => pieChart(people.map((p) => ({ ...p, name: p.name })), {
-    ariaNoun: 'Leads brought by', empty: 'No leads in this period.',
-    others: (rest) => ({ name: `Others (${rest.length})`, total: rest.reduce((n, p) => n + p.total, 0), won: rest.reduce((n, p) => n + p.won, 0),
-      lost: rest.reduce((n, p) => n + p.lost, 0), open: rest.reduce((n, p) => n + p.open, 0) }),
-    legend: (s, pct) => `${s.total} lead${s.total === 1 ? '' : 's'} · ${pct}% · ${s.won} won · ${s.lost} lost · ${s.open} open`,
-  });
+  // Success rate (kohal, 2026-11-06: "success rate of each person who brings lead ... 2 pie charts side by side"): of the leads a
+  // person brought that have been decided, the share won. Open leads count neither way.
+  const successRate = (p) => (p.won + p.lost ? Math.round((p.won * 100) / (p.won + p.lost)) : null);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  // One pie with its caption underneath; `slices` are {name, total, colour}.
+  function pieFigure(title, slices, total, empty) {
+    const pie = h('div', { class: 'pie-wrap' });
+    if (total) pie.innerHTML = pieSvg(slices, total);
+    return h('figure', { class: 'pie-fig', role: 'img', 'aria-label': `${title}: ${slices.map((s) => `${s.name} ${s.total}`).join(', ') || empty}` },
+      total ? pie : h('div', { class: 'pie-wrap pie-empty' }, h('span', {}, empty)),
+      h('figcaption', {}, h('b', {}, title), ` · ${total}`));
+  }
+
+  // Who brought the leads: the smallest few are grouped into one "Others" slice, with their outcomes added up. Two pies side by side -
+  // the share of all leads, and the share of the wins - drawn in the same colour per person, with one legend under both.
+  function broughtBy(people) {
+    const total = people.reduce((n, p) => n + p.total, 0);
+    if (!total) return h('p', { class: 'hint' }, 'No leads in this period.');
+    const sum = (rest, key) => rest.reduce((n, p) => n + p[key], 0);
+    const slices = pieSlices(people, (rest) => ({ name: `Others (${rest.length})`, total: sum(rest, 'total'), won: sum(rest, 'won'), lost: sum(rest, 'lost'), open: sum(rest, 'open') }));
+    const wins = slices.map((s) => ({ ...s, total: s.won })).filter((s) => s.total);
+    const totalWins = wins.reduce((n, s) => n + s.total, 0);
+    return h('div', {},
+      h('div', { class: 'pie-pair' },
+        pieFigure('Leads brought', slices, total, 'No leads'),
+        pieFigure('Leads won', wins, totalWins, 'No wins yet')),
+      h('ul', { class: 'pie-legend' }, slices.map((s) => {
+        const rate = successRate(s);
+        return h('li', {},
+          h('span', { class: 'pie-swatch', style: `background:${s.colour}` }),
+          h('span', { class: 'pie-text' },
+            h('span', { class: 'bar-name' }, s.name),
+            h('span', { class: 'bar-note' }, `${plural(s.total, 'lead')} · ${Math.round((s.total / total) * 100)}% of all leads`),
+            h('span', { class: 'bar-note' }, rate === null ? `Success rate: none decided yet · ${s.open} open`
+              : `Success rate ${rate}% · ${s.won} won · ${s.lost} lost · ${s.open} open`)));
+      })));
+  }
 
   function render(data) {
     const trendSel = selectField(data.trends, data.trend.range, { title: 'Show leads for', placeholder: 'Range' });
@@ -47,7 +78,7 @@
       panel('panel-trend', 'Leads over time', `New leads received - ${data.trend.total} ${data.trend.label.startsWith('Last') ? 'in the ' : ''}${data.trend.label.toLowerCase()}.`, trendSel, columnChart(data.trend)),
       panel('panel-source', 'Leads per source', `Where the ${data.total} lead${data.total === 1 ? '' : 's'} in this period came from.`, periodFor('panel-source'), sources),
       panel('panel-stage', 'Time spent on each stage', 'Average days a lead stayed in a stage before moving on, from the stage changes recorded on each lead.', periodFor('panel-stage'), stages),
-      panel('panel-brought', 'Brought by', 'Share of leads each person took the enquiry for, and how they turned out.', periodFor('panel-brought'), broughtPie(data.brought_by))));
+      panel('panel-brought', 'Brought by', 'Who took the enquiry for each lead, and how often those leads were won (won out of the ones decided).', periodFor('panel-brought'), broughtBy(data.brought_by))));
     if (scrollTo) { document.getElementById(scrollTo)?.scrollIntoView({ block: 'center' }); scrollTo = null; }
   }
 

@@ -33,7 +33,7 @@ def test_every_account_is_listed_with_what_came_in_and_went_out(admin_client):
     db.session.commit()
 
     listing = {a["name"]: a for a in admin_client.get("/api/accounts").get_json()["accounts"]}
-    assert set(listing) == {"VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"}
+    assert set(listing) == {"VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB", "CASH DHANBAD", "YES BANK", "GR BB DHANBAD NEW"}
     assert (listing["GR BB"]["credits"], listing["GR BB"]["debits"], listing["GR BB"]["balance"]) == (5000.0, 1200.0, 3800.0)
     assert listing["CASH"]["debits"] == 700.0 and listing["GR BOB"]["count"] == 0
 

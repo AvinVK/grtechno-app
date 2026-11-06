@@ -1973,3 +1973,11 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .att-cal-key::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--track); }
 .att-cal-key.present::before { background: var(--ok-tint); box-shadow: inset 0 0 0 1px var(--ok); }
 .att-cal-key.absent::before { background: var(--signal-tint); box-shadow: inset 0 0 0 1px var(--signal); }
+/* Lead analysis: two pies side by side (leads brought / leads won) with one legend under both. */
+.pie-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+.pie-fig { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+.pie-fig .pie-wrap { width: 100%; max-width: 150px; height: auto; aspect-ratio: 1; }
+.pie-fig figcaption { font-size: 13px; color: var(--muted); text-align: center; }
+.pie-fig figcaption b { color: var(--ink); }
+.pie-empty { display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px dashed var(--line-strong); color: var(--muted); font-size: 13px; text-align: center; padding: 12px; box-sizing: border-box; }
+.pie-pair + .pie-legend { margin-top: 16px; }

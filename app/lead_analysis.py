@@ -12,7 +12,7 @@ only their own for a salesperson), worked out from the live records each time an
   - Brought by: for each person who took the enquiry (Lead.enquired_by, else whoever entered it), how many leads, and how those
     turned out.
 
-The period (all time, last 12 / 6 / 3 months) cuts the leads by the day they came in, for everything but the over-time chart."""
+The period (all time, last 12 / 6 / 3 months or 30 days) cuts the leads by the day they came in, for everything but the over-time chart."""
 
 import re
 from collections import Counter
@@ -33,7 +33,8 @@ from .validation import api_errors
 bp = Blueprint("lead_analysis", __name__)
 api_errors(bp)
 
-PERIODS = {"all": None, "12": 12, "6": 6, "3": 3}
+# Months back for the longer periods; "30d" is the 30 days up to today (the page opens on it - kohal, 2026-11-06).
+PERIODS = {"all": None, "12": 12, "6": 6, "3": 3, "30d": "30d"}
 # The over-time chart's own ranges: key -> (label, unit). "30d" is the 30 days up to today, "1" is the calendar month so far.
 TRENDS = {"30d": ("Last 30 days", "day"), "1": ("This month", "day"), "3": ("Last 3 months", "month"),
           "6": ("Last 6 months", "month"), "12": ("Last 12 months", "month")}
@@ -108,6 +109,13 @@ def _trend(leads, today, key):
     return {"range": key, "label": label, "unit": unit, "points": points, "total": sum(p["count"] for p in points)}
 
 
+def _with_success(person):
+    """Success rate (kohal, 2026-11-06): of the leads this person brought that have been decided, the share that were won -
+    won / (won + lost), as a whole percent. Leads still open do not count either way; None until one has been decided."""
+    closed = person["won"] + person["lost"]
+    return {**person, "success_rate": round(person["won"] * 100 / closed) if closed else None}
+
+
 @bp.get("/api/lead-analysis")
 def analysis():
     period = request.args.get("period") or "all"
@@ -122,7 +130,8 @@ def analysis():
 
     # Leads over time has a range of its own.
     # Everything else is over the chosen period.
-    since = months_back(today, PERIODS[period] - 1) if PERIODS[period] else None
+    span = PERIODS[period]
+    since = today - timedelta(days=29) if span == "30d" else months_back(today, span - 1) if span else None
     scoped = [l for l in leads if since is None or _local_day(l.created_at) >= since]
 
     sources = Counter((l.source or "").strip() or "Not set" for l in scoped)
@@ -137,11 +146,12 @@ def analysis():
     return jsonify(
         period=period, total=len(scoped), currency=cur,
         periods=[{"value": "all", "label": "All time"}, {"value": "12", "label": "Last 12 months"},
-                 {"value": "6", "label": "Last 6 months"}, {"value": "3", "label": "Last 3 months"}],
+                 {"value": "6", "label": "Last 6 months"}, {"value": "3", "label": "Last 3 months"},
+                 {"value": "30d", "label": "Last 30 days"}],
         trend=_trend(leads, today, trend),
         trends=[{"value": k, "label": v[0]} for k, v in TRENDS.items()],
         sources=[{"source": k, "count": v} for k, v in sorted(sources.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
         stage_times=_stage_times(scoped, utcnow()),
-        brought_by=sorted(people.values(), key=lambda r: (-r["total"], r["name"].lower())),
+        brought_by=sorted((_with_success(p) for p in people.values()), key=lambda r: (-r["total"], r["name"].lower())),
         scope="everyone's leads" if (g.user.is_admin or g.user.sees_all or g.user.role_key == "sales_office") else "your leads",
     )

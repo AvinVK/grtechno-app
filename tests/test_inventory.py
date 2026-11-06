@@ -4,6 +4,7 @@ import io
 from datetime import date
 from decimal import Decimal
 
+from app.constants import PAYMENT_ACCOUNTS
 from app.extensions import db
 from app.models import Material, MaterialMovement, Worker
 
@@ -1018,7 +1019,7 @@ def test_a_credit_purchase_has_no_account_and_the_list_is_served(admin_client):
         "name": "Pipes", "unit": "m", "quantity": 4, "rate": 9, "supplier_id": sid, "payment_mode": "credit", "payment_account": "GR BB"})
     assert res.status_code == 201 and res.get_json()["movement"]["payment_account"] == ""
     mid = res.get_json()["material"]["id"]
-    assert admin_client.get("/api/inventory/materials").get_json()["payment_accounts"][-1] == "GR BOB"
+    assert admin_client.get("/api/inventory/materials").get_json()["payment_accounts"] == PAYMENT_ACCOUNTS
     assert "GR BB" in admin_client.get(f"/api/inventory/materials/{mid}").get_json()["payment_accounts"]
 
 
