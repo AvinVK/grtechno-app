@@ -46,6 +46,7 @@ def create_app(config_object=Config):
     from .cash_purchases import bp as cash_purchases_bp
     from .wages import bp as wages_bp
     from .payroll import bp as payroll_bp
+    from .advances import bp as advances_bp
     from .workplan import bp as workplan_bp
     from .client_portal import bp as client_portal_bp
     from .me import bp as me_bp
@@ -81,6 +82,7 @@ def create_app(config_object=Config):
     app.register_blueprint(cash_purchases_bp)
     app.register_blueprint(wages_bp)
     app.register_blueprint(payroll_bp)
+    app.register_blueprint(advances_bp)
     app.register_blueprint(workplan_bp)
     app.register_blueprint(client_portal_bp)
     app.register_blueprint(me_bp)

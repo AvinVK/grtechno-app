@@ -1815,6 +1815,11 @@ class Worker(db.Model):
         "WorkerPayment", back_populates="worker", cascade="all, delete-orphan",
         order_by="WorkerPayment.position, WorkerPayment.id",
     )
+    # Salary advances given to this person (see SalaryAdvance) - what is taken back from their pay each month.
+    advances = db.relationship(
+        "SalaryAdvance", back_populates="worker", cascade="all, delete-orphan",
+        order_by="SalaryAdvance.given_date, SalaryAdvance.id",
+    )
     # Commission this person has earned, across every project (see ProjectExpense) - not this worker's own
     # "owned" rows the way payments/attendance are (no cascade on delete: a removed worker's past commission
     # stays on the project's own record, just with worker_id cleared - see ProjectExpense.worker_id).
@@ -1938,6 +1943,30 @@ class WorkerAttendance(db.Model):
             "project_code": self.project.code if self.project else None,
             "note": self.note, "hours": self.hours,
         }
+
+
+class SalaryAdvance(db.Model):
+    """Money given to an employee ahead of pay (kohal, 2026-11-06: "advance salary ... full or part ... the deduction can be selected in
+    parts across future salaries"): `amount` paid out of `payment_account` on `given_date`, taken back in `months` equal parts - the
+    first from the month starting `first_month` - off whatever the employee is due (see app/advances.py for the split and how Payroll
+    uses it). The advance itself is not a WorkerPayment: it is money out the day it is given, while a WorkerPayment is a payment of
+    what has been earned. Never edited or deleted once given."""
+
+    __tablename__ = "salary_advances"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    months = db.Column(db.Integer, nullable=False)
+    first_month = db.Column(db.Date, nullable=False)                    # the first of the month the first deduction comes off
+    given_date = db.Column(db.Date, nullable=False)
+    payment_account = db.Column(db.String(40), nullable=False, default="", server_default="")
+    note = db.Column(db.String(300), nullable=False, default="", server_default="")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    worker = db.relationship("Worker", back_populates="advances")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
 
 
 class WorkerPayment(db.Model):

@@ -17,6 +17,7 @@
   const { $, h, clear, api, toast, plural, confirm, money, field, showFieldErrors, selectField, dateField, closeOnBack } = window.LD;
   const view = $('#view');
   const canWrite = view.dataset.canWrite === '1';
+  const isAdmin = view.dataset.isAdmin === '1';          // only the admin gives or sees salary advances
 
   const EMPLOYMENT_LABEL = { regular: 'Salary', daily_wages: 'Daily wages', contractor: 'Contractor' };
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -77,8 +78,9 @@
     // for them), so it still goes straight to this month's days-so-far, for attendance context only.
     const byId = new Map();
     for (const e of rows) {
-      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0 });
+      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0, advance_deduction: 0 });
       byId.get(e.id).outstanding += e.outstanding;
+      byId.get(e.id).advance_deduction += e.advance_deduction || 0;
     }
     const people = [...byId.values()];
 
@@ -90,7 +92,8 @@
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, e.name),
           h('span', { class: 'row-sub' },
-            [EMPLOYMENT_LABEL[e.employment_type], money(e.wage_amount, cur), basis].filter(Boolean).join(' · '))),
+            [EMPLOYMENT_LABEL[e.employment_type], money(e.wage_amount, cur), basis,
+              e.advance_deduction ? `advance \u2212${money(e.advance_deduction, cur)}` : null].filter(Boolean).join(' · '))),
         h('span', { class: 'row-value' }, money(e.outstanding, cur))));
     }
 
@@ -362,12 +365,12 @@
     const byId = new Map();
     for (const e of data.employees || []) {
       if ((e.employment_type === 'regular') !== wantRegular) continue;
-      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0 });
+      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0, advance_deduction: 0 });
       byId.get(e.id).outstanding += e.outstanding;
+      byId.get(e.id).advance_deduction += e.advance_deduction || 0;
     }
     const people = [...byId.values()];
     const state = { q: '' };
-    const count = h('span', { class: 'att-week-sum' });
     const listBox = h('div', {});
     const search = h('input', {
       type: 'search', placeholder: 'Search by name', 'aria-label': 'Search by name',
@@ -379,13 +382,13 @@
         h('div', { class: 'att-day-top' },
           h('span', { class: 'att-day-date' }, p.name),
           h('span', { class: 'att-day-hours' }, `Due ${money(p.outstanding, cur)}`)),
-        h('span', { class: 'att-day-sub' }, lastPaidText(p.last_paid, cur))));
+        h('span', { class: 'att-day-sub' }, lastPaidText(p.last_paid, cur)),
+        p.advance_deduction ? h('span', { class: 'att-day-sub' }, `After ${money(p.advance_deduction, cur)} advance taken back`) : null));
     }
 
     function render() {
       const q = state.q.trim().toLowerCase();
       const filtered = people.filter((p) => !q || p.name.toLowerCase().includes(q));
-      count.textContent = plural(filtered.length, 'person', 'people');
       clear(listBox).append(filtered.length
         ? h('ul', { class: 'att-week-card' }, filtered.map(personRow))
         : h('p', { class: 'empty-state' }, people.length ? 'Nobody matches this search.' : 'Nobody here yet - add a wage from Employee management.'));
@@ -395,9 +398,105 @@
     clear(view).append(h('div', { class: 'project-detail' },
       tabs('payments'),
       paymentsTabs(wantRegular ? 'salary' : 'daily'),
-      h('div', { class: 'list-head' }, h('h2', {}, wantRegular ? 'Salaried' : 'Daily wages'), count),
       search,
       listBox));
+  }
+
+  /* ---------- advance salary (admin only; kohal, 2026-11-06) ----------
+     Give an employee money ahead of pay and pick how many months to take it back over - app/advances.py. */
+
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthName = (key) => { const [y, m] = key.split('-').map(Number); return `${MONTH_NAMES[m - 1]} ${y}`; };
+  const monthShort = (key) => { const [y, m] = key.split('-').map(Number); return `${MONTHS[m - 1]} ${y}`; };
+  const addMonthsKey = (key, n) => { const [y, m] = key.split('-').map(Number); const i = y * 12 + (m - 1) + n; return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`; };
+
+  function openAdvanceSheet(worker, info, onDone) {
+    const cur = info.currency;
+    const isDayRate = worker.employment_type !== 'regular';
+    const amount = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'e.g. 20000' });
+    const months = selectField(Array.from({ length: info.max_months }, (_, i) => ({ value: i + 1, label: i === 0 ? '1 month' : `${i + 1} months` })), 3, { title: 'Deduct over', placeholder: 'How many months' });
+    const first = selectField(Array.from({ length: 12 }, (_, i) => { const k = addMonthsKey(info.current_month, i); return { value: k, label: monthName(k) }; }), info.next_month, { title: 'First deduction from', placeholder: 'Pick a month' });
+    const account = selectField(info.accounts.map((a) => ({ value: a, label: a })), '', { title: 'Paid from', placeholder: 'Choose the account' });
+    const note = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'Optional' });
+    const preview = h('p', { class: 'hint adv-preview' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Give advance');
+
+    // "20,000 over 4 months = 5,000 a month, January 2027 to April 2027" - shown as the amount and months are picked.
+    const drawPreview = () => {
+      const total = toNumber(amount.value);
+      const n = Number(months.value) || 0;
+      if (!(total > 0) || !n) { preview.textContent = ''; return; }
+      const base = Math.round((total / n) * 100) / 100;
+      const last = Math.round((total - base * (n - 1)) * 100) / 100;
+      const span = n === 1 ? monthName(first.value) : `${monthName(first.value)} to ${monthName(addMonthsKey(first.value, n - 1))}`;
+      preview.textContent = `${money(base, cur)} a month for ${plural(n, 'month', 'months')} (${span})${last !== base ? `, the last one ${money(last, cur)}` : ''}.`
+        + `${isDayRate ? " Each month's share is split across that month's two pay periods." : ''}`;
+    };
+    amount.addEventListener('input', drawPreview);
+    months.addEventListener('change', drawPreview);
+    first.addEventListener('change', drawPreview);
+    drawPreview();
+
+    const form = h('form', { novalidate: true },
+      h('p', { class: 'hint' }, `${worker.name} \u00b7 ${EMPLOYMENT_LABEL[worker.employment_type]}${worker.wage_amount != null ? ` ${money(worker.wage_amount, cur)}` : ''}`),
+      field('amount', 'Advance amount', amount),
+      field('months', 'Take it back over', months),
+      field('first_month', 'First deduction from', first),
+      preview,
+      field('payment_account', 'Paid from', account),
+      field('note', 'Note', note),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    const finish = closeOnBack(() => overlay.remove());
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
+    cancelBtn.onclick = () => finish();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      try {
+        await api('/api/payroll/advances', { method: 'POST', body: {
+          worker_id: worker.id, amount: amount.value, months: Number(months.value), first_month: first.value,
+          payment_account: account.value, note: note.value } });
+        finish();
+        toast('Advance given');
+        onDone();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Give advance salary' },
+      h('h2', {}, 'Give advance salary'), form));
+    document.body.append(overlay);
+  }
+
+  function advanceRow(a, cur) {
+    return h('li', { class: 'att-day' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, `${money(a.amount, cur)} over ${plural(a.months, 'month', 'months')}`),
+        h('span', { class: 'att-day-hours' }, a.remaining > 0 ? `${money(a.remaining, cur)} left` : 'Cleared')),
+      h('span', { class: 'att-day-sub' },
+        h('span', { class: 'att-day-sub-line' }, `${money(a.monthly, cur)} a month from ${monthShort(a.first_month)} \u00b7 ${money(a.deducted, cur)} taken back so far`),
+        h('span', { class: 'att-day-sub-line' }, [`Given ${shortDate(parseDay(a.given_date))} from ${a.payment_account}`, a.note].filter(Boolean).join(' \u00b7 '))));
+  }
+
+  async function advanceSection(box, worker, id) {
+    async function draw() {
+      let info;
+      try { info = await api(`/api/payroll/advances?worker_id=${id}`); } catch (err) { clear(box).append(h('p', { class: 'hint' }, err.message)); return; }
+      const giveBtn = h('button', { class: 'btn small', type: 'button' }, '+ Give advance');
+      giveBtn.onclick = () => openAdvanceSheet(worker, info, async () => { await draw(); });
+      clear(box).append(h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' }, h('h3', {}, 'Advance salary'), giveBtn),
+        info.advances.length
+          ? h('ul', { class: 'att-week-card' }, info.advances.map((a) => advanceRow(a, info.currency)))
+          : h('p', { class: 'hint' }, 'No advance given. An advance is taken back from their pay, a part each month.')));
+    }
+    await draw();
   }
 
   /* ---------- one person: add/edit/delete their payment log ---------- */
@@ -415,12 +514,14 @@
     const sub = [EMPLOYMENT_LABEL[data.worker.employment_type],
       data.worker.wage_amount != null ? money(data.worker.wage_amount, cur) : null].filter(Boolean).join(' · ');
     const myRows = (overview.employees || []).filter((e) => e.id === id);
+    const advanceNow = myRows.reduce((sum, r) => sum + (r.advance_deduction || 0), 0);
     const dueLine = myRows.length
-      ? h('p', { class: 'wk-legend' }, `Currently due: ${money(myRows.reduce((sum, r) => sum + r.outstanding, 0), cur)}`)
+      ? h('p', { class: 'wk-legend' }, `Currently due: ${money(myRows.reduce((sum, r) => sum + r.outstanding, 0), cur)}${advanceNow ? ` (after ${money(advanceNow, cur)} advance taken back)` : ''}`)
       : null;
     const lastPaid = myRows.length ? myRows[0].last_paid : null;
 
     const headBox = h('div', {});
+    const advanceBox = h('div', {});
     const sectionBox = h('div', {});
     async function reload() {
       const fresh = await api(`/api/workforce/${id}`);
@@ -432,7 +533,8 @@
     ].filter(Boolean));
     clear(sectionBox).append(paymentsSection(data.worker, id, cur, data.payment_modes, reload));
 
-    clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, sectionBox));
+    if (isAdmin && myRows.length) advanceSection(advanceBox, data.worker, id);
+    clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, advanceBox, sectionBox));
   }
 
   /* ---------- one daily-wage/contractor person's pay-period cycles, current and previous ---------- */
@@ -449,7 +551,8 @@
       return h('li', {}, h('a', { class: 'p-row people-row', href: `#overview/person/${id}/${p.period_start}/${p.period_end}` },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, p.period_label, isCurrent ? h('span', { class: 'chip chip-today' }, 'Current') : null),
-          h('span', { class: 'row-sub' }, `${plural(p.days || 0, 'day', 'days')} paid, Sundays included`)),
+          h('span', { class: 'row-sub' }, [`${plural(p.days || 0, 'day', 'days')} paid, Sundays included`,
+            p.advance_deduction ? `advance \u2212${money(p.advance_deduction, cur)}` : null].filter(Boolean).join(' · '))),
         h('span', { class: 'row-value' }, money(p.outstanding, cur))));
     }
 
@@ -513,7 +616,7 @@
       h('div', { class: 'att-head' },
         h('h2', {}, data.worker.name),
         h('span', { class: 'att-head-date' }, row.period_label || 'This month')),
-      h('p', { class: 'wk-legend' }, `Total: ${money(row.earned, cur)}`),
+      h('p', { class: 'wk-legend' }, `Total: ${money(row.earned, cur)}${row.advance_deduction ? ` · advance taken back ${money(row.advance_deduction, cur)}` : ''}`),
       isDayRate ? null : h('p', { class: 'hint' }, "Flat monthly salary, not paid per day - hours below are for attendance reference only."),
       h('ul', { class: 'att-week-card' }, data.days.map((d) => dayRow(d, cur, isDayRate)))));
   }

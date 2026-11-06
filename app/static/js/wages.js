@@ -23,7 +23,8 @@
       h('dl', { class: 'pay-overview-grid' },
         h('dt', {}, 'Total earned'), h('dd', {}, money(c.earned, cur)),
         h('dt', {}, 'Days present'), h('dd', {}, c.days),
-        h('dt', {}, 'Days absent'), h('dd', {}, c.absent)));
+        h('dt', {}, 'Days absent'), h('dd', {}, c.absent),
+        c.advance_deduction ? [h('dt', {}, 'Advance taken back'), h('dd', {}, `\u2212${money(c.advance_deduction, cur)}`)] : null));
   }
 
   function dayRow(d, cur) {
@@ -61,6 +62,7 @@
         h('div', { class: 'att-head' }, h('h2', {}, c.period_label), h('span', { class: 'att-head-date' }, 'Current cycle')),
         h('p', { class: 'wk-legend' },
           `${money(c.earned, cur)} so far · ${plural(c.days, 'day', 'days')} present · ${plural(c.absent, 'day', 'days')} absent`),
+        c.advance_deduction ? h('p', { class: 'hint' }, `${money(c.advance_deduction, cur)} of an advance salary is taken back from this cycle.`) : null,
         data.days.length
           ? h('ul', { class: 'att-week-card' }, data.days.map((d) => dayRow(d, cur)))
           : h('p', { class: 'empty-state' }, 'No attendance data yet this cycle.'))
