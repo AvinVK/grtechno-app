@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, dateField, pickList, field, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField, pickList, field, closeOnBack, selectField, searchField } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
@@ -421,6 +421,115 @@
       barBox));
   }
 
+  /* ---------- the admin adds a day for an employee ----------
+     (kohal, 2026-11-05: "give admin power to add attendance for employees because ... we are migrating and still using the app
+     parallely") - for anyone on the employee list, with or without a login of their own; stored the same way the WhatsApp
+     import stores a day (see app/attendance.py add_manual), so everything that reads attendance picks it up. */
+
+  const addBtn = $('#add-attendance');                      // in the top row; only there for the admin
+
+  // Tapping a day marks it with these hours unless they are changed above the calendar (kohal, 2026-11-06: "attendance marked yes
+  // for ideal 7 to 7 hours").
+  const USUAL_IN = '07:00';
+  const USUAL_OUT = '19:00';
+
+  async function openAddSheet(day, onDone) {
+    let options;
+    try { options = await api('/api/attendance/manual/options'); } catch (err) { toast(err.message, true); return; }
+    const toIso = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const todayIso = options.today;
+    const start = parseDay(day || todayIso);
+    let viewYear = start.getFullYear();
+    let viewMonth = start.getMonth();
+    let marked = new Map();                                 // iso day -> {status, source} for the chosen employee's month
+    let changed = null;                                     // the last day marked, so the register behind can jump to it
+
+    const employee = searchField(options.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Search by name' });
+    const mode = selectField([{ value: 'present', label: 'Present' }, { value: 'absent', label: 'Absent' }], 'present', { title: 'Tapping a day marks it', placeholder: 'Present' });
+    const checkIn = h('input', { type: 'time', value: USUAL_IN });
+    const checkOut = h('input', { type: 'time', value: USUAL_OUT });
+    const hours = h('div', { class: 'field-row' }, field('check_in', 'From', checkIn), field('check_out', 'To', checkOut));
+    mode.addEventListener('change', () => { hours.hidden = mode.value === 'absent'; });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const monthLabel = h('span', { class: 'cal-month-label' });
+    const prevBtn = h('button', { type: 'button', class: 'cal-nav', 'aria-label': 'Previous month' }, '\u2039');
+    const nextBtn = h('button', { type: 'button', class: 'cal-nav', 'aria-label': 'Next month' }, '\u203a');
+    const grid = h('div', { class: 'cal-grid att-cal' });
+    const legend = h('p', { class: 'att-cal-legend' },
+      h('span', { class: 'att-cal-key present' }, 'Present'), h('span', { class: 'att-cal-key absent' }, 'Absent'), h('span', { class: 'att-cal-key' }, 'Not marked'));
+    const calendar = h('div', { class: 'att-cal-wrap' },
+      h('div', { class: 'cal-head' }, prevBtn, monthLabel, nextBtn), grid, legend);
+    calendar.hidden = true;
+    const doneBtn = h('button', { class: 'btn primary', type: 'button' }, 'Done');
+    const finish = closeOnBack(() => { overlay.remove(); if (changed) onDone(changed); });
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
+    doneBtn.onclick = () => finish();
+
+    const draw = () => {
+      clear(grid);
+      monthLabel.textContent = new Date(viewYear, viewMonth, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach((d) => grid.append(h('span', { class: 'cal-weekday' }, d)));
+      for (let i = 0; i < new Date(viewYear, viewMonth, 1).getDay(); i += 1) grid.append(h('span', { class: 'cal-cell empty' }));
+      for (let d = 1; d <= new Date(viewYear, viewMonth + 1, 0).getDate(); d += 1) {
+        const iso = toIso(viewYear, viewMonth, d);
+        const m = marked.get(iso);
+        const cell = h('button', {
+          type: 'button', disabled: iso > todayIso,
+          class: `cal-cell${iso === todayIso ? ' today' : ''}${m ? ` mark-${m.status}` : ''}`,
+          'aria-label': `${d} ${monthLabel.textContent}${m ? `, ${m.status}` : ', not marked'}`,
+        }, String(d));
+        cell.onclick = () => tap(iso, m);
+        grid.append(cell);
+      }
+      nextBtn.disabled = toIso(viewYear, viewMonth + 1, 1) > todayIso;
+    };
+
+    // The employee's recorded days for the month on show - prefilled before anything is tapped.
+    const load = async () => {
+      if (!employee.value) { calendar.hidden = true; return; }
+      calendar.hidden = false;
+      marked = new Map();
+      draw();
+      try {
+        const data = await api(`/api/attendance/manual/calendar?worker_id=${employee.value}&month=${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`);
+        marked = new Map(data.days.map((x) => [x.date, x]));
+        draw();
+      } catch (err) { errEl.textContent = err.message; }
+    };
+
+    async function tap(iso, existing) {
+      errEl.textContent = '';
+      if (existing) {                                       // a recorded day is never overwritten
+        toast(`Already marked ${existing.status}${existing.source === 'app' ? ' (checked in on the app)' : ''}`);
+        return;
+      }
+      const body = { worker_id: employee.value, work_date: iso, status: mode.value };
+      if (mode.value === 'present') Object.assign(body, { check_in: checkIn.value, check_out: checkOut.value });
+      try {
+        const { record } = await api('/api/attendance/manual', { method: 'POST', body });
+        marked.set(iso, { date: iso, status: record.status, source: 'recorded' });
+        changed = iso;
+        draw();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+      }
+    }
+
+    prevBtn.onclick = () => { viewMonth -= 1; if (viewMonth < 0) { viewMonth = 11; viewYear -= 1; } load(); };
+    nextBtn.onclick = () => { viewMonth += 1; if (viewMonth > 11) { viewMonth = 0; viewYear += 1; } load(); };
+    employee.addEventListener('change', load);
+
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Add attendance' },
+      h('h2', {}, 'Add attendance'),
+      field('worker_id', 'Employee', employee),
+      field('status', 'Tapping a day marks it', mode),
+      hours,
+      calendar,
+      errEl,
+      h('div', { class: 'confirm-actions' }, doneBtn)));
+    document.body.append(overlay);
+  }
+
   /* ---------- team register (admin, accounts) ---------- */
 
   async function showTeam() {
@@ -434,19 +543,36 @@
     const list = h('ul', { class: 'att-week-card att-team-list' });
     const count = h('p', { class: 'result-count', 'aria-live': 'polite' });
 
+    // A day recorded for an employee (the WhatsApp import, or added by the admin): no delete here, and an absent day is marked as such.
+    const recordedRow = (a) => (a.status === 'absent'
+      ? dayRow({ title: a.worker_name, right: h('span', { class: 'chip chip-absent' }, 'Absent'), sub: a.note || null })
+      : dayRow({
+        title: a.worker_name,
+        right: h('span', { class: 'att-day-hours' }, a.hours != null ? `${a.hours} h` : ''),
+        sub: [a.project_title, a.check_in_at ? timesText(a) : 'Present', a.note].filter(Boolean).flatMap((x, i) => (i ? [' · ', x] : [x])),
+        hours: a.hours,
+      }));
+
     async function refresh() {
       clear(list).append(h('li', { class: 'loading' }, 'Loading…'));
       try {
         const data = await api(`/api/attendance/team?date=${encodeURIComponent(dateInput.value)}`);
-        count.textContent = plural(data.records.length, 'person', 'people') + ' checked in';
+        const recorded = data.recorded || [];
+        const here = data.records.length + recorded.filter((a) => a.status !== 'absent').length;
+        count.textContent = plural(here, 'person', 'people') + ' checked in';
         clear(list);
-        if (!data.records.length) { list.append(h('li', { class: 'empty-state' }, 'Nobody checked in on this day.')); return; }
+        if (!data.records.length && !recorded.length) { list.append(h('li', { class: 'empty-state' }, 'Nobody checked in on this day.')); return; }
         data.records.forEach((a) => list.append(recordRow(a.user_name, a, refresh)));
+        recorded.forEach((a) => list.append(recordedRow(a)));
       } catch (err) {
         clear(list).append(h('li', { class: 'empty-state' }, err.message));
       }
     }
     dateInput.onchange = refresh;
+    if (addBtn) {
+      addBtn.hidden = false;
+      addBtn.onclick = () => openAddSheet(dateInput.value, (day) => { dateInput.value = day; refresh(); });
+    }
 
     clear(view).append(h('div', {},
       tabs('today'),
@@ -534,6 +660,7 @@
   }
 
   function route() {
+    if (addBtn) addBtn.hidden = true;                       // shown again by the team register, the one screen it belongs to
     if (canSeeWorkforce && window.location.hash === '#register') return showRegister();
     if (teamOnly || window.location.hash === '#team') return showTeam();
     return showMine();

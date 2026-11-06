@@ -87,5 +87,5 @@
           h('span', { class: 'bar-note' }, legend(s, Math.round((s.total / total) * 100))))))));
   }
 
-  window.LD.charts = { panel, columnChart, barRows, pieChart };
+  window.LD.charts = { panel, columnChart, barRows, pieChart, pieSlices, pieSvg };
 })();

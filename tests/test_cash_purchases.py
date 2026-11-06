@@ -256,7 +256,7 @@ def test_pending_response_includes_workers_and_payment_modes_for_the_give_sheet(
     add_worker("Ramesh Welder")
     data = admin_client.get("/api/cash-purchases/pending").get_json()
     assert any(w["name"] == "Ramesh Welder" for w in data["workers"])
-    assert data["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
+    assert data["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB", "CASH DHANBAD", "YES BANK", "GR BB DHANBAD NEW"]
 
 
 def test_mes_entries_show_every_status_newest_first(app, admin_client):
@@ -383,7 +383,7 @@ def test_accounts_includes_workers_and_payment_modes_for_the_give_sheet(admin_cl
     add_worker("Ramesh Welder")
     data = admin_client.get("/api/cash-purchases/accounts").get_json()
     assert any(w["name"] == "Ramesh Welder" for w in data["workers"])
-    assert data["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
+    assert data["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB", "CASH DHANBAD", "YES BANK", "GR BB DHANBAD NEW"]
 
 
 def test_worker_history_needs_admin_or_accountant(app, client, admin_client):

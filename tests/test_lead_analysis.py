@@ -138,3 +138,24 @@ def test_the_page_needs_the_leads_service_and_has_a_tile_on_me(admin_client, cli
     assert accounts_client.get("/api/lead-analysis").status_code == 403
     assert 'href="/lead-analysis"' in admin_client.get("/me").data.decode()
     assert 'href="/lead-analysis"' not in accounts_client.get("/me").data.decode()
+
+
+def test_the_last_thirty_days_is_a_period_for_the_other_charts(app, admin_client):
+    _seed(app)
+    data = admin_client.get("/api/lead-analysis?period=30d").get_json()
+    assert data["total"] == 2                                                   # the 10-day-old and the 3-day-old; not the 40- or 430-day-old
+    assert {s["source"]: s["count"] for s in data["sources"]} == {"Website": 2}
+    assert [p["value"] for p in data["periods"]] == ["all", "12", "6", "3", "30d"]
+
+
+def test_each_persons_success_rate_is_won_out_of_the_leads_decided(app, admin_client):
+    _seed(app)
+    with app.app_context():
+        ravi = Worker.query.filter_by(name="Ravi Sales").one()
+        _lead(enquired_by=ravi, source="Website", stage="Won", created_at=utcnow() - timedelta(days=5))
+        _lead(enquired_by=ravi, source="Website", stage="Won", created_at=utcnow() - timedelta(days=4))
+        db.session.commit()
+    people = {p["name"]: p for p in admin_client.get("/api/lead-analysis").get_json()["brought_by"]}
+    # Ravi: 2 won, 1 lost (the 40-day-old), 2 still open -> 2 of the 3 decided
+    assert (people["Ravi Sales"]["won"], people["Ravi Sales"]["lost"], people["Ravi Sales"]["success_rate"]) == (2, 1, 67)
+    assert people["Not set"]["success_rate"] is None                              # nothing decided yet, so no rate rather than 0%

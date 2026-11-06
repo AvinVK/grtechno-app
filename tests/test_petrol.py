@@ -224,7 +224,7 @@ def test_only_the_admin_pays_it_and_must_say_how(app, admin_client, accounts_cli
     who.post(f"/api/petrol/{eid}/request-cash")
 
     waiting = accounts_client.get("/api/petrol/requests").get_json()
-    assert [p["id"] for p in waiting["pending"]] == [eid] and waiting["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB"]
+    assert [p["id"] for p in waiting["pending"]] == [eid] and waiting["payment_modes"] == ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB", "CASH DHANBAD", "YES BANK", "GR BB DHANBAD NEW"]
     assert waiting["can_decide"] is False
     assert manager_client.get("/api/petrol/requests").status_code == 403
     assert manager_client.post(f"/api/petrol/requests/{eid}/approve", json={"payment_mode": "CASH"}).status_code == 403

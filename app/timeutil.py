@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from flask import current_app
@@ -24,3 +24,8 @@ def months_back(today: date, n: int) -> date:
         m += 12
         y -= 1
     return date(y, m, 1)
+
+
+def from_local(day: date, at: time) -> datetime:
+    """A local calendar day and clock time as a naive-UTC datetime, the way the database stores them (the reverse of to_local)."""
+    return datetime.combine(day, at).replace(tzinfo=_tz()).astimezone(timezone.utc).replace(tzinfo=None)
