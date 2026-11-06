@@ -249,10 +249,10 @@ def test_a_users_state_only_shows_their_own_history(client, manager_client):
 
 # ---------- deleting a record ----------
 
-def test_only_sees_all_roles_can_delete_a_record(client, manager_client, admin_client):
+def test_only_the_admin_a_project_manager_and_sees_all_roles_can_delete_a_record(client, manager_client, admin_client):
+    # a project manager joined the admin here on 2026-11-06 ("same as admin access to attendance")
     record_id = check_in(client).get_json()["today"]["id"]
     assert client.delete(f"/api/attendance/{record_id}").status_code == 403
-    assert manager_client.delete(f"/api/attendance/{record_id}").status_code == 403
     assert admin_client.delete(f"/api/attendance/{record_id}").status_code == 204
     assert client.get("/api/attendance/state").get_json()["today"] is None
 

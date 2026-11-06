@@ -75,10 +75,21 @@ def page():
     # register itself still lives on the Attendance sheet page (app/workers.py) for its own direct URL and
     # a person's full day-by-day record, but its top list is folded into this page too, see attendance.js.
     can_see_workforce = has_module(g.user, "workforce")
+    can_add = can_manage_attendance(g.user)
     # The admin doesn't check in or out - their Attendance is the team register for a chosen day.
     if g.user.is_admin:
-        return render_template("attendance.html", page_title="Team attendance", team_only=True, can_see_workforce=can_see_workforce)
-    return render_template("attendance.html", page_title="Your attendance", team_only=False, can_see_workforce=can_see_workforce)
+        return render_template("attendance.html", page_title="Team attendance", team_only=True, can_see_workforce=can_see_workforce, can_add=can_add)
+    return render_template("attendance.html", page_title="Your attendance", team_only=False, can_see_workforce=can_see_workforce, can_add=can_add)
+
+
+def can_manage_attendance(user) -> bool:
+    """The admin and project managers (kohal, 2026-11-06: "pm should have attendance access as well. same as admin access to
+    attendance"): see everyone's attendance, add a day for an employee, and remove a wrong record."""
+    return bool(user.is_admin or user.role_key in PROJECT_MANAGER_ROLE_KEYS)
+
+
+def _team_access(user) -> bool:
+    return bool(user.sees_all or can_manage_attendance(user))
 
 
 def _no_admin_check_ins():
@@ -106,7 +117,7 @@ def state():
             for p in _open_projects()
         ],
         history=[a.to_dict() for a in history],
-        can_see_team=g.user.sees_all,
+        can_see_team=_team_access(g.user),
         location_required=current_app.config["REQUIRE_ATTENDANCE_LOCATION"],
         # Petrol payment (kohal, 2026-10-27): on means an odometer photo + reading at check-in and check-out.
         petrol_required=petrol_on(g.user),
@@ -236,8 +247,8 @@ def dismiss_rejection(record_id):
 def delete_record(record_id):
     """Admin and other sees_all roles can remove a wrong or test record. Nobody else - a person deleting
     their own attendance would defeat the point of keeping one."""
-    if not g.user.sees_all:
-        abort(403, "Only the admin or the accountant can delete an attendance record.")
+    if not _team_access(g.user):
+        abort(403, "Only the admin, a project manager or the accountant can delete an attendance record.")
     row = db.session.get(Attendance, record_id)
     if row is None:
         abort(404, "Not found")
@@ -296,11 +307,11 @@ def reject_record(record_id):
 def team():
     """The full register, for admin and other sees_all roles. Filterable by date and, for a longer look,
     a date range; newest first."""
-    if not g.user.sees_all:
-        abort(403, "Only the admin or the accountant can see everyone's attendance.")
+    if not _team_access(g.user):
+        abort(403, "Only the admin, a project manager or the accountant can see everyone's attendance.")
 
     day = request.args.get("date")
-    query = visible_attendance()
+    query = Attendance.query                                  # everyone's: _team_access has already let this person in
     if day:
         try:
             query = query.filter(Attendance.work_date == date.fromisoformat(day))
@@ -343,8 +354,8 @@ def _clock(raw, name, errors):
 @bp.get("/api/attendance/manual/options")
 def manual_options():
     """The employees and projects the admin can pick from when adding a day."""
-    if not g.user.is_admin:
-        abort(403, "Only the admin can add attendance for an employee.")
+    if not can_manage_attendance(g.user):
+        abort(403, "Only the admin or a project manager can add attendance for an employee.")
     return jsonify(
         workers=[{"id": w.id, "name": w.name, "category": w.category} for w in Worker.query.order_by(Worker.name).all()],
         projects=[{"id": p.id, "title": p.title, "client_name": p.client.name} for p in _open_projects()],
@@ -356,8 +367,8 @@ def manual_calendar():
     """One employee's month, for the calendar on the add-attendance sheet (kohal, 2026-11-06: "have the calender prefilled with
     existing marked yes and no attendance"): every day already recorded, as present or absent. Days the person checked in for
     themselves in the app (approved) count as present; a recorded day wins when both exist, as everywhere else."""
-    if not g.user.is_admin:
-        abort(403, "Only the admin can add attendance for an employee.")
+    if not can_manage_attendance(g.user):
+        abort(403, "Only the admin or a project manager can add attendance for an employee.")
     worker = db.session.get(Worker, request.args.get("worker_id", type=int) or 0)
     if worker is None:
         abort(404, "Choose an employee from the list")
@@ -379,8 +390,8 @@ def manual_calendar():
 
 @bp.post("/api/attendance/manual")
 def add_manual():
-    if not g.user.is_admin:
-        abort(403, "Only the admin can add attendance for an employee.")
+    if not can_manage_attendance(g.user):
+        abort(403, "Only the admin or a project manager can add attendance for an employee.")
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")

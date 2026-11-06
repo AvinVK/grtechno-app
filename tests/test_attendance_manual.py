@@ -154,3 +154,28 @@ def test_the_calendar_counts_an_approved_check_in_on_the_app_as_present(app, adm
 def test_only_the_admin_can_read_the_calendar(app, client):
     wid = _worker(app)
     assert client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month=2026-11").status_code in (403, 404)
+
+
+def test_a_project_manager_has_the_same_attendance_access_as_the_admin(app, manager_client, accounts_client):
+    """kohal, 2026-11-06: "pm should have attendance access as well. same as admin access to attendance"."""
+    from app.models import Attendance
+    from app.timeutil import from_local
+    from datetime import time
+    from tests.conftest import make_user
+    day = today_local() - timedelta(days=1)
+    with app.app_context():
+        u = make_user("Field Person")
+        rec = Attendance(user_code=u.code, work_date=day, check_in_at=from_local(day, time(9, 0)), status="approved")
+        db.session.add(rec)
+        db.session.commit()
+        rec_id = rec.id
+    wid = _worker(app)
+    assert manager_client.get("/api/attendance/state").get_json()["can_see_team"] is True
+    assert 'id="add-attendance"' in manager_client.get("/attendance").data.decode()
+    assert manager_client.get("/api/attendance/manual/options").status_code == 200
+    r = manager_client.post("/api/attendance/manual", json={"worker_id": wid, "work_date": day.isoformat(), "check_in": "07:00", "check_out": "19:00"})
+    assert r.status_code == 201
+    assert manager_client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month={day.year}-{day.month:02d}").status_code == 200
+    team = manager_client.get(f"/api/attendance/team?date={day.isoformat()}").get_json()          # everyone's, not only their own
+    assert [a["user_name"] for a in team["records"]] == ["Field Person"] and [a["worker_name"] for a in team["recorded"]] == ["Ravi Welder"]
+    assert manager_client.delete(f"/api/attendance/{rec_id}").status_code == 204
