@@ -29,7 +29,7 @@
     const finish = closeOnBack(() => overlay.remove());
     overlay.onclick = (e) => { if (e.target === overlay) finish(); };
     cancelBtn.onclick = () => finish();
-    const form = h('div', {},
+    const form = h('div', { class: 'amount-sheet-form' },
       field('from_account', 'From', fromSel), field('to_account', 'To', toSel),
       field('amount', 'Amount', amountInput), field('entry_date', 'Date', dateSel),
       field('note', 'Note', noteInput), errEl);
@@ -50,6 +50,40 @@
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, 'Transfer money'), form, h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
     document.body.append(overlay);
+  }
+
+  /* Opening balance (kohal, 2026-11-08): what the account held on a chosen day. The app counts every credit and debit from that
+     day on, starting at this amount; anything dated earlier is left out of the view (nothing is deleted). */
+  function openOpeningSheet(name, opening, onDone) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const amountInput = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: opening ? opening.amount : '' });
+    const dateSel = dateField(opening ? opening.date : '', { placeholder: 'Pick the day', clearable: false });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    const form = h('div', { class: 'amount-sheet-form' },
+      h('p', { class: 'hint sheet-lead' }, 'The balance in this account on that day. Credits and debits are counted from that day on, starting at this amount.'),
+      field('amount', 'Opening balance', amountInput), field('as_of', 'As on (date)', dateSel), errEl);
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api('/api/accounts/opening', { method: 'PUT', body: { name, amount: amountInput.value, as_of: dateSel.value } });
+        finish();
+        toast('Opening balance saved');
+        onDone();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, `${name} opening balance`), form, h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+    amountInput.focus();
   }
 
   const transferButton = (names, from, cur, onDone) => h('button', {
@@ -76,7 +110,8 @@
       h('a', { class: 'p-row acct-row', href: `#${encodeURIComponent(a.name)}` },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, a.name),
-          h('span', { class: 'row-sub' }, `In ${money(a.credits, data.currency)} · Out ${money(a.debits, data.currency)} · ${plural(a.count, 'entry', 'entries')}`)),
+          h('span', { class: 'row-sub' }, [a.opening ? `Opening ${money(a.opening.amount, data.currency)} on ${fmtDate(a.opening.date)}` : null,
+            `In ${money(a.credits, data.currency)}`, `Out ${money(a.debits, data.currency)}`, plural(a.count, 'entry', 'entries')].filter(Boolean).join(' · '))),
         h('span', { class: 'row-value' }, money(a.balance, data.currency)))))));
   }
 
@@ -115,14 +150,26 @@
         class: 'filter-chip', type: 'button', 'aria-pressed': String(filter === key), onclick: () => { filter = key; render(); },
       }, label)));
       const rows = data.entries.filter((e) => filter === 'all' || e.kind === filter);
-      clear(list).append(rows.length ? h('ul', { class: 'card-group' }, rows.map(entryRow))
-        : h('p', { class: 'hint' }, 'Nothing here yet.'));
+      // The opening balance closes the list: the first thing the account held, which everything above builds on.
+      const items = rows.map(entryRow);
+      if (filter === 'all' && data.opening) {
+        items.push(h('li', { class: 'p-row' },
+          h('span', { class: 'p-main' },
+            h('span', { class: 'row-title' }, 'Opening balance'),
+            h('span', { class: 'row-sub' }, `As on ${fmtDate(data.opening.date)}`)),
+          h('span', { class: 'row-value' }, money(data.opening.amount, cur))));
+      }
+      clear(list).append(items.length ? h('ul', { class: 'card-group' }, items) : h('p', { class: 'hint' }, 'Nothing here yet.'));
     }
 
     clear(view).append(h('div', { class: 'project-detail' },
       h('div', { class: 'p-head' }, h('h2', {}, data.name)),
       h('p', { class: 'hint' }, `In ${money(data.credits, cur)} · Out ${money(data.debits, cur)} · Balance ${money(data.balance, cur)}`),
-      h('div', { class: 'acct-actions' }, transferButton(data.account_names, name, cur, () => showAccount(name))),
+      data.opening ? h('p', { class: 'hint' }, `Counted from ${fmtDate(data.opening.date)}, starting at ${money(data.opening.amount, cur)}`) : null,
+      h('div', { class: 'acct-actions' },
+        transferButton(data.account_names, name, cur, () => showAccount(name)),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openOpeningSheet(name, data.opening, () => showAccount(name)) },
+          data.opening ? 'Change opening balance' : 'Set opening balance')),
       chips, list));
     render();
   }

@@ -13,6 +13,8 @@
   const view = $('#view');
   const teamOnly = view.dataset.teamOnly === '1';
   const canSeeWorkforce = view.dataset.canSeeWorkforce === '1';
+  const canLeave = view.dataset.canLeave === '1';            // a salaried employee: asks for leave here
+  const leaveAdmin = view.dataset.leaveAdmin === '1';        // the admin: approves it here
 
   const today = () => new Date().toISOString().slice(0, 10);
 
@@ -291,10 +293,11 @@
      who can also see the register; "Today's attendance" covers both the Mine and Team screens, which stay
      reachable from each other the same way they always were (the "Team" app-bar link, untouched). */
   function tabs(active) {
-    if (!canSeeWorkforce) return null;
+    if (!canSeeWorkforce && !canLeave && !leaveAdmin) return null;
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Attendance section' },
       h('a', { class: 'filter-chip', href: window.location.pathname, 'aria-current': active === 'today' ? 'page' : null }, "Today's attendance"),
-      h('a', { class: 'filter-chip', href: '#register', 'aria-current': active === 'register' ? 'page' : null }, 'Attendance register'));
+      canSeeWorkforce ? h('a', { class: 'filter-chip', href: '#register', 'aria-current': active === 'register' ? 'page' : null }, 'Attendance register') : null,
+      canLeave || leaveAdmin ? h('a', { class: 'filter-chip', href: '#leave', 'aria-current': active === 'leave' ? 'page' : null }, 'Leave requests') : null);
   }
 
   /* ---------- my attendance ---------- */
@@ -659,8 +662,210 @@
         : 'No attendance data yet.')));
   }
 
+  /* ---------- Leave requests (kohal, 2026-11-08: "for leave request, in attendance tab have leave request subtab") - a salaried
+     employee sees their sick / casual balance and asks for leave; the admin approves or rejects it, and sees everyone's tally.
+     The rules (monthly build-up, April-March year, sick leave carries forward) live in app/leaves.py. ---------- */
+
+  const LEAVE_KINDS = { sick: 'Sick leave', casual: 'Casual leave' };
+  const days = (n) => plural(n, 'day', 'days');
+  const fmtBal = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+  // The working days between two dates, Sundays left out - the same count the server makes.
+  function workingDays(fromIso, toIso) {
+    if (!fromIso) return 0;
+    let d = parseDay(fromIso);
+    const end = parseDay(toIso || fromIso);
+    let n = 0;
+    while (d <= end) { if (d.getDay() !== 0) n += 1; d = addDays(d, 1); }
+    return n;
+  }
+
+  function leaveDates(r) {
+    const from = shortDate(parseDay(r.start_date));
+    return r.start_date === r.end_date ? from : `${from} – ${shortDate(parseDay(r.end_date))}`;
+  }
+
+  function leaveStatusChip(status) {
+    if (status === 'pending') return h('span', { class: 'chip chip-today' }, 'Waiting');
+    if (status === 'approved') return h('span', { class: 'chip chip-active' }, 'Approved');
+    if (status === 'cancelled') return h('span', { class: 'chip chip-off' }, 'Withdrawn');
+    return h('span', { class: 'chip chip-off' }, 'Rejected');
+  }
+
+  function leaveOutcome(r) {
+    if (r.status !== 'approved') return r.status === 'rejected' && r.decided_by_name ? `Rejected by ${r.decided_by_name}` : null;
+    const parts = [`Approved by ${r.decided_by_name || 'the admin'}`];
+    if (r.extra_paid_days) parts.push(`${days(r.extra_paid_days)} beyond the balance, paid`);
+    if (r.unpaid_days) parts.push(`${days(r.unpaid_days)} unpaid`);
+    return parts.join(' · ');
+  }
+
+  function leaveRow(r, { who = false, actions = null, extra = null } = {}) {
+    return h('li', { class: 'att-day' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, who ? r.worker_name : LEAVE_KINDS[r.kind]), leaveStatusChip(r.status)),
+      h('span', { class: 'att-day-sub' },
+        h('span', { class: 'att-day-sub-line' }, [who ? LEAVE_KINDS[r.kind] : null, leaveDates(r), days(r.days)].filter(Boolean).join(' · ')),
+        r.reason ? h('span', { class: 'att-day-sub-line' }, r.reason) : null,
+        leaveOutcome(r) ? h('span', { class: 'att-day-sub-line' }, leaveOutcome(r)) : null,
+        r.decision_note ? h('span', { class: 'att-day-sub-line' }, `Note: ${r.decision_note}`) : null,
+        extra ? h('span', { class: 'att-day-sub-line' }, extra) : null),
+      actions);
+  }
+
+  function openLeaveSheet(balance, onDone) {
+    const kindSel = selectField([{ value: 'casual', label: 'Casual leave' }, { value: 'sick', label: 'Sick leave' }], 'casual', { title: 'Type of leave' });
+    const firstDay = new Date().getDay() === 0 ? addDays(new Date(), 1) : new Date();   // a Sunday is never a leave day
+    const fromInput = dateField(dayKey(firstDay), { clearable: false });
+    const toInput = dateField(dayKey(firstDay), { clearable: false });
+    const reasonInput = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'Optional' });
+    const summary = h('p', { class: 'hint', 'aria-live': 'polite' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Send request');
+    const finish = closeOnBack(() => overlay.remove());
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
+    const showSummary = () => {
+      if (toInput.value < fromInput.value) toInput.value = fromInput.value;
+      const n = workingDays(fromInput.value, toInput.value);
+      const left = balance[kindSel.value].balance;
+      const over = n - Math.max(0, Math.floor(left));
+      summary.textContent = `${days(n)} (Sundays not counted). You have ${fmtBal(left)} ${kindSel.value} left.`
+        + (over > 0 ? ` ${days(over)} more than that - the admin decides whether ${over === 1 ? 'it is' : 'they are'} paid.` : '');
+    };
+    [kindSel, fromInput, toInput].forEach((el) => el.addEventListener('change', showSummary));
+    showSummary();
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api('/api/leaves', { method: 'POST', body: { kind: kindSel.value, start_date: fromInput.value, end_date: toInput.value, reason: reasonInput.value } });
+        finish();
+        toast('Leave request sent to the admin');
+        onDone();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, 'Ask for leave'),
+      field('kind', 'Type of leave', kindSel),
+      field('start_date', 'From', fromInput),
+      field('end_date', 'To', toInput),
+      summary,
+      field('reason', 'Reason', reasonInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+  }
+
+  function balanceTiles(b) {
+    const tile = (kind) => h('div', { class: 'stat' },
+      h('span', { class: 'stat-label' }, `${LEAVE_KINDS[kind]} left`),
+      h('span', { class: 'stat-value' }, fmtBal(b[kind].balance)),
+      h('span', { class: 'stat-sub' }, [`${fmtBal(b[kind].earned)} built up`, b[kind].carried ? `${fmtBal(b[kind].carried)} carried in` : null,
+        `${fmtBal(b[kind].used)} taken`].filter(Boolean).join(' · ')));
+    return h('div', { class: 'client-stats' }, tile('sick'), tile('casual'));
+  }
+
+  async function showMyLeave() {
+    let data;
+    try { data = await api('/api/leaves/me'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const applyBtn = h('button', { class: 'btn small primary', type: 'button', onclick: () => openLeaveSheet(data.balance, showLeave) }, 'Ask for leave');
+    async function withdraw(r) {
+      if (!await confirm('Withdraw this leave request?', { ok: 'Withdraw', title: 'Withdraw request' })) return;
+      try { await api(`/api/leaves/${r.id}/cancel`, { method: 'POST' }); toast('Request withdrawn'); showLeave(); } catch (err) { toast(err.message, true); }
+    }
+    clear(view).append(h('div', {},
+      tabs('leave'),
+      balanceTiles(data.balance),
+      h('p', { class: 'hint' }, `Leave year ${data.balance.year} (April to March). Each month adds 1 casual and 0.5 sick leave; `
+        + 'unused sick leave carries into next year, unused casual leave lapses on 31 March.'),
+      h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' }, h('h3', {}, 'Your requests'), applyBtn),
+        data.requests.length
+          ? h('ul', { class: 'att-week-card' }, data.requests.map((r) => leaveRow(r, {
+            actions: r.status === 'pending' ? h('div', { class: 'bill-links' }, h('button', { type: 'button', class: 'link-btn', onclick: () => withdraw(r) }, 'Withdraw')) : null,
+          })))
+          : h('p', { class: 'hint' }, 'No leave asked for yet.'))));
+  }
+
+  // Approving more days than the balance holds: the admin says whether the extra days are paid or unpaid.
+  function askExtra(r, extra) {
+    return new Promise((resolve) => {
+      const finish = closeOnBack(() => { overlay.remove(); });
+      const done = (v) => { finish(); resolve(v); };
+      const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) done(null); } });
+      overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+        h('h2', {}, 'More than the balance'),
+        h('p', { class: 'hint sheet-lead' }, `${r.worker_name} asked for ${days(r.days)} of ${r.kind} leave and has ${fmtBal(r.available)} left. `
+          + `Should the other ${days(extra)} be paid or unpaid? Unpaid days are cut from the salary like an absence.`),
+        h('div', { class: 'confirm-actions' },
+          h('button', { class: 'btn', type: 'button', onclick: () => done('unpaid') }, 'Unpaid'),
+          h('button', { class: 'btn primary', type: 'button', onclick: () => done('paid') }, 'Paid'))));
+      document.body.append(overlay);
+    });
+  }
+
+  async function showLeaveAdmin() {
+    let data;
+    try { data = await api('/api/leaves/admin'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    async function approve(r) {
+      const extra = r.days - Math.max(0, Math.min(r.days, Math.floor(r.available)));
+      const body = {};
+      if (extra > 0) {
+        body.extra = await askExtra(r, extra);
+        if (!body.extra) return;
+      }
+      try { await api(`/api/leaves/${r.id}/approve`, { method: 'POST', body }); toast('Leave approved'); showLeave(); } catch (err) { toast(err.message, true); }
+    }
+    async function reject(r) {
+      if (!await confirm(`Reject ${r.worker_name}'s ${r.kind} leave (${leaveDates(r)})?`, { ok: 'Reject', danger: true, title: 'Reject leave' })) return;
+      try { await api(`/api/leaves/${r.id}/reject`, { method: 'POST' }); toast('Leave rejected'); showLeave(); } catch (err) { toast(err.message, true); }
+    }
+    const pendingRow = (r) => leaveRow({ ...r, decision_note: '' }, {
+      who: true,
+      extra: `Has ${fmtBal(r.available)} ${r.kind} leave left`,
+      actions: h('div', { class: 'bill-links' },
+        h('button', { type: 'button', class: 'link-btn', onclick: () => approve(r) }, 'Approve'),
+        h('button', { type: 'button', class: 'link-btn', onclick: () => reject(r) }, 'Reject')),
+    });
+    const personRow = (p) => {
+      const m = p.this_month;
+      const month = m.sick || m.casual ? [m.sick ? `${days(m.sick)} sick` : null, m.casual ? `${days(m.casual)} casual` : null].filter(Boolean).join(', ') : 'none';
+      return h('li', { class: 'att-day' },
+        h('div', { class: 'att-day-top' },
+          h('span', { class: 'att-day-date' }, p.name),
+          h('span', { class: 'att-day-hours' }, `${fmtBal(p.balance.sick.balance)} sick · ${fmtBal(p.balance.casual.balance)} casual`)),
+        h('span', { class: 'att-day-sub' }, `Leave in ${data.month}: ${month}${m.unpaid ? ` (${days(m.unpaid)} unpaid)` : ''}`));
+    };
+    clear(view).append(h('div', {},
+      tabs('leave'),
+      h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' }, h('h3', {}, 'Waiting for you'), h('span', { class: 'att-week-sum' }, String(data.pending.length))),
+        data.pending.length ? h('ul', { class: 'att-week-card' }, data.pending.map(pendingRow)) : h('p', { class: 'hint' }, 'No leave requests waiting.')),
+      h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' }, h('h3', {}, `Leave left · ${data.year}`)),
+        data.people.length ? h('ul', { class: 'att-week-card' }, data.people.map(personRow)) : h('p', { class: 'hint' }, 'No salaried employees yet.')),
+      data.recent.length ? h('section', { class: 'att-week' },
+        h('div', { class: 'att-week-head' }, h('h3', {}, 'Recently decided')),
+        h('ul', { class: 'att-week-card' }, data.recent.map((r) => leaveRow(r, { who: true })))) : null));
+  }
+
+  function showLeave() {
+    LD.resetAppbarBack?.();
+    setTeamLink(false);
+    stopElapsedTimer();
+    document.body.classList.remove('has-att-bar');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    return leaveAdmin ? showLeaveAdmin() : showMyLeave();
+  }
+
   function route() {
     if (addBtn) addBtn.hidden = true;                       // shown again by the team register, the one screen it belongs to
+    if ((canLeave || leaveAdmin) && window.location.hash === '#leave') return showLeave();
     if (canSeeWorkforce && window.location.hash === '#register') return showRegister();
     if (teamOnly || window.location.hash === '#team') return showTeam();
     return showMine();

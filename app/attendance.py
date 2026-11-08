@@ -20,6 +20,7 @@ from .auth import (
 )
 from .extensions import db
 from .models import AbsenceRequest, Attendance, Client, PetrolEntry, Project, User, Worker, WorkerAttendance, utcnow
+from .leaves import can_apply as can_apply_leave
 from .modules import check_module, has_module
 from .petrol import odometer_file, parse_reading, petrol_on, purge_old_photos, save_odometer
 from .timeutil import from_local, today_local, to_local
@@ -76,10 +77,12 @@ def page():
     # a person's full day-by-day record, but its top list is folded into this page too, see attendance.js.
     can_see_workforce = has_module(g.user, "workforce")
     can_add = can_manage_attendance(g.user)
+    # The Leave requests subtab (kohal, 2026-11-08): a salaried employee asks for leave there, the admin approves it.
+    leave = {"can_leave": can_apply_leave(g.user), "leave_admin": g.user.is_admin}
     # The admin doesn't check in or out - their Attendance is the team register for a chosen day.
     if g.user.is_admin:
-        return render_template("attendance.html", page_title="Team attendance", team_only=True, can_see_workforce=can_see_workforce, can_add=can_add)
-    return render_template("attendance.html", page_title="Your attendance", team_only=False, can_see_workforce=can_see_workforce, can_add=can_add)
+        return render_template("attendance.html", page_title="Team attendance", team_only=True, can_see_workforce=can_see_workforce, can_add=can_add, **leave)
+    return render_template("attendance.html", page_title="Your attendance", team_only=False, can_see_workforce=can_see_workforce, can_add=can_add, **leave)
 
 
 def can_manage_attendance(user) -> bool:

@@ -21,7 +21,7 @@ from .models import Attendance, Lead, MaterialMovement, Project, ProjectExpense,
 from .projects import _expenses, _material_costs, _wage_expenses
 from .reference_data import PROJECT_STATUSES
 from .constants import ADHOC_STATUSES
-from .payroll import DAY_RATE_TYPES, _day_by_day, _day_rate_slot_row, _months_elapsed, _payroll_start
+from .payroll import DAY_RATE_TYPES, _day_by_day, _day_rate_slot_row, _salaried_earned, salaried_month
 from .workers import EMPLOYMENT_TYPES, _period
 from .timeutil import to_local, today_local
 from .validation import api_errors
@@ -199,7 +199,8 @@ def _month_end(year, month):
 def payroll_report(year, month):
     """Daily-wage (and contractor, who are on a day rate too) and salaried employees for one month, worked out with
     the same rules the Payroll screen uses - a day rate for every day present plus an unworked Sunday, two half-month
-    pay periods; a flat monthly salary, unconditional - so the file always agrees with what the app shows."""
+    pay periods; a monthly salary cut for absences, plus house rent / petrol (app/payroll.py's salaried_month) - so the file
+    always agrees with what the app shows."""
     cur = settings_for_client()["currency"]
     label = _month_label(year, month)
     first, last = date(year, month, 1), _month_end(year, month)
@@ -244,10 +245,11 @@ def payroll_report(year, month):
     sal_rows = []
     for w in salaried:
         wage = float(w.wage_amount)
-        due = wage if _payroll_start(w) <= last else 0.0
+        month_pay = salaried_month(w, year, month, data_until_end)
+        due = float(month_pay["net"] + month_pay["allowance"]) if month_pay else 0.0
         paid_in = float(sum((p.amount for p in w.payments if p.paid_date and first <= p.paid_date <= last), Decimal("0")))
         paid_to_date = float(sum((p.amount for p in w.payments if p.paid_date and p.paid_date <= last), Decimal("0")))
-        earned_to_date = wage * max(0, _months_elapsed(_payroll_start(w), last))
+        earned_to_date = float(_salaried_earned(w, last, data_until_end))
         sal_rows.append([w.name, role(w), wage, due, paid_in, paid_to_date, round(earned_to_date - paid_to_date, 2)])
     sal_total = ["Total", None, round(sum(r[2] for r in sal_rows), 2), round(sum(r[3] for r in sal_rows), 2), round(sum(r[4] for r in sal_rows), 2),
                  round(sum(r[5] for r in sal_rows), 2), round(sum(r[6] for r in sal_rows), 2)]

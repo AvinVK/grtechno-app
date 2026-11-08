@@ -1187,7 +1187,7 @@
           h('span', { class: 'row-sub' },
             [`${e.percent}% of ${money(e.basis_amount, cur)}`, fmtDate(e.entry_date), e.note || null].filter(Boolean).join(' · ')),
           h('span', { class: 'bill-links' },
-            h('button', { type: 'button', class: 'link-btn', onclick: () => openExpenseSheet(P.id, e, workers, reload) }, 'Edit'),
+            h('button', { type: 'button', class: 'link-btn', onclick: () => openExpenseSheet(P.id, e, workers, reload, P.net_amount, cur) }, 'Edit'),
             h('button', { type: 'button', class: 'link-btn', onclick: () => deleteExpense(P.id, e.id, reload) }, 'Delete'))),
         h('span', { class: 'row-value' }, money(e.amount, cur)));
     }
@@ -1196,10 +1196,10 @@
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Commission'),
         workers.length
-          ? h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload) }, '+ Add commission')
+          ? h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, P.net_amount, cur) }, '+ Add commission')
           : null),
       !workers.length
-        ? h('p', { class: 'hint' }, 'Nobody is in the Project manager Chandrapur role yet - add them from Users & roles first.')
+        ? h('p', { class: 'hint' }, 'No salaried employee or Project manager Chandrapur yet - add one from Employee management first.')
         : null,
       rows.length
         ? h('ul', { class: 'card-group' }, rows.map(expenseRow))
@@ -1207,7 +1207,7 @@
       rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_expense, cur)}`) : null);
   }
 
-  function openExpenseSheet(projectId, expense, workers, reload) {
+  function openExpenseSheet(projectId, expense, workers, reload, basis, cur) {
     const isNew = !expense;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const workerSel = selectField(
@@ -1218,6 +1218,18 @@
     });
     const dateInput = dateField(expense ? expense.entry_date : todayIsoLocal(), { placeholder: 'Date' });
     const noteInput = h('input', { type: 'text', maxlength: 2000, autocomplete: 'off', value: expense ? (expense.note || '') : '' });
+
+    // The rupee amount under the percentage (kohal, 2026-11-08: "when putting commission %, below it should show the amount as well") -
+    // the same sum the server does on save: the project's negotiated amount x the percent.
+    const amountHint = h('p', { class: 'hint', 'aria-live': 'polite' });
+    const showAmount = () => {
+      const pct = parseFloat(percentInput.value);
+      if (basis == null) amountHint.textContent = "Set the project's negotiated amount first, on its Payment tab.";
+      else if (!(pct > 0)) amountHint.textContent = `Negotiated amount: ${money(basis, cur)}`;
+      else amountHint.textContent = `${pct}% of ${money(basis, cur)} = ${money(Math.round(basis * pct) / 100, cur)}`;
+    };
+    percentInput.addEventListener('input', showAmount);
+    showAmount();
 
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -1247,6 +1259,7 @@
       h('h2', {}, isNew ? 'Add commission' : 'Edit commission'),
       field('worker_id', 'Given to', workerSel),
       field('percent', 'Commission %', percentInput),
+      amountHint,
       field('entry_date', 'Date', dateInput),
       field('note', 'Note', noteInput),
       errEl,

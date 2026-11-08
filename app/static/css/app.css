@@ -1913,7 +1913,8 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .acct-row { text-decoration: none; color: inherit; }
 .acct-credit { color: #1b7a3d; }
 .acct-debit { color: #a3281c; }
-.acct-actions { display: flex; justify-content: flex-end; margin: 0 0 12px; }
+.sheet-lead { margin: 0; }
+.acct-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .daily-food summary { list-style: none; cursor: pointer; }
 .daily-food summary::-webkit-details-marker { display: none; }
 .daily-food-days { list-style: none; margin: 0; padding: 0 0 0 16px; border-top: 1px solid var(--line); }
@@ -1981,3 +1982,27 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .pie-fig figcaption b { color: var(--ink); }
 .pie-empty { display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 2px dashed var(--line-strong); color: var(--muted); font-size: 13px; text-align: center; padding: 12px; box-sizing: border-box; }
 .pie-pair + .pie-legend { margin-top: 16px; }
+
+/* Payroll > Payment sheet (kohal, 2026-11-08): the month's salary sheet as a wide table that scrolls sideways, name pinned. */
+.ps-bar { display: flex; gap: 8px; align-items: stretch; margin: 12px 0; }
+.ps-bar .field-picker { flex: 1; min-width: 0; }
+.ps-bar .btn { white-space: nowrap; display: inline-flex; align-items: center; }
+.ps-filter { margin: 0 0 12px; }
+.ps-filter .field-picker { width: 100%; }
+.ps-title { font: 600 18px/1.2 var(--font-display); margin: 4px 0 8px; }
+.ps-scroll { overflow-x: auto; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--panel); margin: 0 0 12px; }
+.pay-sheet { border-collapse: separate; border-spacing: 0; font-size: 13px; min-width: 100%; }
+.pay-sheet th, .pay-sheet td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 7px 8px; white-space: nowrap; }
+.pay-sheet thead th { font-weight: 600; font-size: 12px; line-height: 1.2; text-align: center; white-space: normal; min-width: 64px; vertical-align: middle; background: var(--panel); }
+.pay-sheet td { text-align: right; font-family: var(--font-num); }
+.pay-sheet .ps-name { position: sticky; left: 0; z-index: 1; background: var(--panel); text-align: left; font-weight: 600; min-width: 120px; max-width: 150px; white-space: normal; box-shadow: 1px 0 0 var(--line-strong); }
+.pay-sheet thead .ps-name { z-index: 2; }
+.pay-sheet .ps-strong { font-weight: 700; }
+.ps-flag { display: block; font-weight: 500; font-size: 11px; color: var(--signal); }
+.pay-sheet tfoot th, .pay-sheet tfoot td { font-weight: 700; border-bottom: 0; }
+.pay-sheet tr > :last-child { border-right: 0; }
+
+/* Leave requests (kohal, 2026-11-08): the small line under a leave balance tile. */
+.stat-sub { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.stage-filter + .client-stats, .stage-filter + .att-week { margin-top: 16px; }
+.client-stats + .hint { margin-top: 10px; }

@@ -133,8 +133,8 @@ def test_the_admin_has_reports_under_manage_on_the_me_tab(admin_client, client):
 
 def _seed_payroll(app):
     """October 2026 (a month wholly in the past, after payroll's own Oct 1 start): Deepak on a 500 day rate, present Mon 5th
-    to Thu 8th, with an 800 advance paid for the first half; Anita on a 30,000 salary, paid 10,000 in October and 5,000 in
-    September; and a contractor with no attendance."""
+    to Thu 8th, with an 800 advance paid for the first half; Anita on a 30,000 salary, present every working day but Tue 13th
+    and Wed 14th, paid 10,000 in October and 5,000 in September; and a contractor with no attendance."""
     with app.app_context():
         deepak = Worker(name="Deepak Daily", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"))
         anita = Worker(name="Anita Salaried", category="staff", employment_type="regular", wage_amount=Decimal("30000"))
@@ -145,6 +145,9 @@ def _seed_payroll(app):
         for day in (5, 6, 7, 8):
             db.session.add(WorkerAttendance(worker=deepak, work_date=date(2026, 10, day), check_in_lat=21.1, check_in_lng=79.0))
         db.session.add(WorkerAttendance(worker=pusher, work_date=date(2026, 10, 31), check_in_lat=21.1, check_in_lng=79.0))
+        for day in range(1, 32):
+            if date(2026, 10, day).weekday() != 6 and day not in (13, 14):
+                db.session.add(WorkerAttendance(worker=anita, work_date=date(2026, 10, day), check_in_lat=21.1, check_in_lng=79.0))
         db.session.add(WorkerPayment(worker=deepak, label="Advance", amount=Decimal("800"), paid_date=date(2026, 10, 10),
                                      period_start=date(2026, 10, 1), mode="Cash"))
         db.session.add(WorkerPayment(worker=anita, label="October salary part", amount=Decimal("10000"), paid_date=date(2026, 10, 20), mode="GR BB"))
@@ -176,15 +179,16 @@ def test_the_payroll_report_follows_the_payroll_screens_rules(app, admin_client)
     assert deepak[33:37] == (4, 4, 23, 0)                                                        # present, Sundays credited, absent, hours
 
     salaried = [c.value for c in wb["Salaried"][2]]
-    assert salaried[0] == "Anita Salaried" and salaried[3] == 30000 and salaried[4] == 10000     # paid in October
-    assert salaried[5] == 15000 and salaried[6] == 15000                                         # to date incl. September; owed at month end
+    # salary cut for her 2 absences (kohal, 2026-11-08): 30,000 / 31 = 968 a day x 29 days = 28,072
+    assert salaried[0] == "Anita Salaried" and salaried[3] == 28072 and salaried[4] == 10000     # paid in October
+    assert salaried[5] == 15000 and salaried[6] == 13072                                         # to date incl. September; owed at month end
 
     payments = [[c.value for c in r] for r in wb["Payments"].iter_rows(min_row=2)]
     assert [(p[1], p[2], p[5]) for p in payments] == [("Deepak Daily", "Daily wages", 800), ("Anita Salaried", "Salaried", 10000)]
 
     summary = {r[0].value: r[1].value for r in wb["Summary"].iter_rows() if r[0].value}
     assert summary["Month"] == "October 2026" and summary["Total paid out"] == 10800
-    assert summary["Salary for October 2026 (₹)"] == 30000 and summary["Owed at the end of October 2026 (₹)"] == 15000
+    assert summary["Salary for October 2026 (₹)"] == 28072 and summary["Owed at the end of October 2026 (₹)"] == 13072
 
 
 # ---------- the Projects report (kohal, 2026-11-05) ----------

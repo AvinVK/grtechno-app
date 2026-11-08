@@ -1330,14 +1330,32 @@ def test_deleting_a_commission_entry(app, client, admin_client):
     assert res.get_json()["total_expense"] == 0
 
 
-def test_commission_workers_lists_only_the_chandrapur_role(app, client, admin_client):
+def test_commission_workers_lists_the_chandrapur_role_and_every_salaried_employee(app, client, admin_client):
+    """kohal, 2026-11-08: "why is only pravin coming? i want to have any salaried employee to be selectable here"."""
     pid = project_with_amount(client, admin_client, 200000)
     with app.app_context():
         wid = commission_worker()
         db.session.add(Worker(name="Wendy Welder", category="manpower", role_key="welder"))
+        db.session.add(Worker(name="Daily Dev", category="manpower", employment_type="daily_wages"))
+        salaried = Worker(name="Sunny Salaried", category="manpower", employment_type="regular", wage_amount=Decimal("30000"))
+        db.session.add(salaried)
         db.session.commit()
+        sid = salaried.id
     data = admin_client.get(f"/api/projects/{pid}").get_json()
-    assert [w["id"] for w in data["commission_workers"]] == [wid]
+    assert sorted(w["id"] for w in data["commission_workers"]) == sorted([wid, sid])
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": sid, "percent": "2.5"})
+    assert res.status_code == 201 and res.get_json()["expenses"][0]["amount"] == 5000.0
+
+
+def test_commission_cannot_go_to_a_daily_wage_or_other_worker(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        w = Worker(name="Daily Dev", category="manpower", employment_type="daily_wages")
+        db.session.add(w)
+        db.session.commit()
+        wid = w.id
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "percent": "5"})
+    assert res.status_code == 422 and "worker_id" in res.get_json()["fields"]
 
 
 # ---------- Daily-wage expense (kohal, 2026-10-20) ----------

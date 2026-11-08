@@ -22,6 +22,7 @@
   const EMPLOYMENT_LABEL = { regular: 'Salary', daily_wages: 'Daily wages', contractor: 'Contractor' };
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   const parseDay = (iso) => { const [y, m, d] = iso.split('-'); return new Date(+y, m - 1, +d); };
   const shortDate = (d) => `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
   const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
@@ -45,10 +46,24 @@
     return out;
   }
 
+  // The months a salary payment can be for (kohal, 2026-11-08 - the payment sheet's "Paid" column reads this), newest first.
+  // A salary is usually paid after its month is over, so a new payment starts on last month.
+  function recentMonths(count = 6) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = new Date();
+    const out = [];
+    for (let i = 0; i < count; i += 1) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      out.push({ value: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`, label: `${FULL_MONTHS[d.getMonth()]} ${d.getFullYear()}` });
+    }
+    return out;
+  }
+
   function tabs(active) {
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Payroll section' },
       h('a', { class: 'filter-chip', href: '#overview', 'aria-current': active === 'overview' ? 'page' : null }, 'Overview'),
-      h('a', { class: 'filter-chip', href: '#payments', 'aria-current': active === 'payments' ? 'page' : null }, 'Wages & payments'));
+      h('a', { class: 'filter-chip', href: '#payments', 'aria-current': active === 'payments' ? 'page' : null }, 'Wages & payments'),
+      h('a', { class: 'filter-chip', href: '#sheet', 'aria-current': active === 'sheet' ? 'page' : null }, 'Payment sheet'));
   }
 
   /* ---------- Overview: computed running sum, read-only ---------- */
@@ -124,9 +139,11 @@
   };
 
   // The same "1-15 Oct 2026" label recentPeriods renders, from a period_start ISO date alone - so a
-  // payment tagged with one shows it in the payments list, not just in the picker that set it.
-  function periodLabelFor(iso) {
+  // payment tagged with one shows it in the payments list, not just in the picker that set it. A salary payment is tagged
+  // with the 1st of the month it is for, and reads "October 2026".
+  function periodLabelFor(iso, salaried = false) {
     const d = parseDay(iso);
+    if (salaried) return `${FULL_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
     const d1 = d.getDate();
     const d2 = d1 === 1 ? 15 : new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
     return `${d1}–${d2} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
@@ -165,7 +182,7 @@
           ? h('span', { class: 'step-circle paid', 'aria-hidden': 'true' }, '✓')
           : h('span', { class: 'step-circle', 'aria-hidden': 'true' }, String(i + 1));
         const title = (s.label || '').trim() || paymentLabelFor(i);
-        const periodLabel = s.period_start ? periodLabelFor(s.period_start) : null;
+        const periodLabel = s.period_start ? periodLabelFor(s.period_start, worker.employment_type === 'regular') : null;
         const subParts = (isPaid ? [`Paid ${shortDate(parseDay(s.paid_date))}`, s.mode || null] : ['Not paid yet']).concat(periodLabel ? [periodLabel] : []).filter(Boolean);
         let sub = subParts.join(' · ');
         if (s.comments) sub += ' · note';
@@ -188,9 +205,10 @@
 
     function openStepSheet(index) {
       const isNew = index === steps.length;
-      const periodChoices = recentPeriods();
+      const salaried = worker.employment_type === 'regular';
+      const periodChoices = salaried ? recentMonths() : recentPeriods();
       const current = isNew
-        ? { label: '', amount: '', mode: '', paid_date: null, comments: '', period_start: worker.employment_type === 'regular' ? '' : periodChoices[0].value }
+        ? { label: '', amount: '', mode: '', paid_date: null, comments: '', period_start: periodChoices[salaried ? 1 : 0].value }
         : steps[index];
       const trigger = document.activeElement;
       const overlay = h('div', { class: 'overlay' });
@@ -222,10 +240,11 @@
       // 2026-10-20: "Daily wages should have two slots in month... And regular employees monthly salary"),
       // so a salaried employee's sheet skips it entirely; this is the only thing that lets Overview's
       // per-slot "paid" figure mean anything (app/payroll.py matches a payment back to its slot by this).
-      const periodSel = worker.employment_type === 'regular' ? null : selectField(
-        [{ value: '', label: 'No specific period' }, ...periodChoices], current.period_start || '',
-        { title: 'Pay period', placeholder: 'Pay period' });
-      const periodField = periodSel ? field('period_start', 'Pay period', periodSel) : null;
+      // A salary payment says which month it is for instead (kohal, 2026-11-08), for the payment sheet's "Paid" column.
+      const periodSel = selectField(
+        [{ value: '', label: salaried ? 'No specific month' : 'No specific period' }, ...periodChoices], current.period_start || '',
+        { title: salaried ? 'Salary for' : 'Pay period', placeholder: salaried ? 'Salary for' : 'Pay period' });
+      const periodField = field('period_start', salaried ? 'Salary for' : 'Pay period', periodSel);
 
       const modeSel = selectField(
         [{ value: '', label: 'Account' }, ...[...modes, ...(current.mode && !modes.includes(current.mode) ? [current.mode] : [])].map((m) => ({ value: m, label: m }))],
@@ -267,7 +286,7 @@
         const draft = {
           label: labelInput.value, amount: amountInput.value, mode: modeSel.value,
           paid_date: paidDateInput.value || null, comments: noteTextarea.value,
-          period_start: periodSel ? (periodSel.value || null) : null,
+          period_start: periodSel.value || null,
         };
         const next = steps.slice();
         if (isNew) next.push(draft); else next[index] = draft;
@@ -345,8 +364,8 @@
       h('a', { class: 'filter-chip', href: '#payments/salary', 'aria-current': active === 'salary' ? 'page' : null }, 'Salaried'));
   }
 
-  const lastPaidText = (lastPaid, cur) => (lastPaid
-    ? `Last paid ${money(lastPaid.amount, cur)}${lastPaid.period_start ? ` for ${periodLabelFor(lastPaid.period_start)}` : ''} · ${shortDate(parseDay(lastPaid.paid_date))}`
+  const lastPaidText = (lastPaid, cur, salaried = false) => (lastPaid
+    ? `Last paid ${money(lastPaid.amount, cur)}${lastPaid.period_start ? ` for ${periodLabelFor(lastPaid.period_start, salaried)}` : ''} · ${shortDate(parseDay(lastPaid.paid_date))}`
     : 'No payments recorded yet.');
 
   /* ---------- Daily wages / Salaried: everyone of that kind, due pay and last paid, no picking needed
@@ -382,7 +401,7 @@
         h('div', { class: 'att-day-top' },
           h('span', { class: 'att-day-date' }, p.name),
           h('span', { class: 'att-day-hours' }, `Due ${money(p.outstanding, cur)}`)),
-        h('span', { class: 'att-day-sub' }, lastPaidText(p.last_paid, cur)),
+        h('span', { class: 'att-day-sub' }, lastPaidText(p.last_paid, cur, p.employment_type === 'regular')),
         p.advance_deduction ? h('span', { class: 'att-day-sub' }, `After ${money(p.advance_deduction, cur)} advance taken back`) : null));
     }
 
@@ -529,7 +548,7 @@
     }
     clear(headBox).append(...[
       h('div', { class: 'att-head' }, h('h3', {}, data.worker.name), h('span', { class: 'att-head-date' }, sub)),
-      dueLine, h('p', { class: 'hint' }, lastPaidText(lastPaid, cur)),
+      dueLine, h('p', { class: 'hint' }, lastPaidText(lastPaid, cur, data.worker.employment_type === 'regular')),
     ].filter(Boolean));
     clear(sectionBox).append(paymentsSection(data.worker, id, cur, data.payment_modes, reload));
 
@@ -621,8 +640,82 @@
       h('ul', { class: 'att-week-card' }, data.days.map((d) => dayRow(d, cur, isDayRate)))));
   }
 
+  /* ---------- Payment sheet (kohal, 2026-11-08: "this is now the payslip is suppose to look, is it possible to show in the app
+     and then have excel downloadable?") - one month, a row per salaried employee, laid out like kohal's own sheet, with the same
+     thing as an Excel file. Wide, so it scrolls sideways with the name kept in view. See app/payroll.py's payment_sheet. ---------- */
+
+  const num = (v) => (v ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '');
+  const dayMonth = (iso) => { const d = parseDay(iso); return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`; };
+
+  async function showSheet(month, workerId) {
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    const query = new URLSearchParams();
+    if (month) query.set('month', month);
+    if (workerId) query.set('worker_id', workerId);
+    try { data = await api(`/api/payroll/sheet?${query}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    // Month and employee (kohal, 2026-11-08: "give filter to select the employee") - both narrow the Excel file too.
+    // Re-drawn in place: the picker closes by stepping back in history, which would undo a hash change made here.
+    const go = (m, w) => showSheet(m, w ? Number(w) : null);
+    const monthSel = selectField(data.months, data.month, { title: 'Month' });
+    monthSel.setAttribute('aria-label', 'Month');
+    monthSel.addEventListener('change', () => go(monthSel.value, workerId));
+    const employeeSel = selectField([{ value: '', label: 'All employees' }, ...data.employees], workerId ? String(workerId) : '', { title: 'Employee' });
+    employeeSel.setAttribute('aria-label', 'Employee');
+    employeeSel.addEventListener('change', () => go(data.month, employeeSel.value));
+    const download = h('a', { class: 'btn primary', download: '', href: `/api/payroll/sheet.xlsx?month=${data.month}${workerId ? `&worker_id=${workerId}` : ''}` }, 'Download Excel');
+
+    // Column order and names as on kohal's sheet (Sr. No. is left to the Excel file - the name stays pinned here instead).
+    const cols = [
+      ['salary', 'Salary'], ['days_in_month', 'Total days of month'], ['per_day', 'Salary per day'], ['present', 'Present days'],
+      ['absent', 'Absent days'], ['sick_leave', 'Sick leave'], ['casual_leave', 'Casual leave'],
+      ['sick_balance', 'Sick leave balance'], ['casual_balance', 'Casual leave balance'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'],
+      ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
+      ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['salary_due', 'Salary due'],
+      ['gross', 'Gross salary'], ['paid', 'Paid'],
+    ];
+    const head = h('thead', {},
+      h('tr', {},
+        h('th', { rowspan: 2, class: 'ps-name' }, 'Name'),
+        h('th', { colspan: 2 }, 'Work days'),
+        cols.map(([, label]) => h('th', { rowspan: 2 }, label))),
+      h('tr', {}, h('th', {}, 'From'), h('th', {}, 'To')));
+    const body = h('tbody', {}, data.rows.map((r) => h('tr', {},
+      h('th', { class: 'ps-name', scope: 'row' }, r.name,
+        r.no_attendance ? h('span', { class: 'ps-flag' }, 'No attendance recorded') : null),
+      h('td', {}, dayMonth(r.from)), h('td', {}, dayMonth(r.to)),
+      cols.map(([key]) => h('td', { class: key === 'gross' ? 'ps-strong' : null }, num(r[key]))))));
+    const t = data.totals;
+    const foot = h('tfoot', {}, h('tr', {},
+      h('th', { class: 'ps-name', scope: 'row' }, 'Total'), h('td', {}), h('td', {}),
+      cols.map(([key]) => h('td', {}, key in t ? num(t[key]) : ''))));
+
+    const note = data.in_progress
+      ? (data.counted_until
+        ? `This month is still going: absences are counted up to ${shortDate(parseDay(data.counted_until))}.`
+        : 'No attendance recorded for this month yet, so nobody is counted absent.')
+      : null;
+
+    clear(view).append(h('div', {},
+      tabs('sheet'),
+      h('div', { class: 'ps-bar' }, monthSel, download),
+      h('div', { class: 'ps-filter' }, employeeSel),
+      h('h2', { class: 'ps-title' }, `Payment sheet of ${data.label}`),
+      note ? h('p', { class: 'hint' }, note) : null,
+      data.rows.length
+        ? h('div', { class: 'ps-scroll' }, h('table', { class: 'pay-sheet' }, head, body, foot))
+        : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this month.' : 'No salaried employee with a salary set for this month.'),
+      h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays and approved paid leave are '
+        + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '
+        + 'Deduction is what absences took off the salary; Gross salary is the month net salary plus house rent / petrol, less the advance deduction.')));
+  }
+
   function route() {
     const hash = window.location.hash;
+    let s = /^#sheet(?:\/(\d{4}-\d{2}))?(?:\/(\d+))?$/.exec(hash);
+    if (s) return showSheet(s[1] || null, s[2] ? Number(s[2]) : null);
     let m = /^#overview\/person\/(\d+)\/cycles$/.exec(hash);
     if (m) return showPersonPeriods(Number(m[1]));
     m = /^#overview\/person\/(\d+)(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(hash);

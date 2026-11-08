@@ -6,7 +6,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, jsonify, render_template, request
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
@@ -423,9 +423,9 @@ def _detail(project):
         "stages": project.stage_rows,
         "current_stage_key": project.current_stage_key,
         "pause_reasons": PAUSE_REASONS,
-        # For the commission form's worker picker - only someone in that role earns it (kohal, 2026-10-18).
-        "commission_workers": [{"id": w.id, "name": w.name}
-                                for w in Worker.query.filter_by(role_key=COMMISSION_ROLE_KEY).order_by(Worker.name)],
+        # For the commission form's worker picker - the Project manager Chandrapur role (kohal, 2026-10-18) and, since 2026-11-08,
+        # any salaried employee ("i want to have any salaried employee to be selectable here").
+        "commission_workers": [{"id": w.id, "name": w.name} for w in _commission_workers()],
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
             "started": (project.start_date or to_local(project.created_at).date()).isoformat(),   # local day, not UTC
@@ -1026,8 +1026,13 @@ def request_material(project_id):
 # Expense tab (kohal, 2026-10-20), alongside the computed daily-wage figures from _wage_expenses - these
 # routes themselves are unchanged, only where the frontend shows the form.
 
+def _commission_workers():
+    return (Worker.query.filter(or_(Worker.role_key == COMMISSION_ROLE_KEY, Worker.employment_type == "regular"))
+            .order_by(Worker.name).all())
+
+
 def _expense_fields(payload):
-    """worker (a Worker in the commission role), percent, entry_date and note from the request - shared by
+    """worker (a Worker in the commission role or a salaried one), percent, entry_date and note from the request - shared by
     add_expense and update_expense. Returns (worker, percent, data, errors); percent is a Decimal or None."""
     f = Fields(payload)
     f.date("entry_date")
@@ -1038,8 +1043,8 @@ def _expense_fields(payload):
     raw_worker = payload.get("worker_id")
     if str(raw_worker).isdigit():
         worker = db.session.get(Worker, int(raw_worker))
-    if worker is None or worker.role_key != COMMISSION_ROLE_KEY:
-        errors["worker_id"] = "Pick a project manager (Chandrapur)"
+    if worker is None or not (worker.role_key == COMMISSION_ROLE_KEY or worker.employment_type == "regular"):
+        errors["worker_id"] = "Pick a salaried employee from the list"
 
     percent = None
     raw_percent = payload.get("percent")
