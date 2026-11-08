@@ -557,3 +557,51 @@ def test_an_employees_upi_id_is_optional_but_must_look_like_one(admin_client, ap
         res = admin_client.patch(f"/api/workforce/{wid}", json={"name": "Pays By Phone", "upi_id": bad})
         assert res.status_code == 422 and "upi_id" in res.get_json()["fields"]
     assert admin_client.patch(f"/api/workforce/{wid}", json={"name": "Pays By Phone", "upi_id": ""}).status_code == 200   # clearing it is fine
+
+
+# ---------- one role for the employee and their login (kohal, 2026-11-08) ----------
+#
+# "role in employee management form and user and roles form should be connected. if the admin changes roles in employee
+# management, it should reflect change in user roles and vice versa."
+
+def _linked(app, role="sales_field"):
+    from conftest import make_user
+    user = make_user("Linked Person", role=role)
+    w = Worker.query.filter_by(user_code=user.code).first() or Worker(name="Linked Person", category="staff", user_code=user.code, role_key=role)
+    db.session.add(w)
+    db.session.commit()
+    return user.code, w.id
+
+
+def test_changing_the_role_in_employee_management_changes_the_login_role(app, admin_client):
+    from app.models import User
+    code, wid = _linked(app)
+    res = admin_client.patch(f"/api/workforce/{wid}", json={"role_key": "project_manager"})
+    assert res.status_code == 200
+    assert db.session.get(User, code).role_key == "project_manager" and db.session.get(Worker, wid).role_key == "project_manager"
+
+
+def test_changing_the_login_role_changes_the_employee_role(app, admin_client):
+    code, wid = _linked(app)
+    assert admin_client.post(f"/api/users/{code}/role", json={"role": "accounts"}).status_code == 200
+    assert db.session.get(Worker, wid).role_key == "accounts"
+
+
+def test_a_login_keeps_a_role_and_client_or_sub_admin_come_from_their_own_screens(app, admin_client):
+    from app.models import User
+    code, wid = _linked(app)
+    for bad in ("unassigned", "client", "sub_admin"):
+        if db.session.get(Role, bad) is None and bad != "unassigned":
+            db.session.add(Role(key=bad, name=bad, sees_all=False))
+            db.session.commit()
+        res = admin_client.patch(f"/api/workforce/{wid}", json={"role_key": bad})
+        assert res.status_code == 422 and "role_key" in res.get_json()["fields"], bad
+    assert db.session.get(User, code).role_key == "sales_field" and db.session.get(Worker, wid).role_key == "sales_field"
+
+
+def test_an_employee_without_a_login_changes_role_freely(app, admin_client):
+    w = Worker(name="No Login", category="staff", role_key="welder")
+    db.session.add(w)
+    db.session.commit()
+    assert admin_client.patch(f"/api/workforce/{w.id}", json={"role_key": "unassigned"}).status_code == 200
+    assert db.session.get(Worker, w.id).role_key is None

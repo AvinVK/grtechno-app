@@ -26,7 +26,7 @@ from werkzeug.exceptions import HTTPException, abort
 
 from .constants import ACCEPTED_PAYMENT_MODES, PAYMENT_MODES
 from .extensions import db
-from .models import Attendance, Role, Worker, WorkerAttendance, WorkerPayment, settings_for_client
+from .models import Attendance, Role, User, Worker, WorkerAttendance, WorkerPayment, settings_for_client
 from .modules import can_write, check_module, has_module
 from .validation import Fields, parse_money
 
@@ -421,6 +421,28 @@ def _payments(raw, errors):
     return rows
 
 
+def _role_change_for_login(worker, data, errors):
+    """The role here and the person's login role (Users & roles) are one and the same (kohal, 2026-11-08: "role in employee
+    management form and user and roles form should be connected ... and vice versa") - Users & roles already copies its role onto
+    the employee (auth.sync_worker_for_user); this is the other way. Returns the User whose role should change with this edit, or
+    None. The same rules Users & roles keeps: a login always has a role, and client / sub-admin are given from their own screens."""
+    if "role_key" not in data or not worker.user_code:
+        return None
+    user = db.session.get(User, worker.user_code)
+    new = data["role_key"]
+    if user is None or user.is_admin or new == user.role_key:
+        return None
+    if new is None:
+        errors["role_key"] = "This person signs in to the app, so they need a role - pick one"
+    elif new == "client":
+        errors["role_key"] = "A client gets access from their own page, under Clients"
+    elif new == "sub_admin":
+        errors["role_key"] = "Make someone a sub-admin from Users & roles, where their states are picked too"
+    elif user.role_key == "client":
+        errors["role_key"] = "This login belongs to a client - change it from Users & roles"
+    return user
+
+
 @workforce_bp.patch("/<int:worker_id>")
 def edit_worker(worker_id):
     """Change a person's details, role, or their whole salary/wages log (sent as one list, same as a
@@ -433,10 +455,13 @@ def edit_worker(worker_id):
     payments = None
     if "payments" in payload:
         payments = _payments(payload["payments"], errors)
+    login = _role_change_for_login(worker, data, errors)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     for field, value in data.items():
         setattr(worker, field, value)
+    if login is not None:
+        login.role_key = data["role_key"]
     if payments is not None:
         worker.payments = [
             WorkerPayment(label=p["label"], amount=p["amount"], due_date=p["due_date"], mode=p["mode"],
