@@ -609,11 +609,10 @@ class ProjectExpense(db.Model):
     Daily wages are *not* stored here: they're computed straight from attendance rather than entered (kohal,
     2026-10-20), see app/projects.py's own _wage_expenses.
 
-    percent is what was actually typed in; basis_amount and amount are a snapshot of the project's
-    net_amount and the rupee figure computed from it at the moment this was saved (or last edited) - so a
-    later change to the project's own negotiated/final amount never silently moves money already recorded
-    as paid out, the same reasoning as a material issue's rate being snapshotted rather than recalculated
-    after the fact."""
+    Since 2026-11-08 the commission is typed in as a rupee amount (kohal: "for Commission, have amount instead of percentage
+    field") and paid in parts (CommissionPayment, "commission can be paid in parts to one person"); percent and basis_amount
+    are then only a record of what share of the project's amount it came to at the time (0 when the project had no amount).
+    Older entries were typed as a percent of the negotiated amount, snapshotted the same way."""
 
     __tablename__ = "project_expenses"
 
@@ -641,7 +640,37 @@ class ProjectExpense(db.Model):
             "percent": float(self.percent), "basis_amount": float(self.basis_amount), "amount": float(self.amount),
             "entry_date": self.entry_date.isoformat(), "note": self.note,
             "created_by_name": self.created_by.name if self.created_by else None,
+            "paid": float(self.paid_total), "remaining": float(self.amount - self.paid_total),
+            "payments": [p.to_dict() for p in sorted(self.payments, key=lambda p: (p.paid_date, p.id))],
         }
+
+    @property
+    def paid_total(self):
+        return sum((p.amount for p in self.payments), Decimal(0))
+
+
+class CommissionPayment(db.Model):
+    """One part of a commission actually paid out (kohal, 2026-11-08: "commission can be paid in parts to one person") - how much,
+    when and from which account; it shows as a debit on that account in Accounts."""
+
+    __tablename__ = "commission_payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    expense_id = db.Column(db.Integer, db.ForeignKey("project_expenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    paid_date = db.Column(db.Date, nullable=False)
+    payment_account = db.Column(db.String(40), nullable=False, default="", server_default="")
+    note = db.Column(db.String(300), nullable=False, default="", server_default="")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    expense = db.relationship("ProjectExpense", backref=db.backref("payments", cascade="all, delete-orphan", lazy=True))
+    created_by = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "amount": float(self.amount), "paid_date": self.paid_date.isoformat(),
+                "payment_account": self.payment_account, "note": self.note,
+                "created_by_name": self.created_by.name if self.created_by else None}
 
 
 class LeadDocument(db.Model):

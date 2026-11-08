@@ -6,7 +6,7 @@ Admin only. There is no ledger table of its own: every place that records money 
 through (constants.PAYMENT_ACCOUNTS), so this page reads them all and lines them up -
 
   Credits (money in):  project payments received, lead advances, self transfers in.
-  Debits (money out):  salary and wages paid, salary advances given, fooding allotted, cash handed to an employee for purchases, petrol
+  Debits (money out):  salary and wages paid, salary advances given, commission paid (each part), fooding allotted, cash handed to an employee for purchases, petrol
                        paid out, inventory bought for cash, what the admin bought directly (admin purchases), payments made to
                        suppliers, self transfers out.
 
@@ -25,7 +25,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 from .constants import PAYMENT_ACCOUNTS
 from .extensions import db
 from .models import (
-    AccountOpening, AccountTransfer, AdminPurchase, CashTopup, PetrolPayout, SalaryAdvance, SupplierPayment, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
+    AccountOpening, AccountTransfer, AdminPurchase, CommissionPayment, CashTopup, PetrolPayout, SalaryAdvance, SupplierPayment, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
 )
 from .timeutil import today_local
 from .validation import Fields, api_errors, parse_money
@@ -113,6 +113,11 @@ def _all_rows(account):
     for p in AdminPurchase.query.filter_by(payment_account=account).all():
         rows.append(_row("debit", p.entry_date, p.amount, "Material purchase" if p.category == "material" else "Other expense",
                          p.supplier, p.material_name, requested_by=p.created_by.name if p.created_by else None))
+
+    for c in CommissionPayment.query.filter_by(payment_account=account).all():
+        e = c.expense
+        rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.worker.name if e.worker else "", f"{e.project.code} · {e.project.title}",
+                         requested_by=c.created_by.name if c.created_by else None))
 
     for p in SupplierPayment.query.filter_by(payment_account=account).all():
         rows.append(_row("debit", p.entry_date, p.amount, "Supplier payment", p.supplier.name, f"{p.mode}{' · ' + p.note if p.note else ''}",

@@ -1180,15 +1180,25 @@
     const rows = data.expenses || [];
     const workers = data.commission_workers || [];
 
+    // A commission is the total agreed, paid out in parts (kohal, 2026-11-08: "commission can be paid in parts to one person"):
+    // each part shows under it with its date and account, and what is still owed.
+    function partLine(e, p) {
+      return h('span', { class: 'row-sub comm-part' },
+        `${money(p.amount, cur)} paid ${fmtDate(p.paid_date)} · ${p.payment_account}${p.note ? ` · ${p.note}` : ''} `,
+        h('button', { type: 'button', class: 'link-btn', onclick: () => deletePart(P.id, e.id, p, reload, cur) }, 'Remove'));
+    }
+
     function expenseRow(e) {
+      const status = e.remaining <= 0 ? 'Fully paid' : e.paid ? `Paid ${money(e.paid, cur)} · ${money(e.remaining, cur)} left` : 'Not paid yet';
       return h('li', { class: 'p-row' },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, e.worker_name || 'Removed person'),
-          h('span', { class: 'row-sub' },
-            [`${e.percent}% of ${money(e.basis_amount, cur)}`, fmtDate(e.entry_date), e.note || null].filter(Boolean).join(' · ')),
+          h('span', { class: 'row-sub' }, [status, fmtDate(e.entry_date), e.note || null].filter(Boolean).join(' · ')),
+          ...(e.payments || []).map((p) => partLine(e, p)),
           h('span', { class: 'bill-links' },
-            h('button', { type: 'button', class: 'link-btn', onclick: () => openExpenseSheet(P.id, e, workers, reload, P.net_amount, cur) }, 'Edit'),
-            h('button', { type: 'button', class: 'link-btn', onclick: () => deleteExpense(P.id, e.id, reload) }, 'Delete'))),
+            e.remaining > 0 ? h('button', { type: 'button', class: 'link-btn', onclick: () => openPartSheet(P.id, e, data.payment_accounts || [], reload, cur) }, 'Pay a part') : null,
+            h('button', { type: 'button', class: 'link-btn', onclick: () => openExpenseSheet(P.id, e, workers, reload, cur) }, 'Edit'),
+            e.payments && e.payments.length ? null : h('button', { type: 'button', class: 'link-btn', onclick: () => deleteExpense(P.id, e.id, reload) }, 'Delete'))),
         h('span', { class: 'row-value' }, money(e.amount, cur)));
     }
 
@@ -1196,7 +1206,7 @@
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Commission'),
         workers.length
-          ? h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, P.net_amount, cur) }, '+ Add commission')
+          ? h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, cur) }, '+ Add commission')
           : null),
       !workers.length
         ? h('p', { class: 'hint' }, 'No salaried employee or Project manager Chandrapur yet - add one from Employee management first.')
@@ -1207,29 +1217,17 @@
       rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_expense, cur)}`) : null);
   }
 
-  function openExpenseSheet(projectId, expense, workers, reload, basis, cur) {
+  function openExpenseSheet(projectId, expense, workers, reload, cur) {
     const isNew = !expense;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     const workerSel = selectField(
       workers.map((w) => ({ value: w.id, label: w.name })), expense ? expense.worker_id : '',
       { title: 'Given to', placeholder: 'Pick a person' });
-    const percentInput = h('input', {
-      type: 'number', min: '0.01', max: '100', step: '0.01', inputmode: 'decimal', value: expense ? expense.percent : '',
-    });
+    // A rupee amount (kohal, 2026-11-08: "for Commission, have amount instead of percentage field") - the total agreed.
+    const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', value: expense ? expense.amount : '' });
     const dateInput = dateField(expense ? expense.entry_date : todayIsoLocal(), { placeholder: 'Date' });
     const noteInput = h('input', { type: 'text', maxlength: 2000, autocomplete: 'off', value: expense ? (expense.note || '') : '' });
 
-    // The rupee amount under the percentage (kohal, 2026-11-08: "when putting commission %, below it should show the amount as well") -
-    // the same sum the server does on save: the project's negotiated amount x the percent.
-    const amountHint = h('p', { class: 'hint', 'aria-live': 'polite' });
-    const showAmount = () => {
-      const pct = parseFloat(percentInput.value);
-      if (basis == null) amountHint.textContent = "Set the project's negotiated amount first, on its Payment tab.";
-      else if (!(pct > 0)) amountHint.textContent = `Negotiated amount: ${money(basis, cur)}`;
-      else amountHint.textContent = `${pct}% of ${money(basis, cur)} = ${money(Math.round(basis * pct) / 100, cur)}`;
-    };
-    percentInput.addEventListener('input', showAmount);
-    showAmount();
 
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -1241,7 +1239,7 @@
       saveBtn.disabled = true;
       errEl.textContent = '';
       const body = {
-        worker_id: workerSel.value ? Number(workerSel.value) : null, percent: percentInput.value,
+        worker_id: workerSel.value ? Number(workerSel.value) : null, amount: amountInput.value,
         entry_date: dateInput.value, note: noteInput.value,
       };
       try {
@@ -1258,14 +1256,64 @@
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, isNew ? 'Add commission' : 'Edit commission'),
       field('worker_id', 'Given to', workerSel),
-      field('percent', 'Commission %', percentInput),
-      amountHint,
+      field('amount', 'Commission amount', amountInput),
+      expense && expense.paid ? h('p', { class: 'hint' }, `${money(expense.paid, cur)} of it has been paid already.`) : null,
       field('entry_date', 'Date', dateInput),
       field('note', 'Note', noteInput),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
     document.body.append(overlay);
-    percentInput.focus();
+    amountInput.focus();
+  }
+
+  // One part of a commission paid out, and the account it came from (shows as a debit there in Accounts).
+  function openPartSheet(projectId, expense, accounts, reload, cur) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', value: expense.remaining });
+    const accountSel = selectField(accounts, '', { title: 'Paid from', placeholder: 'Choose an account' });
+    const dateInput = dateField(todayIsoLocal(), { placeholder: 'Date', clearable: false });
+    const noteInput = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'Optional' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'button' }, 'Save payment');
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      try {
+        await api(`/api/projects/${projectId}/expenses/${expense.id}/payments`, { method: 'POST', body: {
+          amount: amountInput.value, payment_account: accountSel.value, paid_date: dateInput.value, note: noteInput.value } });
+        finish();
+        toast('Commission payment saved');
+        await reload();
+      } catch (err) {
+        errEl.textContent = (err.fields && Object.values(err.fields)[0]) || err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, `Pay ${expense.worker_name || 'commission'}`),
+      h('p', { class: 'hint sheet-lead' }, `${money(expense.remaining, cur)} still owed of ${money(expense.amount, cur)}.`),
+      field('amount', 'Amount paid', amountInput),
+      field('payment_account', 'Paid from', accountSel),
+      field('paid_date', 'Date', dateInput),
+      field('note', 'Note', noteInput),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
+    document.body.append(overlay);
+    amountInput.focus();
+  }
+
+  async function deletePart(projectId, expenseId, part, reload, cur) {
+    if (!await confirm(`Remove the ${money(part.amount, cur)} payment of ${fmtDate(part.paid_date)}? It also comes off ${part.payment_account} in Accounts.`,
+      { ok: 'Remove', danger: true, title: 'Remove payment' })) return;
+    try {
+      await api(`/api/projects/${projectId}/expenses/${expenseId}/payments/${part.id}`, { method: 'DELETE' });
+      toast('Payment removed');
+      await reload();
+    } catch (err) { toast(err.message, true); }
   }
 
   async function deleteExpense(projectId, expenseId, reload) {
