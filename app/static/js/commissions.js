@@ -31,7 +31,7 @@
           ? h('ul', { class: 'card-group' }, rows.map((c) => h('li', { class: 'p-row' },
               h('span', { class: 'p-main' },
                 h('span', { class: 'row-title' }, c.project_title ? `${c.project_code} · ${c.project_title}` : 'Unknown project'),
-                h('span', { class: 'row-sub' }, `${c.percent}% of ${money(c.basis_amount, cur)} · ${fmtDate(c.entry_date)}`)),
+                h('span', { class: 'row-sub' }, `${c.remaining > 0 ? `Paid ${money(c.paid, cur)} · ${money(c.remaining, cur)} to come` : 'Fully paid'} · ${fmtDate(c.entry_date)}`)),
               h('span', { class: 'row-value' }, money(c.amount, cur)))))
           : h('p', { class: 'hint' }, 'No commission recorded yet.'))));
   }

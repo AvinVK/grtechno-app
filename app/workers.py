@@ -207,6 +207,9 @@ def _day_status(day, present, worker, data_until, today, checked_in_now):
         return "present"
     if data_until is None or day > data_until or (worker.first_seen and day < worker.first_seen):
         return "none"
+    # Sunday is the weekly day off (kohal, 2026-11-08: "it shows absent for sundays, sundays are off anyways, dont show that").
+    if day.weekday() == 6:
+        return "off"
     return "absent"
 
 
@@ -241,8 +244,10 @@ def _person_row(worker, period, data_until, today):
     days = present_days = 0
     if period:
         start, end = _own_start(worker, period[0]), period[1]
-        days = max(0, (end - start).days + 1)
+        in_range = [start + timedelta(days=i) for i in range(max(0, (end - start).days + 1))]
         present_days = sum(1 for d in present if start <= d <= end)
+        # A Sunday is a day off, not a day to be counted against them - unless they came in anyway.
+        days = sum(1 for d in in_range if d.weekday() != 6 or d in present)
     # Someone who arrived from Users & roles (see app/auth.py sync_worker_for_user) starts with none of
     # their own HR detail filled in - flagged here so the admin can find and fill them in from Edit, until
     # they do (any phone or joining date on file clears it, not a separate "done" switch to maintain).

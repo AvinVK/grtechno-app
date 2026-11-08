@@ -13,10 +13,10 @@ from . import inventory as inv
 from .adhoc import _adhoc_kind, requested_names, stage_info, stock_options
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
-    ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
+    ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_ACCOUNTS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
 )
 from .extensions import db
-from .models import Activity, Attendance, Client, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
+from .models import Activity, Attendance, Client, CommissionPayment, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
 from .modules import check_module
 from .reference_data import PROJECT_STATUSES
 from .constants import ADHOC_STATUSES
@@ -426,6 +426,7 @@ def _detail(project):
         # For the commission form's worker picker - the Project manager Chandrapur role (kohal, 2026-10-18) and, since 2026-11-08,
         # any salaried employee ("i want to have any salaried employee to be selectable here").
         "commission_workers": [{"id": w.id, "name": w.name} for w in _commission_workers()],
+        "payment_accounts": PAYMENT_ACCOUNTS,                  # a commission part is paid from one of these (kohal, 2026-11-08)
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
             "started": (project.start_date or to_local(project.created_at).date()).isoformat(),   # local day, not UTC
@@ -1032,8 +1033,9 @@ def _commission_workers():
 
 
 def _expense_fields(payload):
-    """worker (a Worker in the commission role or a salaried one), percent, entry_date and note from the request - shared by
-    add_expense and update_expense. Returns (worker, percent, data, errors); percent is a Decimal or None."""
+    """worker (a Worker in the commission role or a salaried one), amount, entry_date and note from the request - shared by
+    add_expense and update_expense. Returns (worker, amount, data, errors); amount is a Decimal or None. The commission is a rupee
+    amount since 2026-11-08 (kohal: "for Commission, have amount instead of percentage field")."""
     f = Fields(payload)
     f.date("entry_date")
     f.text("note", 2000)
@@ -1046,43 +1048,41 @@ def _expense_fields(payload):
     if worker is None or not (worker.role_key == COMMISSION_ROLE_KEY or worker.employment_type == "regular"):
         errors["worker_id"] = "Pick a salaried employee from the list"
 
-    percent = None
-    raw_percent = payload.get("percent")
-    if raw_percent in (None, ""):
-        errors.setdefault("percent", "Enter the commission percentage")
+    amount = None
+    if payload.get("amount") in (None, ""):
+        errors.setdefault("amount", "Enter the commission amount")
     else:
-        try:
-            percent = Decimal(str(raw_percent))
-        except InvalidOperation:
-            errors["percent"] = "Enter a number"
-        else:
-            if not percent.is_finite() or percent <= 0 or percent > 100:
-                errors["percent"] = "Enter a percentage from 0 to 100"
+        amount = parse_money(payload.get("amount"), errors, "amount")
+        if amount is not None and amount <= 0:
+            errors["amount"] = "Enter an amount greater than 0"
+            amount = None
 
     if not f.data.get("entry_date") and "entry_date" not in f.errors:
         f.data["entry_date"] = today_local()
 
-    return worker, percent, f.data, errors
+    return worker, amount, f.data, errors
+
+
+def _share(project, amount):
+    """(percent, basis) - what share of the project's amount a commission comes to, kept for the record; 0 with no amount set."""
+    basis = project.net_amount or Decimal("0")
+    percent = min((amount * 100 / basis).quantize(Decimal("0.01")), Decimal("999.99")) if basis > 0 else Decimal("0")
+    return percent, basis
 
 
 @bp.post("/api/projects/<int:project_id>/expenses")
 def add_expense(project_id):
-    """Record a cut of this project's negotiated amount paid out as commission. The rupee amount is
-    computed from the project's own net_amount right now and then fixed - see ProjectExpense's own
-    docstring for why editing the project's amount later doesn't move what's already been recorded."""
+    """Record a commission for someone on this project - the total agreed; it is paid out in parts (add_commission_payment)."""
     project = _project_or_404(project_id)
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
-    worker, percent, data, errors = _expense_fields(payload)
-    if project.net_amount is None:
-        errors.setdefault("percent", "Set the project's negotiated amount first, on its Payment tab")
+    worker, amount, data, errors = _expense_fields(payload)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    basis = project.net_amount
+    percent, basis = _share(project, amount)
     expense = ProjectExpense(
-        project=project, kind="commission", worker=worker, percent=percent, basis_amount=basis,
-        amount=(basis * percent / Decimal("100")).quantize(Decimal("0.01")),
+        project=project, kind="commission", worker=worker, percent=percent, basis_amount=basis, amount=amount,
         entry_date=data["entry_date"], note=data.get("note", ""), created_by_code=g.user.code,
     )
     db.session.add(expense)
@@ -1099,16 +1099,14 @@ def update_expense(project_id, expense_id):
     payload = request.get_json(silent=True) if request.is_json else None
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
-    worker, percent, data, errors = _expense_fields(payload)
-    if project.net_amount is None:
-        errors.setdefault("percent", "Set the project's negotiated amount first, on its Payment tab")
+    worker, amount, data, errors = _expense_fields(payload)
+    if amount is not None and amount < expense.paid_total:
+        errors["amount"] = f"{expense.paid_total:,.0f} has already been paid - the commission can't be less than that"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    basis = project.net_amount
     expense.worker = worker
-    expense.percent = percent
-    expense.basis_amount = basis
-    expense.amount = (basis * percent / Decimal("100")).quantize(Decimal("0.01"))
+    expense.amount = amount
+    expense.percent, expense.basis_amount = _share(project, amount)
     expense.entry_date = data["entry_date"]
     expense.note = data.get("note", "")
     db.session.commit()
@@ -1121,6 +1119,57 @@ def delete_expense(project_id, expense_id):
     expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
     if expense is None:
         abort(404)
+    if expense.payments:
+        abort(409, "Part of this commission has been paid - remove those payments first.")
     db.session.delete(expense)
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+# A commission paid in parts (kohal, 2026-11-08: "commission can be paid in parts to one person"): each part says how much, when
+# and from which account - it shows there as a debit in Accounts. Never more than what is still owed.
+
+@bp.post("/api/projects/<int:project_id>/expenses/<int:expense_id>/payments")
+def add_commission_payment(project_id, expense_id):
+    project = _project_or_404(project_id)
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
+    if expense is None:
+        abort(404)
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    f = Fields(payload)
+    f.date("paid_date")
+    f.text("note", 300)
+    errors = f.errors
+    amount = parse_money(payload.get("amount"), errors, "amount") if payload.get("amount") not in (None, "") else None
+    remaining = expense.amount - expense.paid_total
+    if amount is None and "amount" not in errors:
+        errors["amount"] = "Enter the amount paid"
+    elif amount is not None and amount <= 0:
+        errors["amount"] = "Enter an amount greater than 0"
+    elif amount is not None and amount > remaining:
+        errors["amount"] = f"Only {remaining:,.0f} is still owed" if remaining > 0 else "This commission is fully paid"
+    if payload.get("payment_account") not in PAYMENT_ACCOUNTS:
+        errors["payment_account"] = "Choose the account it was paid from"
+    paid_date = f.data.get("paid_date") or today_local()
+    if paid_date > today_local():
+        errors["paid_date"] = "That day hasn't happened yet"
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    db.session.add(CommissionPayment(expense=expense, amount=amount, paid_date=paid_date, payment_account=payload["payment_account"],
+                                     note=f.data.get("note", ""), created_by_code=g.user.code))
+    db.session.commit()
+    return jsonify(_detail(project)), 201
+
+
+@bp.delete("/api/projects/<int:project_id>/expenses/<int:expense_id>/payments/<int:payment_id>")
+def delete_commission_payment(project_id, expense_id, payment_id):
+    project = _project_or_404(project_id)
+    payment = (CommissionPayment.query.join(ProjectExpense)
+               .filter(CommissionPayment.id == payment_id, ProjectExpense.id == expense_id, ProjectExpense.project_id == project.id).first())
+    if payment is None:
+        abort(404)
+    db.session.delete(payment)
     db.session.commit()
     return jsonify(_detail(project))

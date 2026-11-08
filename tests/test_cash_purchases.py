@@ -899,3 +899,24 @@ def test_cash_for_a_daily_wage_worker_still_comes_out_of_their_fooding_balance(a
     assert given.status_code == 200 and given.get_json()["account"]["given_total"] == 400.0
     listing = admin_client.get("/api/fooding").get_json()["workers"]
     assert next(w for w in listing if w["worker_id"] == daily.id)["remaining"] == 1100.0
+
+
+def test_a_material_with_broken_stock_history_gets_a_clear_message_not_a_server_error(app, admin_client):
+    """kohal, 2026-11-08 (a "server encountered an internal error" on Purchase approval): when an earlier issue of the material
+    already uses more than was in stock, approving says which entry to fix and leaves the purchase pending."""
+    from datetime import date
+    from decimal import Decimal
+    from app.models import CashPurchase, Material, MaterialMovement
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "1000", "payment_mode": "CASH"})
+    m = Material(name="PO Red Paint", unit="Ltr", stock_qty=Decimal("0"), avg_rate=Decimal("0"))
+    db.session.add(m)
+    db.session.flush()
+    db.session.add(MaterialMovement(material=m, kind="out", quantity=Decimal("2"), rate=Decimal("0"), amount=Decimal("0"),
+                                    entry_date=date(2026, 11, 1), status="approved"))
+    db.session.commit()
+    eid = _material_purchase(who, material_name="PO Red Paint", quantity="1", unit="Ltr", amount="320")
+    res = admin_client.post(f"/api/cash-purchases/{eid}/approve")
+    assert res.status_code == 422
+    assert "PO Red Paint" in res.get_json()["error"] and "2026-11-01" in res.get_json()["error"]
+    assert db.session.get(CashPurchase, eid).status == "pending" and MaterialMovement.query.count() == 1

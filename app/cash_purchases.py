@@ -525,9 +525,25 @@ def approve(purchase_id):
     purchase.approved_at = utcnow()
     purchase.account.spent_total += purchase.amount
     if purchase.category == "material":
-        _stock_in_purchase(purchase, f"Cash purchase by {purchase.account.worker.name}")
+        problem = _stock_in_or_problem(purchase, f"Cash purchase by {purchase.account.worker.name}")
+        if problem:
+            return jsonify(error=problem), 422
     db.session.commit()
     return jsonify(entry=purchase.to_dict())
+
+
+def _stock_in_or_problem(purchase, default_note):
+    """_stock_in_purchase, or - when the material's own stock history is already broken (an earlier issue uses more than was in
+    stock at the time) - nothing saved and the message naming that entry, as Inventory itself says it (kohal, 2026-11-08: this
+    used to crash with a server error on the Purchase approval page)."""
+    from .inventory import _NegativeStock, _negative_stock_message
+    try:
+        _stock_in_purchase(purchase, default_note)
+    except _NegativeStock as exc:
+        msg = _negative_stock_message(exc.movement.material, exc.movement)
+        db.session.rollback()
+        return f"Can't add this to Inventory yet: {msg}"
+    return None
 
 
 def _stock_in_purchase(purchase, default_note):
@@ -633,7 +649,9 @@ def add_admin_purchase():
     )
     db.session.add(purchase)
     if purchase.category == "material":
-        _stock_in_purchase(purchase, f"Admin purchase ({account})")
+        problem = _stock_in_or_problem(purchase, f"Admin purchase ({account})")
+        if problem:
+            return jsonify(error=problem), 422
     db.session.commit()
     return jsonify(entry=purchase.to_dict()), 201
 

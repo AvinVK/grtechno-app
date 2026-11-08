@@ -1578,6 +1578,7 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .wk-dot.present { background: var(--ok); }
 .wk-dot.absent { background: var(--signal); }
 .wk-dot.none { border: 1.5px solid var(--line-strong); }
+.wk-dot.off { background: var(--line-strong); }
 .wk-dot.live { background: var(--amber); }
 .att-bar > i.low { background: var(--signal); }
 button.people-row { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
@@ -1620,6 +1621,8 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-date.present { border-color: var(--ok); background: var(--ok-tint); color: var(--ok-ink); }
 .fn-date.absent { border-color: var(--signal); background: var(--signal-tint); color: var(--signal); }
 .fn-date.none { border-style: dashed; }
+.fn-date.off { border-color: var(--line); background: var(--line); color: var(--muted); }
+.att-day-off .att-day-date, .att-day-off .att-day-hours { color: var(--muted); }
 .fn-section .wk-legend { margin: 10px 0 0; }
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }
@@ -1914,6 +1917,8 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .acct-credit { color: #1b7a3d; }
 .acct-debit { color: #a3281c; }
 .sheet-lead { margin: 0; }
+.comm-part { display: block; }
+.comm-part .link-btn { font-size: 13px; padding: 0 4px; }
 .acct-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .daily-food summary { list-style: none; cursor: pointer; }
 .daily-food summary::-webkit-details-marker { display: none; }

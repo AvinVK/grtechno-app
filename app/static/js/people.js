@@ -72,7 +72,7 @@
 
   /* ---------- Employee management: where each person is, and their last 7 days ---------- */
 
-  const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet', live: 'checked in now' };
+  const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet', live: 'checked in now', off: 'Sunday, day off' };
 
   function weekDots(week) {
     const present = week.filter((d) => d.status === 'present').length;
@@ -121,6 +121,7 @@
         'Last 7 days, oldest first: ',
         h('i', { class: 'wk-dot present' }), ' present ',
         h('i', { class: 'wk-dot absent' }), ' absent ',
+        h('i', { class: 'wk-dot off' }), ' Sunday off ',
         h('i', { class: 'wk-dot none' }), ' no data yet ',
         h('i', { class: 'wk-dot live' }), ' checked in now');
     const order = sheet
@@ -179,6 +180,7 @@
     const a = byDay.get(dayIso);
     if (a && a.status === 'present') return 'present';
     if (!data.period || !data.data_until || dayIso > data.data_until || dayIso < data.period.start) return 'none';
+    if (parseDay(dayIso).getDay() === 0) return 'off';                 // Sunday: the weekly day off, never absent
     return 'absent';
   }
 
@@ -209,7 +211,7 @@
       ? commissions.map((c) => h('li', { class: 'p-row' },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, c.project_title ? `${c.project_code} · ${c.project_title}` : 'Unknown project'),
-          h('span', { class: 'row-sub' }, `${c.percent}% of ${money(c.basis_amount, cur)} · ${dayMonth(parseDay(c.entry_date))}`)),
+          h('span', { class: 'row-sub' }, `${c.remaining > 0 ? `Paid ${money(c.paid, cur)} · ${money(c.remaining, cur)} left` : 'Fully paid'} · ${dayMonth(parseDay(c.entry_date))}`)),
         h('span', { class: 'row-value' }, money(c.amount, cur))))
       : [h('li', {}, h('p', { class: 'hint' }, 'No commission recorded yet.'))]));
     const toggle = h('button', {
@@ -233,7 +235,7 @@
     const came = inFortnight.filter((a) => a.status === 'present');
     const counted = [...Array(FORTNIGHT).keys()]
       .map((i) => dayStatus(dayKey(addDays(today, -i)), byDay, data))
-      .filter((s) => s !== 'none').length;
+      .filter((s) => s !== 'none' && s !== 'off').length;
     const timed = came.filter((a) => a.hours != null);
     const avg = timed.length ? roundHours(timed.reduce((sum, a) => sum + a.hours, 0) / timed.length) : null;
 
@@ -263,6 +265,7 @@
         h('p', { class: 'wk-legend' },
           h('i', { class: 'wk-dot present' }), ' present ',
           h('i', { class: 'wk-dot absent' }), ' absent ',
+          h('i', { class: 'wk-dot off' }), ' Sunday off ',
           h('i', { class: 'wk-dot none' }), ' no data yet')),
       h('a', { class: 'fn-full-link', href: `/attendance-sheet#p${p.id}` }, 'Full attendance record →'),
     ];
@@ -549,6 +552,13 @@
       links.length ? h('div', { class: 'att-day-links' }, links) : null);
   }
 
+  function offRow(day) {
+    return h('li', { class: 'att-day att-day-off' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, shortDate(day)),
+        h('span', { class: 'att-day-hours' }, 'Day off')));
+  }
+
   function absentRow(day, a) {
     return h('li', { class: 'att-day' },
       h('div', { class: 'att-day-top' },
@@ -571,13 +581,16 @@
       for (let i = 6; i >= 0; i -= 1) {
         const day = addDays(monday, i);
         if (day < start || day > end) continue;
-        days += 1;
         const a = byDay.get(dayKey(day));
         if (a && a.status === 'present') {
+          days += 1;
           came += 1;
           total += a.hours || 0;
           rows.push(presentRow(day, a));
+        } else if (day.getDay() === 0) {
+          rows.push(offRow(day));                                       // Sunday off: not a missed day
         } else {
+          days += 1;
           rows.push(absentRow(day, a));
         }
       }
@@ -621,7 +634,14 @@
     }
     const key = data.worker.role_key || UNASSIGNED;
     const came = data.attendance.filter((a) => a.status === 'present').length;
-    const days = data.period ? Math.round((parseDay(data.period.end) - parseDay(data.period.start)) / 86400000) + 1 : 0;
+    // Working days only: a Sunday is the weekly day off, so it counts only if they came in anyway.
+    const presentOn = new Set(data.attendance.filter((a) => a.status === 'present').map((a) => a.work_date));
+    let days = 0;
+    if (data.period) {
+      for (let d = parseDay(data.period.start); d <= parseDay(data.period.end); d = addDays(d, 1)) {
+        if (d.getDay() !== 0 || presentOn.has(dayKey(d))) days += 1;
+      }
+    }
     const label = groupLabel(key, data.roles);
     LD.setAppbarBack?.(label, `#${key}`);
     const onChange = () => { invalidateCache(); window.location.hash = `#${key}`; };
