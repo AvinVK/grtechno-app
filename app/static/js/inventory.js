@@ -5,7 +5,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, confirm, plural, money, field, showFieldErrors, selectField, searchField, dateField, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, confirm, plural, money, field, showFieldErrors, selectField, searchField, dateField, timeField, closeOnBack } = window.LD;
 
   const view = $('#view');
   const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -124,7 +124,10 @@
     const givenBy = searchField(data.workers.map((w) => ({ value: w.id, label: w.name })), '',
       { placeholder: isReturn ? 'Who brought it back' : 'Who took it' });
     const transportMode = transportModePicker(data.transport_modes, '');
-    const transportedAt = h('input', { type: 'datetime-local', value: nowForDatetimeLocal() });
+    // The app's own date and time pickers, not the browser's (kohal, 2026-11-08).
+    const now = nowForDatetimeLocal();
+    const transportedDay = dateField(now.slice(0, 10), { clearable: false });
+    const transportedTime = timeField(now.slice(11, 16));
 
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -140,7 +143,7 @@
           method: 'POST',
           body: {
             quantity: qty.value, given_by_worker_id: givenBy.value ? Number(givenBy.value) : null,
-            transport_mode: transportMode.value, transported_at: transportedAt.value,
+            transport_mode: transportMode.value, transported_at: `${transportedDay.value}T${transportedTime.value || '00:00'}`,
           },
         });
         finish();
@@ -162,7 +165,7 @@
       field('quantity', isReturn ? 'Quantity actually returned' : 'Quantity to hand over', qty),
       field('given_by_worker_id', isReturn ? 'Received by' : 'Given by', givenBy),
       field('transport_mode', 'Transport', transportMode),
-      field('transported_at', 'Date and time', transportedAt),
+      h('div', { class: 'field-row' }, field('transported_at', 'Date', transportedDay), field('transported_time', 'Time', transportedTime)),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));
     document.body.append(overlay);
@@ -219,7 +222,9 @@
           [r.kind === 'in' ? `${r.quantity} ${r.unit || ''} to return`.trim() : `${r.quantity} ${r.unit || ''} requested`.trim(),
             r.kind === 'in' ? null : `${r.stock_qty} ${r.unit || ''} in stock`.trim(),
             r.project_title ? `${r.project_code} · ${r.project_title}` : null,
-            r.created_by_name ? `Requested by ${r.created_by_name}` : null, r.note || null]
+            // When it was asked for (kohal, 2026-11-08: "i wanna show date of request as well here") - a pending request's
+            // entry_date is the day it was made; approving moves it to the day the material actually leaves.
+            `Requested${r.created_by_name ? ` by ${r.created_by_name}` : ''} on ${fmtDate(r.entry_date)}`, r.note || null]
             .filter(Boolean).join(' · ')),
         h('span', { class: 'bill-links' },
           h('button', { type: 'button', class: 'link-btn', onclick: () => approveRequestSheet(r, data, reload) }, r.kind === 'in' ? 'Accept' : 'Approve'),
