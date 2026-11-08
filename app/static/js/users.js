@@ -72,6 +72,18 @@
     const canWrite = $('#view').dataset.canWrite === '1';
     const wrap = h('div', { class: 'users' });
     const listBox = h('div', { class: 'user-list card-group' }, h('p', { class: 'loading' }, 'Loading users…'));
+    // Search the list (kohal, 2026-11-08: "search in user and roles is not working" - the only box at the top was Add user's own
+    // Name field): by name, userid or role, as you type.
+    let allUsers = [];
+    const search = h('input', { type: 'search', placeholder: 'Search by name, userid or role', 'aria-label': 'Search users' });
+    const searchCount = h('p', { class: 'result-count', 'aria-live': 'polite' });
+    function renderList() {
+      const q = search.value.trim().toLowerCase();
+      const shown = q ? allUsers.filter((u) => [u.name, u.userid, u.role_name].some((v) => (v || '').toLowerCase().includes(q))) : allUsers;
+      searchCount.textContent = q ? plural(shown.length, 'user', 'users') : '';
+      clear(listBox).append(...(shown.length ? shown.map(userRow) : [h('p', { class: 'empty-state' }, 'Nobody matches this search.')]));
+    }
+    search.addEventListener('input', renderList);
     const resultBox = h('div', { hidden: true, 'aria-live': 'polite' });
     let roles = [];
     let statesOptions = [];
@@ -114,7 +126,8 @@
         const chosen = roleSelect.value || 'sales_field';
         roleSelect.setOptions(roles.map((r) => ({ value: r.key, label: r.name })));
         roleSelect.value = chosen;
-        clear(listBox).append(...data.users.map(userRow));
+        allUsers = data.users;
+        renderList();
       } catch (err) {
         clear(listBox).append(h('p', { class: 'empty-state' }, err.message));
       }
@@ -284,6 +297,7 @@
         await refresh();
       },
     },
+      h('h2', {}, 'Add new user'),
       h('label', { for: 'u-name' }, 'Name'),
       nameInput,
       nameErr,
@@ -293,7 +307,7 @@
       addBtn,
       h('p', { class: 'hint' }, 'The role decides which services they can open. The app gives them a userid (their name plus 4 digits) and a one-time setup code to share.'));
 
-    wrap.append(...[canWrite ? form : null, resultBox, listBox].filter(Boolean));
+    wrap.append(...[canWrite ? form : null, resultBox, h('div', { class: 'user-search' }, h('h2', {}, 'Search existing users'), search, searchCount), listBox].filter(Boolean));
     refresh();
     return wrap;
   }

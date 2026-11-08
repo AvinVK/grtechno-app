@@ -899,6 +899,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 
 .add-user { display: grid; gap: 6px; }
 .add-user label { font-size: 14px; font-weight: 600; }
+.add-user h2, .user-search h2 { margin: 0 0 6px; }
 .add-user-row { display: flex; gap: 8px; }
 .add-user-row input { flex: 1; min-width: 0; }
 .add-user-row .btn { flex: none; }
@@ -921,6 +922,8 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .code-done { justify-self: center; }
 
 .user-list { display: grid; }
+.user-search { display: grid; gap: 6px; }
+.user-search .result-count:empty { display: none; }
 .user-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
