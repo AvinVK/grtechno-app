@@ -173,3 +173,20 @@ def test_the_house_rent_is_saved_on_the_employee(app, admin_client):
     assert admin_client.patch(f"/api/workforce/{wid}", json={"allowance_amount": "abc"}).status_code == 422
     assert admin_client.patch(f"/api/workforce/{wid}", json={"allowance_amount": ""}).status_code == 200
     assert admin_client.get(f"/api/workforce/{wid}").get_json()["worker"]["allowance_amount"] is None
+
+
+def test_the_sheet_and_the_excel_file_can_be_cut_to_one_employee(app, admin_client):
+    """kohal, 2026-11-08: "give filter to select the employee"."""
+    with app.app_context():
+        ankush = _salaried("Ankush", "15000", allowance="1000")
+        _salaried("Rashmi", "15000", absent_days=(6, 7, 8, 9))
+        _pusher()
+        db.session.commit()
+        aid = ankush.id
+    data = admin_client.get(f"/api/payroll/sheet?month=2026-10&worker_id={aid}").get_json()
+    assert [r["name"] for r in data["rows"]] == ["Ankush"] and data["totals"]["gross"] == 16000
+    assert [e["label"] for e in data["employees"]] == ["Ankush", "Rashmi"]                  # everyone can still be picked
+    res = admin_client.get(f"/api/payroll/sheet.xlsx?month=2026-10&worker_id={aid}")
+    assert "payment-sheet-2026-10-ankush.xlsx" in res.headers["Content-Disposition"]
+    ws = load_workbook(io.BytesIO(res.data))["October 2026"]
+    assert ws["B4"].value == "Ankush" and ws["B5"].value == "Total"

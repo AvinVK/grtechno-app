@@ -38,6 +38,7 @@ Gated by the "workforce" module (app/modules.py), same as Employee management - 
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
 
 import calendar
+import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -389,8 +390,9 @@ def _advance_columns(w, first: date, last: date) -> dict:
     return {"old": old, "taken": taken, "total": old + taken, "deduction": deduction, "balance": old + taken - deduction}
 
 
-def payment_sheet(year: int, month: int) -> dict:
-    """Every salaried employee's row of the month's payment sheet (SHEET_COLUMNS), in name order."""
+def payment_sheet(year: int, month: int, worker_id=None) -> dict:
+    """Every salaried employee's row of the month's payment sheet (SHEET_COLUMNS), in name order - or just one employee's
+    (kohal, 2026-11-08: "give filter to select the employee"). `employees` lists everyone who can be picked."""
     _, data_until = _period()
     today = today_local()
     data_until_end = min(today, data_until) if data_until else None
@@ -399,6 +401,9 @@ def payment_sheet(year: int, month: int) -> dict:
     rows = []
     counted_until, in_progress = None, False
     workers = Worker.query.filter_by(employment_type="regular").filter(Worker.wage_amount.isnot(None)).order_by(Worker.name).all()
+    employees = [{"value": str(w.id), "label": w.name} for w in workers]
+    if worker_id is not None:
+        workers = [w for w in workers if w.id == worker_id]
     for w in workers:
         m = salaried_month(w, year, month, data_until_end)
         if m is None:
@@ -424,7 +429,8 @@ def payment_sheet(year: int, month: int) -> dict:
     money_keys = ("salary", "deduction", "net", "allowance", "old_advance", "advance_taken", "advance_total", "advance_deduction",
                   "advance_balance", "salary_due", "gross", "paid")
     totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
-    return {"month": _month_key(first), "label": first.strftime("%B %Y"), "rows": rows, "totals": totals,
+    return {"month": _month_key(first), "label": first.strftime("%B %Y"), "rows": rows, "totals": totals, "employees": employees,
+            "worker_id": worker_id,
             "in_progress": in_progress, "counted_until": counted_until.isoformat() if counted_until else None}
 
 
@@ -453,7 +459,7 @@ def _sheet_month_arg(today: date):
 def sheet():
     today = today_local()
     year, month = _sheet_month_arg(today)
-    return jsonify(**payment_sheet(year, month), months=_sheet_months(today), currency=settings_for_client()["currency"])
+    return jsonify(**payment_sheet(year, month, request.args.get("worker_id", type=int)), months=_sheet_months(today), currency=settings_for_client()["currency"])
 
 
 def sheet_workbook(data: dict) -> list:
@@ -490,10 +496,13 @@ def sheet_workbook(data: dict) -> list:
 def sheet_xlsx():
     today = today_local()
     year, month = _sheet_month_arg(today)
-    data = payment_sheet(year, month)
+    data = payment_sheet(year, month, request.args.get("worker_id", type=int))
+    who = ""
+    if data["worker_id"] and data["rows"]:
+        who = "-" + re.sub(r"[^a-z0-9]+", "-", data["rows"][0]["name"].lower()).strip("-")
     return Response(build_workbook(sheet_workbook(data)),
                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f'attachment; filename="payment-sheet-{year}-{month:02d}.xlsx"',
+                    headers={"Content-Disposition": f'attachment; filename="payment-sheet-{year}-{month:02d}{who}.xlsx"',
                              "Cache-Control": "no-store"})
 
 

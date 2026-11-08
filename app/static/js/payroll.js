@@ -647,16 +647,25 @@
   const num = (v) => (v ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '');
   const dayMonth = (iso) => { const d = parseDay(iso); return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`; };
 
-  async function showSheet(month) {
+  async function showSheet(month, workerId) {
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
-    try { data = await api(`/api/payroll/sheet${month ? `?month=${month}` : ''}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const query = new URLSearchParams();
+    if (month) query.set('month', month);
+    if (workerId) query.set('worker_id', workerId);
+    try { data = await api(`/api/payroll/sheet?${query}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
 
+    // Month and employee (kohal, 2026-11-08: "give filter to select the employee") - both narrow the Excel file too.
+    // Re-drawn in place: the picker closes by stepping back in history, which would undo a hash change made here.
+    const go = (m, w) => showSheet(m, w ? Number(w) : null);
     const monthSel = selectField(data.months, data.month, { title: 'Month' });
     monthSel.setAttribute('aria-label', 'Month');
-    monthSel.addEventListener('change', () => { window.location.hash = `#sheet/${monthSel.value}`; });
-    const download = h('a', { class: 'btn primary', download: '', href: `/api/payroll/sheet.xlsx?month=${data.month}` }, 'Download Excel');
+    monthSel.addEventListener('change', () => go(monthSel.value, workerId));
+    const employeeSel = selectField([{ value: '', label: 'All employees' }, ...data.employees], workerId ? String(workerId) : '', { title: 'Employee' });
+    employeeSel.setAttribute('aria-label', 'Employee');
+    employeeSel.addEventListener('change', () => go(data.month, employeeSel.value));
+    const download = h('a', { class: 'btn primary', download: '', href: `/api/payroll/sheet.xlsx?month=${data.month}${workerId ? `&worker_id=${workerId}` : ''}` }, 'Download Excel');
 
     // Column order and names as on kohal's sheet (Sr. No. is left to the Excel file - the name stays pinned here instead).
     const cols = [
@@ -692,11 +701,12 @@
     clear(view).append(h('div', {},
       tabs('sheet'),
       h('div', { class: 'ps-bar' }, monthSel, download),
+      h('div', { class: 'ps-filter' }, employeeSel),
       h('h2', { class: 'ps-title' }, `Payment sheet of ${data.label}`),
       note ? h('p', { class: 'hint' }, note) : null,
       data.rows.length
         ? h('div', { class: 'ps-scroll' }, h('table', { class: 'pay-sheet' }, head, body, foot))
-        : h('p', { class: 'empty-state' }, 'No salaried employee with a salary set for this month.'),
+        : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this month.' : 'No salaried employee with a salary set for this month.'),
       h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays and approved paid leave are '
         + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '
         + 'Deduction is what absences took off the salary; Gross salary is the month net salary plus house rent / petrol, less the advance deduction.')));
@@ -704,8 +714,8 @@
 
   function route() {
     const hash = window.location.hash;
-    let s = /^#sheet(?:\/(\d{4}-\d{2}))?$/.exec(hash);
-    if (s) return showSheet(s[1] || null);
+    let s = /^#sheet(?:\/(\d{4}-\d{2}))?(?:\/(\d+))?$/.exec(hash);
+    if (s) return showSheet(s[1] || null, s[2] ? Number(s[2]) : null);
     let m = /^#overview\/person\/(\d+)\/cycles$/.exec(hash);
     if (m) return showPersonPeriods(Number(m[1]));
     m = /^#overview\/person\/(\d+)(?:\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2}))?$/.exec(hash);
