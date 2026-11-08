@@ -248,16 +248,13 @@ def dismiss_rejection(record_id):
 
 @bp.delete("/api/attendance/<int:record_id>")
 def delete_record(record_id):
-    """Admin and other sees_all roles can remove a wrong or test record. Nobody else - a person deleting
-    their own attendance would defeat the point of keeping one."""
+    """A check-in is the employee's own record of their day, so nobody deletes it (kohal, 2026-11-08: "if the attendance was logged
+    by the user then that should not be editable or deletable"). A wrong one waiting for approval is rejected instead."""
     if not _team_access(g.user):
-        abort(403, "Only the admin, a project manager or the accountant can delete an attendance record.")
-    row = db.session.get(Attendance, record_id)
-    if row is None:
+        abort(403, "Only the admin, a project manager or the accountant can look after attendance records.")
+    if db.session.get(Attendance, record_id) is None:
         abort(404, "Not found")
-    db.session.delete(row)
-    db.session.commit()
-    return "", 204
+    abort(409, "This was logged by the employee themselves, so it can't be deleted.")
 
 
 def _restriction_dict(a):
@@ -442,13 +439,52 @@ def add_manual():
     row = WorkerAttendance(
         worker_id=worker.id, work_date=day, status=status, project_id=project.id if project else None, note=note,
         check_in_at=from_local(day, check_in) if check_in else None, check_out_at=from_local(day, check_out) if check_out else None)
-    # Nobody is counted absent from before they first turned up: for someone with no days at all yet, this first one is that
-    # day. (Never changed for anyone who already has a first/last day - their existing figures stay as they are.)
-    if status == "present" and worker.first_seen is None:
-        worker.first_seen = worker.last_seen = day
+    # first_seen is left alone (kohal, 2026-11-08): payroll counts pay from it, so setting it to a day added here cut every month
+    # before that day from an employee's salary. Where someone's record starts is their joining date (workers._record_start).
     db.session.add(row)
     db.session.commit()
     return jsonify(record={**row.to_dict(), "worker_name": worker.name}), 201
+
+
+@bp.post("/api/attendance/manual/day")
+def set_day():
+    """Mark one day present or not from a person's attendance record (kohal, 2026-11-08: "edit (add remove) attendance should be
+    in attendance register ... should be a toggle"). On: a recorded present day for the usual 07:00-19:00 (an absent one already
+    there becomes present). Off: the recorded day is removed. A day they checked in for themselves on the app is not removed from
+    here - that is their own record, taken out from the team register's Delete instead."""
+    if not can_manage_attendance(g.user):
+        abort(403, "Only the admin or a project manager can change attendance.")
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    worker = db.session.get(Worker, payload.get("worker_id")) if isinstance(payload.get("worker_id"), int) else None
+    if worker is None:
+        abort(404, "Choose an employee from the list")
+    try:
+        day = date.fromisoformat(str(payload.get("work_date") or ""))
+    except ValueError:
+        abort(422, "Pick the day")
+    if day > today_local():
+        abort(422, "That day hasn't happened yet")
+    present = bool(payload.get("present"))
+    row = WorkerAttendance.query.filter_by(worker_id=worker.id, work_date=day).first()
+    on_app = worker.user_code and Attendance.query.filter_by(user_code=worker.user_code, work_date=day, status="approved").first()
+    if present:
+        if row is None:
+            row = WorkerAttendance(worker_id=worker.id, work_date=day, status="present", note="",
+                                   check_in_at=from_local(day, time(7, 0)), check_out_at=from_local(day, time(19, 0)))
+            db.session.add(row)
+        elif row.status != "present":
+            row.status = "present"
+            if row.check_in_at is None:
+                row.check_in_at, row.check_out_at = from_local(day, time(7, 0)), from_local(day, time(19, 0))
+    else:
+        if on_app:
+            abort(409, "They checked in for this day themselves on the app, so it can't be removed.")
+        if row is not None:
+            db.session.delete(row)
+    db.session.commit()
+    return jsonify(ok=True, date=day.isoformat(), present=present)
 
 
 # ---------- absence notices (kohal, 2026-10-19) ----------

@@ -190,3 +190,20 @@ def test_the_sheet_and_the_excel_file_can_be_cut_to_one_employee(app, admin_clie
     assert "payment-sheet-2026-10-ankush.xlsx" in res.headers["Content-Disposition"]
     ws = load_workbook(io.BytesIO(res.data))["October 2026"]
     assert ws["B4"].value == "Ankush" and ws["B5"].value == "Total"
+
+
+
+def test_the_day_toggle_on_the_attendance_record_changes_the_salary(app, admin_client):
+    """kohal, 2026-11-08: "does marking present/absent also affects the salary? it should"."""
+    with app.app_context():
+        w = _salaried("Ritesh", "31000")                         # present every working day of October
+        _pusher()
+        db.session.commit()
+        wid = w.id
+    assert _row(_sheet(admin_client), "Ritesh")["net"] == 31000
+    off = admin_client.post("/api/attendance/manual/day", json={"worker_id": wid, "work_date": "2026-10-14", "present": False})
+    assert off.status_code == 200
+    row = _row(_sheet(admin_client), "Ritesh")
+    assert (row["absent"], row["net"]) == (1, 1000 * 30)                                    # 31,000 / 31 = 1,000 a day
+    admin_client.post("/api/attendance/manual/day", json={"worker_id": wid, "work_date": "2026-10-14", "present": True})
+    assert _row(_sheet(admin_client), "Ritesh")["net"] == 31000

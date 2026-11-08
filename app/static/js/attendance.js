@@ -316,7 +316,9 @@
     const barBox = h('div', {});
 
     function renderHistory() {
-      clear(historyBox).append(...historyWeeks(data.history, data.can_see_team ? reload : null));
+      // A check-in someone logged themselves is never deleted from here (kohal, 2026-11-08: "if the attendance was logged by the
+      // user then that should not be editable or deletable").
+      clear(historyBox).append(...historyWeeks(data.history, null));
     }
 
     function renderAbsence() {
@@ -367,7 +369,7 @@
       // t is always the open session here (data.today is null otherwise, handled above) - so this is
       // always the "still checked in" timeline; once they check out, the very next render falls into the
       // !t branch above instead (Check in again), earlier sessions today showing in the history below.
-      const links = [mapLink(t), data.can_see_team ? deleteLink(t, reload) : null].filter(Boolean);
+      const links = [mapLink(t)].filter(Boolean);
       const checkedIn = step('done', 'Checked in', h('span', { class: 'att-step-time' }, fmtTime(t.check_in_at)),
         h('span', { class: 'att-step-sub' }, t.work_label),
         links.length ? h('div', { class: 'att-day-links' }, links) : null);
@@ -565,7 +567,7 @@
         count.textContent = plural(here, 'person', 'people') + ' checked in';
         clear(list);
         if (!data.records.length && !recorded.length) { list.append(h('li', { class: 'empty-state' }, 'Nobody checked in on this day.')); return; }
-        data.records.forEach((a) => list.append(recordRow(a.user_name, a, refresh)));
+        data.records.forEach((a) => list.append(recordRow(a.user_name, a, null)));      // logged by them: not deletable
         recorded.forEach((a) => list.append(recordedRow(a)));
       } catch (err) {
         clear(list).append(h('li', { class: 'empty-state' }, err.message));

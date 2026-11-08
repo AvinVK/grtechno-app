@@ -176,7 +176,11 @@ def test_no_data_means_no_period(admin_client, app):
     body = admin_client.get("/api/workforce").get_json()
     assert body["period"] is None and body["data_until"] is None
     assert body["welder"][0]["days"] == 0 and {d["status"] for d in body["welder"][0]["week"]} == {"none"}
-    assert admin_client.get(f"/api/workforce/{wid}").get_json()["period"] is None
+    # one person's own record runs from when they started (here first seen 400 days ago, capped at a year) to today, whether or not
+    # any attendance has been recorded yet (kohal, 2026-11-08: "attendance should start from date of joining")
+    person = admin_client.get(f"/api/workforce/{wid}").get_json()
+    assert person["period"] == {"start": (date.today() - timedelta(days=365)).isoformat(), "end": date.today().isoformat()}
+    assert person["attendance"] == [] and person["data_until"] is None
 
 
 # ---------- admin can edit and remove an employee (every employee arrives from Users & roles or the
@@ -605,3 +609,63 @@ def test_an_employee_without_a_login_changes_role_freely(app, admin_client):
     db.session.commit()
     assert admin_client.patch(f"/api/workforce/{w.id}", json={"role_key": "unassigned"}).status_code == 200
     assert db.session.get(Worker, w.id).role_key is None
+
+
+
+# ---------- one person's record: from the joining date, with a present / not toggle per day (kohal, 2026-11-08) ----------
+
+def test_a_persons_record_starts_at_their_joining_date(app, admin_client):
+    today = date.today()
+    w = Worker(name="Joined Early", category="staff", joining_date=today - timedelta(days=50), first_seen=today - timedelta(days=5))
+    db.session.add(w)
+    db.session.commit()
+    data = admin_client.get(f"/api/workforce/{w.id}").get_json()
+    assert data["period"]["start"] == (today - timedelta(days=50)).isoformat() and data["can_edit_attendance"] is True
+
+
+def test_the_day_toggle_adds_and_removes_a_day(app, admin_client):
+    today = date.today()
+    w = Worker(name="Toggle Me", category="staff", joining_date=today - timedelta(days=20))
+    db.session.add(w)
+    db.session.commit()
+    day = (today - timedelta(days=3)).isoformat()
+    assert admin_client.post("/api/attendance/manual/day", json={"worker_id": w.id, "work_date": day, "present": True}).status_code == 200
+    row = WorkerAttendance.query.filter_by(worker_id=w.id).one()
+    assert row.status == "present" and row.hours == 12.0                              # the usual 07:00-19:00
+    rec = next(a for a in admin_client.get(f"/api/workforce/{w.id}").get_json()["attendance"] if a["work_date"] == day)
+    assert rec["source"] == "recorded"
+    assert admin_client.post("/api/attendance/manual/day", json={"worker_id": w.id, "work_date": day, "present": False}).status_code == 200
+    assert WorkerAttendance.query.filter_by(worker_id=w.id).count() == 0
+    future = (today + timedelta(days=1)).isoformat()
+    assert admin_client.post("/api/attendance/manual/day", json={"worker_id": w.id, "work_date": future, "present": True}).status_code == 422
+
+
+def test_an_absent_day_turns_present_and_an_app_check_in_is_not_removed_here(app, admin_client):
+    from conftest import make_user
+    from app.timeutil import from_local
+    from datetime import time
+    today = date.today()
+    user = make_user("App Checker")
+    w = Worker(name="App Checker", category="staff", user_code=user.code, joining_date=today - timedelta(days=20))
+    db.session.add(w)
+    db.session.flush()
+    absent_day, app_day = today - timedelta(days=4), today - timedelta(days=2)
+    db.session.add(WorkerAttendance(worker=w, work_date=absent_day, status="absent"))
+    db.session.add(Attendance(user_code=user.code, work_date=app_day, check_in_at=from_local(app_day, time(9, 0)), status="approved"))
+    db.session.commit()
+    assert admin_client.post("/api/attendance/manual/day", json={"worker_id": w.id, "work_date": absent_day.isoformat(), "present": True}).status_code == 200
+    assert WorkerAttendance.query.filter_by(worker_id=w.id, work_date=absent_day).one().status == "present"
+    res = admin_client.post("/api/attendance/manual/day", json={"worker_id": w.id, "work_date": app_day.isoformat(), "present": False})
+    assert res.status_code == 409 and Attendance.query.filter_by(user_code=user.code).count() == 1
+    rec = next(a for a in admin_client.get(f"/api/workforce/{w.id}").get_json()["attendance"] if a["work_date"] == app_day.isoformat())
+    assert rec["source"] == "app"
+
+
+def test_only_the_admin_or_a_project_manager_toggles_days(app, client, accounts_client, manager_client):
+    w = Worker(name="Guarded", category="staff", joining_date=date.today() - timedelta(days=10))
+    db.session.add(w)
+    db.session.commit()
+    body = {"worker_id": w.id, "work_date": (date.today() - timedelta(days=1)).isoformat(), "present": True}
+    assert client.post("/api/attendance/manual/day", json=body).status_code in (403, 404)
+    assert accounts_client.post("/api/attendance/manual/day", json=body).status_code == 403
+    assert manager_client.post("/api/attendance/manual/day", json=body).status_code == 200
