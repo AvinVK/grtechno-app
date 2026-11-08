@@ -288,8 +288,12 @@ window.LD = (() => {
     const list = items.map((i) => (typeof i === 'object' ? i : { value: i, label: i }));
     let current = value != null ? String(value) : '';
     const found = () => list.find((i) => String(i.value) === current);
+    // An item with an empty value ("Not set", "A new client…") means nothing is picked: the box stays empty with the placeholder
+    // showing, rather than holding those words as typed text - which then filtered the list down to just themselves (kohal,
+    // 2026-11-08: "it picks not set first and when backspacing the 'not set' then the employees names starts coming").
+    const shownLabel = () => { const f = found(); return f && String(f.value) !== '' ? f.label : ''; };
     const input = h('input', { type: 'text', autocomplete: 'off', placeholder: opts.placeholder || 'Search…' });
-    input.value = found() ? found().label : '';
+    input.value = shownLabel();
     const dropdown = h('ul', { class: 'name-suggest-list', role: 'listbox' });
     dropdown.hidden = true;
     const wrap = h('div', { class: 'name-suggest' }, input, dropdown);
@@ -307,7 +311,8 @@ window.LD = (() => {
     // (max-height on .name-suggest-list), so a much higher cap costs nothing and covers every real list
     // in this app in practice.
     const showMatches = () => {
-      const q = input.value.trim().toLowerCase();
+      // Text that is just the current pick (tapping back into a filled box) browses the whole list, not only that one name.
+      const q = input.value === shownLabel() ? '' : input.value.trim().toLowerCase();
       const matches = (q ? list.filter((i) => i.label.toLowerCase().includes(q)) : list).slice(0, 50);
       clear(dropdown);
       if (!matches.length) { dropdown.hidden = true; return; }
@@ -316,7 +321,7 @@ window.LD = (() => {
         onmousedown: (e) => e.preventDefault(),      // keep focus on the field, so the click lands before blur closes the list
         onclick: () => {
           current = String(i.value);
-          input.value = i.label;
+          input.value = shownLabel();
           closeList();
           justPicked = true;
           input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -335,7 +340,7 @@ window.LD = (() => {
 
     Object.defineProperty(wrap, 'value', {
       get: () => current,
-      set: (v) => { current = v != null ? String(v) : ''; const f = found(); input.value = f ? f.label : ''; },
+      set: (v) => { current = v != null ? String(v) : ''; input.value = shownLabel(); },
       configurable: true,
     });
     Object.defineProperty(wrap, 'disabled', {
@@ -485,6 +490,73 @@ window.LD = (() => {
     btn.addEventListener('click', async () => {
       if (btn.disabled) return;
       const chosen = await pickDate(current, opts);
+      if (chosen === undefined) return;
+      btn.value = chosen;
+      btn.dispatchEvent(new Event('input', { bubbles: true }));
+      btn.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    return btn;
+  }
+
+  /* The app's own time picker (kohal, 2026-11-08: "the date picker is not in app picker, its browsers fix it and check everywhere
+     in the app") - hour, minute (5-minute steps) and AM/PM in a card like the calendar's, instead of the browser's own clock.
+     Resolves "HH:MM" (24-hour), or undefined if closed without picking. */
+  function pickTime(current) {
+    return new Promise((resolve) => {
+      const [h0, m0] = (current || '09:00').split(':').map(Number);
+      let hour12 = h0 % 12 || 12;
+      let minute = m0;
+      let pm = h0 >= 12;
+      const label = h('span', { class: 'cal-month-label' });
+      const hours = h('div', { class: 'time-grid' });
+      const minutes = h('div', { class: 'time-grid' });
+      const halves = h('div', { class: 'time-halves' });
+      const value = () => `${String((hour12 % 12) + (pm ? 12 : 0)).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      function render() {
+        label.textContent = `${hour12}:${String(minute).padStart(2, '0')} ${pm ? 'PM' : 'AM'}`;
+        clear(hours).append(...Array.from({ length: 12 }, (_, i) => i + 1).map((n) => h('button', {
+          type: 'button', class: `cal-cell${n === hour12 ? ' selected' : ''}`, onclick: () => { hour12 = n; render(); } }, String(n))));
+        clear(minutes).append(...Array.from({ length: 12 }, (_, i) => i * 5).map((n) => h('button', {
+          type: 'button', class: `cal-cell${n === minute ? ' selected' : ''}`, onclick: () => { minute = n; render(); } }, String(n).padStart(2, '0'))));
+        clear(halves).append(...[['AM', false], ['PM', true]].map(([t, isPm]) => h('button', {
+          type: 'button', class: `cal-cell${pm === isPm ? ' selected' : ''}`, onclick: () => { pm = isPm; render(); } }, t)));
+      }
+      render();
+      const finish = (v) => { window.removeEventListener('keydown', onKey); overlay.remove(); resolve(v); };
+      const card = h('div', { class: 'confirm-card cal-card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Pick a time' },
+        h('div', { class: 'cal-head time-head' }, label),
+        h('span', { class: 'time-label' }, 'Hour'), hours,
+        h('span', { class: 'time-label' }, 'Minute'), minutes,
+        halves,
+        h('div', { class: 'cal-actions' },
+          h('button', { type: 'button', class: 'btn small', onclick: () => finish(undefined) }, 'Cancel'),
+          h('button', { type: 'button', class: 'btn small primary', onclick: () => finish(value()) }, 'Done')));
+      const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) finish(undefined); } }, card);
+      function onKey(e) { if (e.key === 'Escape') finish(undefined); }
+      window.addEventListener('keydown', onKey);
+      document.body.append(overlay);
+    });
+  }
+
+  /* Like dateField, for a time: `.value` is "HH:MM" (24-hour), shown as "7:00 AM"; a change event fires on pick. */
+  function timeField(value, opts = {}) {
+    let current = value || '';
+    const btn = h('button', { type: 'button', class: 'field-picker' });
+    const fmt = (v) => {
+      if (!v) return opts.placeholder || 'Time';
+      const [hh, mm] = v.split(':').map(Number);
+      return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh >= 12 ? 'PM' : 'AM'}`;
+    };
+    const relabel = () => { btn.textContent = fmt(current); btn.classList.toggle('placeholder', !current); };
+    Object.defineProperty(btn, 'value', {
+      get: () => current,
+      set: (v) => { current = v || ''; relabel(); },
+      configurable: true,
+    });
+    relabel();
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      const chosen = await pickTime(current);
       if (chosen === undefined) return;
       btn.value = chosen;
       btn.dispatchEvent(new Event('input', { bubbles: true }));
@@ -669,7 +741,7 @@ window.LD = (() => {
   return {
     PAY_APPS, payLink, openPayApp, payAppPicker,
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
-    pickList, selectField, searchField, searchAddField, categoryPicker, rolePicker, pickDate, dateField, closeOnBack,
+    pickList, selectField, searchField, searchAddField, categoryPicker, rolePicker, pickDate, dateField, pickTime, timeField, closeOnBack,
   };
 })();
 

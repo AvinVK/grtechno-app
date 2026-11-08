@@ -553,9 +553,8 @@
     if (L.enquired_by_id && !enquiryOptions.some((o) => o.value === L.enquired_by_id)) {
       enquiryOptions.push({ value: L.enquired_by_id, label: L.enquired_by_name || 'Previously picked' });
     }
-    const enquiredBySel = searchField(
-      [{ value: '', label: 'Not set' }, ...enquiryOptions],
-      L.enquired_by_id ?? '', { placeholder: 'Not set' });
+    // Required, so no "Not set" row - the box just starts empty and lists everyone (kohal, 2026-11-08).
+    const enquiredBySel = searchField(enquiryOptions, L.enquired_by_id ?? '', { placeholder: 'Search by name' });
 
     const errorBox = h('div', { class: 'form-error', role: 'alert', tabindex: '-1', hidden: true });
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, lead ? 'Save changes' : 'Add lead');

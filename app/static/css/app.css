@@ -1417,6 +1417,13 @@ a.p-client-name { color: var(--accent-dark); }
 .cal-cell.selected { background: var(--accent); color: #fff; }
 .cal-actions { display: flex; gap: 8px; margin-top: 14px; }
 .cal-actions .btn { flex: 1; }
+/* The app's own time picker (pickTime in common.js): the calendar's card and cells, laid out for hours / minutes / AM-PM. */
+.time-head { justify-content: center; }
+.time-label { display: block; margin: 8px 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.time-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.time-halves { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px; }
+.time-halves .cal-cell { aspect-ratio: auto; height: 40px; border-radius: 999px; border: 1px solid var(--line-strong); font-weight: 600; }
+.time-halves .cal-cell.selected { border-color: var(--accent); }
 
 .picker-card { max-width: 420px; max-height: 80vh; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .picker-toggle {

@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, dateField, pickList, field, closeOnBack, selectField, searchField } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField, timeField, pickList, field, closeOnBack, selectField, searchField } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
@@ -449,8 +449,8 @@
 
     const employee = searchField(options.workers.map((w) => ({ value: w.id, label: w.name })), '', { placeholder: 'Search by name' });
     const mode = selectField([{ value: 'present', label: 'Present' }, { value: 'absent', label: 'Absent' }], 'present', { title: 'Tapping a day marks it', placeholder: 'Present' });
-    const checkIn = h('input', { type: 'time', value: USUAL_IN });
-    const checkOut = h('input', { type: 'time', value: USUAL_OUT });
+    const checkIn = timeField(USUAL_IN);                     // the app's own time picker, not the browser's (kohal, 2026-11-08)
+    const checkOut = timeField(USUAL_OUT);
     const hours = h('div', { class: 'field-row' }, field('check_in', 'From', checkIn), field('check_out', 'To', checkOut));
     mode.addEventListener('change', () => { hours.hidden = mode.value === 'absent'; });
     const errEl = h('p', { class: 'err', role: 'alert' });
