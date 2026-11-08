@@ -30,8 +30,8 @@ def test_the_admin_adds_a_present_day_with_times(app, admin_client):
     with app.app_context():
         row = WorkerAttendance.query.filter_by(worker_id=wid).one()
         assert row.work_date.isoformat() == day
-        # a first day for someone with none anchors where they are counted from; it is stored the same way the WhatsApp import stores a day
-        assert db.session.get(Worker, wid).first_seen.isoformat() == day
+        # first_seen is never set from here: payroll counts pay from it, so it used to cut the months before a day added by hand
+        assert db.session.get(Worker, wid).first_seen is None
 
 
 def test_a_day_can_be_added_without_times_or_as_absent(app, admin_client):
@@ -178,4 +178,4 @@ def test_a_project_manager_has_the_same_attendance_access_as_the_admin(app, mana
     assert manager_client.get(f"/api/attendance/manual/calendar?worker_id={wid}&month={day.year}-{day.month:02d}").status_code == 200
     team = manager_client.get(f"/api/attendance/team?date={day.isoformat()}").get_json()          # everyone's, not only their own
     assert [a["user_name"] for a in team["records"]] == ["Field Person"] and [a["worker_name"] for a in team["recorded"]] == ["Ravi Welder"]
-    assert manager_client.delete(f"/api/attendance/{rec_id}").status_code == 204
+    assert manager_client.delete(f"/api/attendance/{rec_id}").status_code == 409        # logged by them: never deleted (2026-11-08)

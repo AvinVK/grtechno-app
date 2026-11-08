@@ -567,10 +567,55 @@
       a && a.note ? h('span', { class: 'att-day-sub' }, a.note) : null);
   }
 
+  /* Present / not, per day, for whoever can change attendance (kohal, 2026-11-08: "edit (add remove) attendance should be in
+     attendance register ... should be a toggle"). On adds the day (07:00-19:00); off removes it, after asking. A day they checked
+     in for themselves on the app stays locked on - that is removed from the team register instead. */
+  function dayToggle(data, day, isPresent, a) {
+    if (!data.can_edit_attendance || day.getDay() === 0 && !isPresent) return null;
+    // A day they logged themselves on the app is theirs: no switch at all, just who logged it (kohal, 2026-11-08).
+    if (isPresent && a && a.source === 'app') return h('span', { class: 'att-own-log' }, 'Logged by them');
+    const locked = false;
+    const input = h('input', { type: 'checkbox', checked: isPresent, disabled: locked,
+      'aria-label': `${shortDate(day)}: ${isPresent ? 'present' : 'not present'}` });
+    input.addEventListener('change', async () => {
+      const present = input.checked;
+      if (!present && !await confirm(`Remove ${data.worker.name}'s attendance on ${shortDate(day)}?`, { ok: 'Remove', danger: true, title: 'Remove attendance' })) {
+        input.checked = true;
+        return;
+      }
+      input.disabled = true;
+      try {
+        await api('/api/attendance/manual/day', { method: 'POST', body: { worker_id: data.worker.id, work_date: dayKey(day), present } });
+        toast(present ? 'Marked present' : 'Attendance removed');
+        invalidateCache();
+        showPerson(data.worker.id, { keepScroll: true });
+      } catch (err) {
+        input.checked = !present;
+        input.disabled = false;
+        toast(err.message, true);
+      }
+    });
+    return h('label', { class: 'switch att-switch', title: locked ? 'Checked in on the app' : null },
+      input, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
+  }
+
+  function withToggle(row, toggle) {
+    if (toggle) { const top = row.querySelector('.att-day-top'); top.classList.add('has-switch'); top.append(toggle); }
+    return row;
+  }
+
+  function noDataRow(day) {
+    return h('li', { class: 'att-day att-day-off' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, shortDate(day)),
+        h('span', { class: 'att-day-hours' }, 'No data yet')));
+  }
+
   function weeks(data) {
     const byDay = new Map(data.attendance.map((a) => [a.work_date, a]));
     const start = parseDay(data.period.start);
     const end = parseDay(data.period.end);
+    const dataUntil = data.data_until ? parseDay(data.data_until) : null;
     const thisMonday = mondayOf(parseDay(data.today));
     const out = [];
     for (let monday = mondayOf(end); monday >= mondayOf(start); monday = addDays(monday, -7)) {
@@ -586,12 +631,14 @@
           days += 1;
           came += 1;
           total += a.hours || 0;
-          rows.push(presentRow(day, a));
+          rows.push(withToggle(presentRow(day, a), dayToggle(data, day, true, a)));
         } else if (day.getDay() === 0) {
           rows.push(offRow(day));                                       // Sunday off: not a missed day
+        } else if (!dataUntil || day > dataUntil) {
+          rows.push(withToggle(noDataRow(day), dayToggle(data, day, false, a)));   // past the last recorded day: not counted
         } else {
           days += 1;
-          rows.push(absentRow(day, a));
+          rows.push(withToggle(absentRow(day, a), dayToggle(data, day, false, a)));
         }
       }
       const label = +monday === +thisMonday ? 'This week'
@@ -624,7 +671,8 @@
       h('dl', { class: 'pay-overview-grid' }, rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
   }
 
-  async function showPerson(id) {
+  async function showPerson(id, { keepScroll = false } = {}) {
+    const scrollY = window.scrollY;
     setAttendanceLink(false);
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let data;
@@ -637,8 +685,9 @@
     // Working days only: a Sunday is the weekly day off, so it counts only if they came in anyway.
     const presentOn = new Set(data.attendance.filter((a) => a.status === 'present').map((a) => a.work_date));
     let days = 0;
+    const countedEnd = data.period && data.data_until && data.data_until < data.period.end ? data.data_until : data.period?.end;
     if (data.period) {
-      for (let d = parseDay(data.period.start); d <= parseDay(data.period.end); d = addDays(d, 1)) {
+      for (let d = parseDay(data.period.start); d <= parseDay(countedEnd); d = addDays(d, 1)) {
         if (d.getDay() !== 0 || presentOn.has(dayKey(d))) days += 1;
       }
     }
@@ -659,7 +708,7 @@
       canWrite ? h('div', { class: 'fn-actions fn-remove' },
         h('button', { class: 'btn small', type: 'button', onclick: () => openEditPerson(data.worker, data.roles, onChange) }, 'Edit'),
         h('button', { class: 'btn small danger', type: 'button', onclick: () => deletePerson(data.worker, { afterDelete: onChange }) }, 'Remove employee')) : null));
-    window.scrollTo(0, 0);
+    window.scrollTo(0, keepScroll ? scrollY : 0);
   }
 
   /* ---------- routing: '' boxes, #manpower / #staff a group, #p12 a person ---------- */

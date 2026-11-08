@@ -1630,6 +1630,12 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-date.none { border-style: dashed; }
 .fn-date.off { border-color: var(--line); background: var(--line); color: var(--muted); }
 .att-day-off .att-day-date, .att-day-off .att-day-hours { color: var(--muted); }
+/* The present / not switch on a day of someone's attendance record (kohal, 2026-11-08). */
+.att-day-top .att-switch { margin-left: 10px; }
+.att-day-top.has-switch { justify-content: flex-start; }
+.att-day-top.has-switch > :first-child { margin-right: auto; }
+.att-switch input:disabled { cursor: not-allowed; }
+.att-own-log { margin-left: 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .fn-section .wk-legend { margin: 10px 0 0; }
 .fn-full-link { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .fn-full-link:hover { text-decoration: underline; }

@@ -36,6 +36,7 @@ EMPLOYMENT_TYPES = ("regular", "daily_wages", "contractor")
 
 WINDOW_DAYS = 14           # how many days back the one-off WhatsApp import covers; shown next to each count
 PERIOD_DAYS = 30           # the Attendance sheet looks back at most this far from the last day with data
+RECORD_MAX_DAYS = 366      # one person's own record starts at their joining date, but never more than a year back
 WEEK_DAYS = 7              # the "last week" dots on Employee management
 UNASSIGNED = "unassigned"  # the group key for a worker with no role_key yet
 
@@ -178,7 +179,7 @@ def _attendance_records(worker, start, end):
     by_day = {}
     for a in worker.attendance:
         if start <= a.work_date <= end:
-            by_day[a.work_date] = a.to_dict()
+            by_day[a.work_date] = {**a.to_dict(), "source": "recorded"}
     if worker.user_code:
         self_rows = (Attendance.query
                      .filter_by(user_code=worker.user_code, status="approved")
@@ -193,6 +194,7 @@ def _attendance_records(worker, start, end):
             # a row only exists because they checked in, so "approved" (this function's own filter) always
             # means "present" here, not the approval status verbatim.
             row["status"] = "present"
+            row["source"] = "app"                 # their own check-in: the record's toggle leaves it alone
             by_day[day] = row
     return [by_day[d] for d in sorted(by_day)]
 
@@ -278,18 +280,38 @@ def person(worker_id):
     worker = db.session.get(Worker, worker_id)
     if worker is None:
         abort(404)
-    period, data_until = _period()
+    _, data_until = _period()
+    today = date.today()
+    # From the day they joined (kohal, 2026-11-08: "attendance should start from date of joining") up to today - not only the last
+    # 30 days with data. Without a joining date on file, from the first day they have any attendance at all.
+    start = _record_start(worker)
     own = None
     records = []
-    if period:
-        own_start = _own_start(worker, period[0])
-        if own_start <= period[1]:
-            own = {"start": own_start.isoformat(), "end": period[1].isoformat()}
-            records = _attendance_records(worker, own_start, period[1])
+    if start is not None:
+        start = max(start, today - timedelta(days=RECORD_MAX_DAYS - 1))
+        if start <= today:
+            own = {"start": start.isoformat(), "end": today.isoformat()}
+            records = _attendance_records(worker, start, today)
     roles = {r.key: r.name for r in Role.query.filter(Role.key != "admin").order_by(Role.name)}
+    from .attendance import can_manage_attendance
     return jsonify(worker=worker.to_dict(detail=True), period=own, attendance=records, roles=roles,
+                   can_edit_attendance=can_manage_attendance(g.user),
                    payment_modes=PAYMENT_MODES, currency=settings_for_client()["currency"],
                    today=date.today().isoformat(), data_until=data_until.isoformat() if data_until else None)
+
+
+def _record_start(worker):
+    """Where one person's attendance record starts: their joining date, else the first day any attendance was recorded for them
+    (the WhatsApp import, a day added by hand, or their own approved check-in), else None."""
+    if worker.joining_date:
+        return worker.joining_date
+    firsts = [worker.first_seen,
+              db.session.query(func.min(WorkerAttendance.work_date)).filter(WorkerAttendance.worker_id == worker.id).scalar()]
+    if worker.user_code:
+        firsts.append(db.session.query(func.min(Attendance.work_date))
+                      .filter(Attendance.user_code == worker.user_code, Attendance.status == "approved").scalar())
+    firsts = [d for d in firsts if d is not None]
+    return min(firsts) if firsts else None
 
 
 def _payload():
