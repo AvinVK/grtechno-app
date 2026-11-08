@@ -141,10 +141,11 @@ def test_the_excel_file_is_laid_out_like_the_sheet(app, admin_client):
     ws = wb["October 2026"]
     assert ws["A1"].value == "PAYMENT SHEET OF October 2026"
     merged = {str(m) for m in ws.merged_cells.ranges}
-    assert {"A1:T1", "C2:D2", "A2:A3", "B2:B3", "T2:T3"} <= merged
+    assert {"A1:X1", "C2:D2", "A2:A3", "B2:B3", "X2:X3"} <= merged
     assert (ws["C2"].value, ws["C3"].value, ws["D3"].value) == ("Work Days", "From", "To")
     row = [c.value for c in ws[4]]
-    assert row[0] == 1 and row[1] == "Ankush" and row[2].date() == date(2026, 10, 1) and row[4] == 15000 and row[18] == 16000
+    assert row[0] == 1 and row[1] == "Ankush" and row[2].date() == date(2026, 10, 1) and row[4] == 15000 and row[22] == 16000
+    assert (ws["J2"].value, ws["K2"].value, ws["L2"].value, ws["M2"].value) == ("Sick leave", "Casual leave", "Sick leave balance", "Casual leave balance")
     assert ws.cell(row=5, column=2).value == "Total"
     assert ws["B4"].border.left.style == "thin"
     with zipfile.ZipFile(io.BytesIO(res.data)) as z:                  # the header wraps

@@ -1999,3 +1999,8 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .ps-flag { display: block; font-weight: 500; font-size: 11px; color: var(--signal); }
 .pay-sheet tfoot th, .pay-sheet tfoot td { font-weight: 700; border-bottom: 0; }
 .pay-sheet tr > :last-child { border-right: 0; }
+
+/* Leave requests (kohal, 2026-11-08): the small line under a leave balance tile. */
+.stat-sub { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.stage-filter + .client-stats, .stage-filter + .att-week { margin-top: 16px; }
+.client-stats + .hint { margin-top: 10px; }

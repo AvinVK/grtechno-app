@@ -1681,6 +1681,48 @@ class AbsenceRequest(db.Model):
         }
 
 
+class LeaveRequest(db.Model):
+    """A salaried employee asking for sick or casual leave (kohal, 2026-11-08: "there are 6 sick leaves and 12 casual leaves for
+    salaried employees ... during attendance, there should be a tab of applying for any kind of leave and the request should goto
+    admin, once approved, it should be deducted and employee should be considered on that leave"). Leave builds up monthly over an
+    April-March year; see app/leaves.py. `days` is the working days asked for (Sundays are already paid days off, so never
+    counted). On approval, `deducted_days` come off the balance; any days beyond the balance are the admin's call - paid anyway
+    (`extra_paid_days`) or unpaid (`unpaid_days`, cut from the salary like an absence)."""
+
+    __tablename__ = "leave_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                                   # sick | casual
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    days = db.Column(db.Integer, nullable=False)
+    reason = db.Column(db.String(300), nullable=False, default="", server_default="")
+    # pending | approved | rejected | cancelled (withdrawn by the employee while still pending)
+    status = db.Column(db.String(10), nullable=False, default="pending", server_default="pending")
+    deducted_days = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    extra_paid_days = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    unpaid_days = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    decision_note = db.Column(db.String(300), nullable=False, default="", server_default="")
+    requested_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    decided_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    worker = db.relationship("Worker", backref=db.backref("leave_requests", cascade="all, delete-orphan", lazy=True))
+    decided_by = db.relationship("User", foreign_keys=[decided_by_code])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "worker_id": self.worker_id, "worker_name": self.worker.name if self.worker else None,
+            "kind": self.kind, "start_date": self.start_date.isoformat(), "end_date": self.end_date.isoformat(), "days": self.days,
+            "reason": self.reason, "status": self.status, "deducted_days": self.deducted_days,
+            "extra_paid_days": self.extra_paid_days, "unpaid_days": self.unpaid_days, "decision_note": self.decision_note,
+            "decided_by_name": self.decided_by.name if self.decided_by else None, "decided_at": _iso(self.decided_at),
+            "created_at": _iso(self.created_at),
+        }
+
+
 class WorkAssignment(db.Model):
     """Next-day work scheduling (kohal, 2026-10-19): a project manager, the accountant, or the admin
     allots a worker's work for a given day - against a project ('field'), or a location ('office') for

@@ -32,7 +32,7 @@ wages will be calculated as running sum"): two subtabs, same shape as Work plan/
 Salary is cut for absences (kohal, 2026-11-08, answered: "Cut for absences" - it used to be the full salary whatever the
 attendance): salary per day = monthly salary / days in the month, rounded to the rupee; a month with no absences pays the full
 salary, otherwise salary per day x days present. Sundays are paid days off, the same rule daily wages use, so "present" counts
-them. Days that have not happened yet (or that attendance data does not reach yet) are never counted absent.
+them, and so does approved paid leave (app/leaves.py); an unpaid leave day is cut like an absence. Days that have not happened yet (or that attendance data does not reach yet) are never counted absent.
 
 Gated by the "workforce" module (app/modules.py), same as Employee management - a look-only role
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
@@ -45,6 +45,7 @@ from flask import Blueprint, Response, abort, g, jsonify, render_template, reque
 
 from .advances import add_months, deduction_to_date, instalments, month_deduction, slot_deduction
 from .extensions import db
+from .leaves import balance as leave_balance, month_tally, paid_leave_days
 from .models import Attendance, Worker, WorkerAttendance, settings_for_client
 from .modules import can_write, check_module
 from .timeutil import today_local
@@ -114,7 +115,8 @@ def salaried_month(w, year: int, month: int, data_until_end) -> dict | None:
     absent, recorded = 0, 0
     if known_end is not None and known_end >= start:
         present = _present_days(w, start, known_end)
-        absent, recorded = _absent_days(start, known_end, present), len(present)
+        on_paid_leave = {d for d, (_, paid) in paid_leave_days(w, start, known_end).items() if paid}
+        absent, recorded = _absent_days(start, known_end, present | on_paid_leave), len(present | on_paid_leave)
     before_start = (start - first).days
     paid_days = days_in_month - before_start - absent
     net = salary if paid_days == days_in_month else per_day * paid_days
@@ -361,7 +363,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
 
 SHEET_COLUMNS = [
     "Sr. No.", "Name", "From", "To", "Salary", "Total days of month", "Salary per day", "Present days in month", "Absent days",
-    "Deduction", "Month net salary", "House rent / petrol", "Old adv bal", "Advance taken", "Total adv due", "Advance deduction",
+    "Sick leave", "Casual leave", "Sick leave balance", "Casual leave balance", "Deduction", "Month net salary", "House rent / petrol", "Old adv bal", "Advance taken", "Total adv due", "Advance deduction",
     "Advance balance", "Salary due", "Gross salary", "Paid",
 ]
 
@@ -402,6 +404,8 @@ def payment_sheet(year: int, month: int) -> dict:
         if m is None:
             continue
         adv = _advance_columns(w, first, last)
+        leave = month_tally(w, first, last)
+        left = leave_balance(w, last, used_until=last)
         gross = m["net"] + m["allowance"] - adv["deduction"]
         paid = _paid_for_month(w, first, last)
         if not m["complete"]:
@@ -410,7 +414,9 @@ def payment_sheet(year: int, month: int) -> dict:
         rows.append({
             "id": w.id, "name": w.name, "from": m["from"].isoformat(), "to": m["to"].isoformat(),
             "salary": float(m["salary"]), "days_in_month": m["days_in_month"], "per_day": float(m["per_day"]),
-            "present": m["present"], "absent": m["absent"], "deduction": float(m["cut"]), "net": float(m["net"]),
+            "present": m["present"], "absent": m["absent"], "sick_leave": leave["sick"], "casual_leave": leave["casual"],
+            "unpaid_leave": leave["unpaid"], "sick_balance": round(left["sick"]["balance"], 1),
+            "casual_balance": round(left["casual"]["balance"], 1), "deduction": float(m["cut"]), "net": float(m["net"]),
             "allowance": float(m["allowance"]), "old_advance": float(adv["old"]), "advance_taken": float(adv["taken"]),
             "advance_total": float(adv["total"]), "advance_deduction": float(adv["deduction"]), "advance_balance": float(adv["balance"]),
             "salary_due": float(gross - paid), "gross": float(gross), "paid": float(paid), "no_attendance": m["no_attendance"],
@@ -462,11 +468,12 @@ def sheet_workbook(data: dict) -> list:
     body = []
     for i, r in enumerate(data["rows"], start=1):
         body.append([i, r["name"], date.fromisoformat(r["from"]), date.fromisoformat(r["to"]), r["salary"], r["days_in_month"],
-                     r["per_day"], r["present"], r["absent"], r["deduction"], r["net"], r["allowance"], r["old_advance"],
+                     r["per_day"], r["present"], r["absent"], r["sick_leave"], r["casual_leave"], r["sick_balance"],
+                     r["casual_balance"], r["deduction"], r["net"], r["allowance"], r["old_advance"],
                      r["advance_taken"], r["advance_total"], r["advance_deduction"], r["advance_balance"], r["salary_due"],
                      r["gross"], r["paid"]])
     t = data["totals"]
-    total = [None, "Total", None, None, t["salary"], None, None, None, None, t["deduction"], t["net"], t["allowance"],
+    total = [None, "Total", None, None, t["salary"], None, None, None, None, None, None, None, None, t["deduction"], t["net"], t["allowance"],
              t["old_advance"], t["advance_taken"], t["advance_total"], t["advance_deduction"], t["advance_balance"],
              t["salary_due"], t["gross"], t["paid"]]
     last_col = _col(n - 1)

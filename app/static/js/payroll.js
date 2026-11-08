@@ -661,7 +661,8 @@
     // Column order and names as on kohal's sheet (Sr. No. is left to the Excel file - the name stays pinned here instead).
     const cols = [
       ['salary', 'Salary'], ['days_in_month', 'Total days of month'], ['per_day', 'Salary per day'], ['present', 'Present days'],
-      ['absent', 'Absent days'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'],
+      ['absent', 'Absent days'], ['sick_leave', 'Sick leave'], ['casual_leave', 'Casual leave'],
+      ['sick_balance', 'Sick leave balance'], ['casual_balance', 'Casual leave balance'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'],
       ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
       ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['salary_due', 'Salary due'],
       ['gross', 'Gross salary'], ['paid', 'Paid'],
@@ -696,7 +697,8 @@
       data.rows.length
         ? h('div', { class: 'ps-scroll' }, h('table', { class: 'pay-sheet' }, head, body, foot))
         : h('p', { class: 'empty-state' }, 'No salaried employee with a salary set for this month.'),
-      h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays are paid days off. '
+      h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays and approved paid leave are '
+        + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '
         + 'Deduction is what absences took off the salary; Gross salary is the month net salary plus house rent / petrol, less the advance deduction.')));
   }
 
