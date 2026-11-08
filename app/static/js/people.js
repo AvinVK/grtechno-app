@@ -377,6 +377,17 @@
     employmentSel.addEventListener('change', updateWageField);
     updateWageField();
 
+    // House rent / petrol (kohal, 2026-11-08) - a fixed monthly amount added to a salary on the payment sheet; salaried only.
+    const allowanceInput = h('input', {
+      type: 'number', min: '0', step: '1', inputmode: 'numeric', placeholder: 'e.g. 1000',
+      value: w.allowance_amount != null ? String(Math.round(w.allowance_amount)) : '',
+    });
+    const allowanceField = field('allowance_amount', 'House rent / petrol (per month)', allowanceInput,
+      { hint: 'Added to the salary every month. Leave empty if none.' });
+    const updateAllowanceField = () => { allowanceField.hidden = employmentSel.value !== 'regular'; };
+    employmentSel.addEventListener('change', updateAllowanceField);
+    updateAllowanceField();
+
     // Fooding (kohal, 2026-10-18: "this fooding check should be available for all employees. should be
     // automatically on for daily wages and off for others. their might be plans to remove the fooding
     // option completely") - one checkbox for everyone, the only thing the server checks (Worker.
@@ -425,6 +436,7 @@
             qualification: qualificationInput.value, experience: experienceInput.value, skills: skillsInput.value,
             phone: phoneInput.value, upi_id: upiInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
             wage_amount: wageInput.value === '' ? null : wageInput.value, fooding_opt_in: foodingInput.checked,
+            allowance_amount: employmentSel.value === 'regular' && allowanceInput.value !== '' ? allowanceInput.value : null,
             petrol_enabled: petrolInput.checked,
             pf_number: pfInput.value, esic_number: esicInput.value, reference: referenceInput.value,
           });
@@ -449,6 +461,7 @@
         field('joining_date', 'Joining date', joiningInput),
         field('employment_type', 'Salary, daily wages, or contractor', employmentSel),
         wageField,
+        allowanceField,
         h('div', { class: 'toggle-row wide' }, h('span', {}, 'Fooding?'), foodingSwitch),
         h('div', { class: 'toggle-row wide' }, h('span', {}, 'Petrol payment?'), petrolSwitch),
         field('pf_number', 'PF number', pfInput),

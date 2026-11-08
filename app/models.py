@@ -1809,6 +1809,8 @@ class Worker(db.Model):
     joining_date = db.Column(db.Date, nullable=True)
     employment_type = db.Column(db.String(20), nullable=False, default="", server_default="")   # regular | daily_wages
     wage_amount = db.Column(db.Numeric(14, 2), nullable=True)                  # salary (regular) or daily rate (daily_wages)
+    # House rent / petrol (kohal, 2026-11-08) - a fixed monthly amount on top of a salary, as on the monthly payment sheet.
+    allowance_amount = db.Column(db.Numeric(14, 2), nullable=True)
     # Whether this person is on the ₹200/day fooding wallet - the same checkbox for everyone (kohal,
     # 2026-10-18), not just daily-wage workers; see fooding_eligible below, which everywhere else actually
     # checks (it's just this column, but named for what it means rather than how it's stored).
@@ -1897,6 +1899,7 @@ class Worker(db.Model):
                 "joining_date": self.joining_date.isoformat() if self.joining_date else None,
                 "employment_type": self.employment_type,
                 "wage_amount": float(self.wage_amount) if self.wage_amount is not None else None,
+                "allowance_amount": float(self.allowance_amount) if self.allowance_amount is not None else None,
                 "fooding_opt_in": self.fooding_opt_in, "petrol_enabled": self.petrol_enabled,
                 "pf_number": self.pf_number, "esic_number": self.esic_number, "reference": self.reference,
                 "paid_amount": float(self.paid_amount),

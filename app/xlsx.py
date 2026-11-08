@@ -2,11 +2,15 @@
 
 PythonAnywhere does not install new packages when the site deploys (see app/deploy.py), so rather than depend on
 openpyxl this writes the handful of XML parts a workbook needs straight into a zip. It does only what the reports use:
-several sheets, a bold header row, text / number / date cells, column widths and a frozen header.
+several sheets, a bold header row, text / number / date cells, column widths and a frozen header - and, for a printed-style
+table like the salary payment sheet (kohal, 2026-11-08), merged cells, a big title row, wrapped centred headers and boxed cells.
 
     build_workbook([
         {"name": "Leads", "rows": [["Company", "Value"], ["Acme", 1200.5]], "bold_rows": {0}, "freeze": 1, "filter": True},
     ]) -> bytes
+
+Optional, per sheet: "merges" (["A1:T1", ...]), "row_styles" ({row index: "title" | "header" | "box" | "box_bold"} - a boxed
+row is outlined across "box_cols" columns, blanks included) and "widths" ({column index: width}, overriding the automatic ones).
 
 A cell value is a str, an int / float / Decimal (a number), a date or datetime (shown as a date), a bool, or None
 (empty). Anything else is written as text."""
@@ -22,8 +26,12 @@ _ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _BAD_SHEET_CHARS = re.compile(r"[\\/*?:\[\]]")
 _EPOCH = datetime(1899, 12, 30)
 
-# cellXfs in styles.xml, by index: 0 plain, 1 bold, 2 date, 3 number (2 decimals), 4 whole-number, 5 date and time
+# cellXfs in styles.xml, by index: 0 plain, 1 bold, 2 date, 3 number (2 decimals), 4 whole-number, 5 date and time;
+# then the boxed table styles - 6 title, 7 header (bold, centred, wrapped), 8 text, 9 whole number, 10 2 decimals, 11 date,
+# and 12-15 the same four in bold (a totals row).
 _PLAIN, _BOLD, _DATE, _MONEY, _INT, _STAMP = 0, 1, 2, 3, 4, 5
+_TITLE, _HEAD = 6, 7
+_BOXED = {False: {"text": 8, "int": 9, "money": 10, "date": 11}, True: {"text": 12, "int": 13, "money": 14, "date": 15}}
 
 
 def _col(n: int) -> str:
@@ -59,6 +67,28 @@ def _serial(value) -> float:
     return (datetime(value.year, value.month, value.day) - _EPOCH).days
 
 
+def _boxed_cell(ref: str, value, style: str):
+    """A cell of a boxed table row (see row_styles in the module docstring), and its width (a title row's is not counted)."""
+    if style in ("title", "header"):
+        s = _TITLE if style == "title" else _HEAD
+        if value is None or value == "":
+            return f'<c r="{ref}" s="{s}"/>', 0
+        text = str(value)
+        return (f'<c r="{ref}" t="inlineStr" s="{s}"><is><t xml:space="preserve">{_clean(text)}</t></is></c>',
+                0 if style == "title" else max((len(line) for line in text.splitlines()), default=0))
+    styles = _BOXED[style == "box_bold"]
+    if value is None or value == "":
+        return f'<c r="{ref}" s="{styles["text"]}"/>', 0
+    if isinstance(value, (datetime, date)):
+        return f'<c r="{ref}" s="{styles["date"]}"><v>{_serial(value)}</v></c>', 11
+    if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+        number = float(value)
+        s = styles["int"] if number == int(number) else styles["money"]
+        return f'<c r="{ref}" s="{s}"><v>{number!r}</v></c>', len(f"{number:,.2f}")
+    text = str(value)
+    return f'<c r="{ref}" t="inlineStr" s="{styles["text"]}"><is><t xml:space="preserve">{_clean(text)}</t></is></c>', len(text)
+
+
 def _cell(ref: str, value, bold: bool):
     """The <c> element for one value, and how many characters wide it is (for the column width)."""
     if value is None or value == "":
@@ -78,25 +108,32 @@ def _cell(ref: str, value, bold: bool):
             max((len(line) for line in text.splitlines()), default=0))
 
 
-def _sheet_xml(rows, bold_rows, freeze, filter_row=False):
+def _sheet_xml(rows, bold_rows, freeze, filter_row=False, merges=(), row_styles=None, box_cols=0, fixed_widths=None):
     widths = {}
     body = []
+    row_styles = row_styles or {}
     for r, row in enumerate(rows):
         cells = []
-        for c, value in enumerate(row):
-            xml, width = _cell(f"{_col(c)}{r + 1}", value, r in bold_rows)
+        style = row_styles.get(r)
+        values = list(row) + [None] * (box_cols - len(row)) if style else row
+        for c, value in enumerate(values):
+            ref = f"{_col(c)}{r + 1}"
+            xml, width = _boxed_cell(ref, value, style) if style else _cell(ref, value, r in bold_rows)
             if xml:
                 cells.append(xml)
             widths[c] = max(widths.get(c, 0), width)
         body.append(f'<row r="{r + 1}">{"".join(cells)}</row>')
-    cols = "".join(f'<col min="{c + 1}" max="{c + 1}" width="{min(max(w + 2, 8), 60)}" customWidth="1"/>'
+    widths = {c: min(max(w + 2, 8), 60) for c, w in widths.items()}
+    widths.update(fixed_widths or {})
+    cols = "".join(f'<col min="{c + 1}" max="{c + 1}" width="{w}" customWidth="1"/>'
                    for c, w in sorted(widths.items()))
+    merged = (f'<mergeCells count="{len(merges)}">' + "".join(f'<mergeCell ref="{m}"/>' for m in merges) + '</mergeCells>') if merges else ""
     flt = (f'<autoFilter ref="A1:{_col(max(widths) if widths else 0)}{len(rows)}"/>' if filter_row and rows and widths else "")
     pane = (f'<sheetViews><sheetView workbookViewId="0"><pane ySplit="{freeze}" topLeftCell="A{freeze + 1}" '
             f'activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>') if freeze else ""
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-            f'{pane}<cols>{cols}</cols><sheetData>{"".join(body)}</sheetData>{flt}</worksheet>') if cols else (
+            f'{pane}<cols>{cols}</cols><sheetData>{"".join(body)}</sheetData>{flt}{merged}</worksheet>') if cols else (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
             f'{pane}<sheetData>{"".join(body)}</sheetData></worksheet>')
@@ -106,17 +143,29 @@ _STYLES = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
     '<numFmts count="2"><numFmt numFmtId="164" formatCode="dd\\ mmm\\ yyyy"/><numFmt numFmtId="165" formatCode="dd\\ mmm\\ yyyy\\ hh:mm"/></numFmts>'
-    '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
+    '<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font>'
+    '<font><b/><sz val="14"/><name val="Calibri"/></font></fonts>'
     '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
-    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+    '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'
+    '<border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    '<cellXfs count="6">'
+    '<cellXfs count="16">'
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
     '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="left"/></xf>'
     '<xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
     '<xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
     '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="left"/></xf>'
+    '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'
+    '<xf numFmtId="3" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'
+    '<xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>'
+    '<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/>'
+    '<xf numFmtId="3" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyNumberFormat="1" applyBorder="1"/>'
+    '<xf numFmtId="4" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyNumberFormat="1" applyBorder="1"/>'
+    '<xf numFmtId="164" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf>'
     '</cellXfs>'
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     '</styleSheet>'
@@ -163,5 +212,7 @@ def build_workbook(sheets) -> bytes:
                    '</Relationships>')
         z.writestr("xl/styles.xml", _STYLES)
         for i, s in enumerate(sheets):
-            z.writestr(f"xl/worksheets/sheet{i + 1}.xml", _sheet_xml(s["rows"], set(s.get("bold_rows", ())), s.get("freeze", 0), s.get("filter", False)))
+            z.writestr(f"xl/worksheets/sheet{i + 1}.xml", _sheet_xml(
+                s["rows"], set(s.get("bold_rows", ())), s.get("freeze", 0), s.get("filter", False), s.get("merges", ()),
+                s.get("row_styles"), s.get("box_cols", 0), s.get("widths")))
     return buf.getvalue()

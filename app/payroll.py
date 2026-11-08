@@ -24,21 +24,33 @@ wages will be calculated as running sum"): two subtabs, same shape as Work plan/
     carry which pay period it was for (see app/workers.py's own _payments), so both the per-slot "paid"
     figure here and on Overview mean something, and so "last paid" can say which period it covered.
 
+  - Payment sheet (kohal, 2026-11-08: "this is now the payslip is suppose to look, is it possible to show in the app and then
+    have excel downloadable?"): one month, one row per salaried employee, laid out like the sheet kohal shared - salary, days
+    present and absent, the month's salary after absences, house rent / petrol, the advance columns and what is left to pay -
+    and the same thing as an Excel file. See salaried_month / payment_sheet below.
+
+Salary is cut for absences (kohal, 2026-11-08, answered: "Cut for absences" - it used to be the full salary whatever the
+attendance): salary per day = monthly salary / days in the month, rounded to the rupee; a month with no absences pays the full
+salary, otherwise salary per day x days present. Sundays are paid days off, the same rule daily wages use, so "present" counts
+them. Days that have not happened yet (or that attendance data does not reach yet) are never counted absent.
+
 Gated by the "workforce" module (app/modules.py), same as Employee management - a look-only role
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
 
 import calendar
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
-from flask import Blueprint, abort, g, jsonify, render_template, request
+from flask import Blueprint, Response, abort, g, jsonify, render_template, request
 
-from .advances import deduction_to_date, slot_deduction
+from .advances import add_months, deduction_to_date, instalments, month_deduction, slot_deduction
 from .extensions import db
 from .models import Attendance, Worker, WorkerAttendance, settings_for_client
 from .modules import can_write, check_module
+from .timeutil import today_local
 from .validation import api_errors
 from .workers import EMPLOYMENT_TYPES, _period
+from .xlsx import _col, build_workbook
 
 DAY_BY_DAY_MAX_RANGE = 62   # a pay-period slot is ~16 days, a month ~31 - this is generous headroom, not a real limit
 MAX_PERIODS = 24   # a year's worth of slots back from the current one - plenty for "current and previous", not unbounded
@@ -72,11 +84,64 @@ def page():
 
 
 def _months_elapsed(start: date, today: date) -> int:
-    """Full calendar months from start's month through today's month, inclusive - salary is flat and
-    unconditional (kohal picked this over pro-rating by attendance), so the current month counts in full
-    from day one, same as salary accrues from the start of the month regardless of which day you're
-    looking at this."""
+    """Calendar months from start's month through today's month, inclusive."""
     return (today.year - start.year) * 12 + (today.month - start.month) + 1
+
+
+def _present_days(w, start: date, end: date) -> set:
+    """Every day in [start, end] this employee was present - a recorded day (WhatsApp import or added by hand) or an approved
+    check-in of their own."""
+    present = {a.work_date for a in WorkerAttendance.query.filter_by(worker_id=w.id, status="present")
+               .filter(WorkerAttendance.work_date >= start, WorkerAttendance.work_date <= end)}
+    if w.user_code:
+        present |= {a.work_date for a in Attendance.query.filter_by(user_code=w.user_code, status="approved")
+                    .filter(Attendance.work_date >= start, Attendance.work_date <= end)}
+    return present
+
+
+def salaried_month(w, year: int, month: int, data_until_end) -> dict | None:
+    """One salaried employee's salary for one calendar month (see this module's docstring for the rule), or None if they had
+    not started by the month's end. Days before they started are neither paid nor absent."""
+    first = date(year, month, 1)
+    days_in_month = calendar.monthrange(year, month)[1]
+    last = date(year, month, days_in_month)
+    start = max(first, _payroll_start(w))
+    if start > last:
+        return None
+    salary = Decimal(w.wage_amount)
+    per_day = (salary / days_in_month).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    known_end = min(last, data_until_end) if data_until_end else None
+    absent, recorded = 0, 0
+    if known_end is not None and known_end >= start:
+        present = _present_days(w, start, known_end)
+        absent, recorded = _absent_days(start, known_end, present), len(present)
+    before_start = (start - first).days
+    paid_days = days_in_month - before_start - absent
+    net = salary if paid_days == days_in_month else per_day * paid_days
+    return {
+        "from": start, "to": last, "salary": salary, "days_in_month": days_in_month, "per_day": per_day,
+        "present": paid_days, "absent": absent, "cut": salary - net, "net": net,
+        "allowance": Decimal(w.allowance_amount or 0),
+        # Not one day recorded present: likely their attendance just isn't being recorded, rather than a month away - flagged on
+        # the payment sheet so it is checked before paying.
+        "no_attendance": recorded == 0 and absent > 0,
+        # Whether attendance data reaches the month's end; if not (the month is still going), absences are counted up to
+        # counted_until only (None: no attendance data at all yet).
+        "complete": known_end is not None and known_end >= last, "counted_until": known_end,
+    }
+
+
+def _salaried_earned(w, today: date, data_until_end) -> Decimal:
+    """Everything a salaried employee has earned from payroll's start through this month: each month's salary after absences,
+    plus house rent / petrol."""
+    total = Decimal("0")
+    month = _payroll_start(w).replace(day=1)
+    while month <= today.replace(day=1):
+        m = salaried_month(w, month.year, month.month, data_until_end)
+        if m:
+            total += m["net"] + m["allowance"]
+        month = add_months(month, 1)
+    return total
 
 
 def _sundays_not_present(start: date, end: date, present: set) -> int:
@@ -154,11 +219,7 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     effective_start = max(slot_start, _payroll_start(w))
     effective_end = min(slot_end, data_until_end) if data_until_end else None
     if effective_start and effective_end and effective_end >= effective_start:
-        present = {a.work_date for a in WorkerAttendance.query.filter_by(worker_id=w.id, status="present")
-                   .filter(WorkerAttendance.work_date >= effective_start, WorkerAttendance.work_date <= effective_end)}
-        if w.user_code:
-            present |= {a.work_date for a in Attendance.query.filter_by(user_code=w.user_code, status="approved")
-                        .filter(Attendance.work_date >= effective_start, Attendance.work_date <= effective_end)}
+        present = _present_days(w, effective_start, effective_end)
         days = len(present) + _sundays_not_present(effective_start, effective_end, present)
         absent = _absent_days(effective_start, effective_end, present)
     earned = round(wage * days, 2)
@@ -213,8 +274,8 @@ def _day_rate_periods(w, today: date, data_until_end):
 def _payroll_rows() -> list:
     """One row per employee with a wage set (two, for a daily-wage/contractor one - see this module's own
     docstring) - nobody with no wage_amount shows here, there's nothing to compute from. 'earned' is always
-    computed fresh from attendance (or elapsed months, for salary), never stored - same philosophy as a
-    project's own Materials used or Daily wages (app/projects.py)."""
+    computed fresh from attendance, never stored - same philosophy as a project's own Materials used or Daily
+    wages (app/projects.py). For a salaried employee it is every month's salary after absences, plus house rent / petrol."""
     _, data_until = _period()
     today = date.today()
     data_until_end = min(today, data_until) if data_until else None
@@ -228,7 +289,7 @@ def _payroll_rows() -> list:
         if w.employment_type == "regular":
             wage = float(w.wage_amount)
             months = max(0, _months_elapsed(_payroll_start(w), today))
-            earned = round(wage * months, 2)
+            earned = float(_salaried_earned(w, today, data_until_end))
             paid = float(w.paid_amount)
             # Every advance instalment due up to this month, counted in full like the month's salary (kohal, 2026-11-06).
             deduction = float(deduction_to_date(w, today))
@@ -294,6 +355,139 @@ def _day_by_day(w, start: date, end: date, data_until_end):
                      "not_yet": False, "pay": pay})
         d += timedelta(days=1)
     return rows
+
+
+# ---------- the monthly payment sheet (kohal, 2026-11-08) ----------
+
+SHEET_COLUMNS = [
+    "Sr. No.", "Name", "From", "To", "Salary", "Total days of month", "Salary per day", "Present days in month", "Absent days",
+    "Deduction", "Month net salary", "House rent / petrol", "Old adv bal", "Advance taken", "Total adv due", "Advance deduction",
+    "Advance balance", "Salary due", "Gross salary", "Paid",
+]
+
+
+def _month_key(d: date) -> str:
+    return f"{d.year}-{d.month:02d}"
+
+
+def _paid_for_month(w, first: date, last: date) -> Decimal:
+    """Salary paid for this month: payments marked as for it, plus any not marked for a month that were paid during it."""
+    return sum((p.amount for p in w.payments if p.paid_date is not None and (
+        p.period_start == first or (p.period_start is None and first <= p.paid_date <= last))), Decimal("0"))
+
+
+def _advance_columns(w, first: date, last: date) -> dict:
+    """The sheet's advance columns for one month: what was still owed from before it, what was taken in it, what comes off the
+    month's salary, and what is left after."""
+    given_before = sum((a.amount for a in w.advances if a.given_date < first), Decimal("0"))
+    taken_back_before = sum((amt for a in w.advances for m, amt in instalments(a) if m < first), Decimal("0"))
+    old = given_before - taken_back_before
+    taken = sum((a.amount for a in w.advances if first <= a.given_date <= last), Decimal("0"))
+    deduction = month_deduction(w, first.year, first.month)
+    return {"old": old, "taken": taken, "total": old + taken, "deduction": deduction, "balance": old + taken - deduction}
+
+
+def payment_sheet(year: int, month: int) -> dict:
+    """Every salaried employee's row of the month's payment sheet (SHEET_COLUMNS), in name order."""
+    _, data_until = _period()
+    today = today_local()
+    data_until_end = min(today, data_until) if data_until else None
+    first = date(year, month, 1)
+    last = date(year, month, calendar.monthrange(year, month)[1])
+    rows = []
+    counted_until, in_progress = None, False
+    workers = Worker.query.filter_by(employment_type="regular").filter(Worker.wage_amount.isnot(None)).order_by(Worker.name).all()
+    for w in workers:
+        m = salaried_month(w, year, month, data_until_end)
+        if m is None:
+            continue
+        adv = _advance_columns(w, first, last)
+        gross = m["net"] + m["allowance"] - adv["deduction"]
+        paid = _paid_for_month(w, first, last)
+        if not m["complete"]:
+            counted_until = m["counted_until"]
+            in_progress = True
+        rows.append({
+            "id": w.id, "name": w.name, "from": m["from"].isoformat(), "to": m["to"].isoformat(),
+            "salary": float(m["salary"]), "days_in_month": m["days_in_month"], "per_day": float(m["per_day"]),
+            "present": m["present"], "absent": m["absent"], "deduction": float(m["cut"]), "net": float(m["net"]),
+            "allowance": float(m["allowance"]), "old_advance": float(adv["old"]), "advance_taken": float(adv["taken"]),
+            "advance_total": float(adv["total"]), "advance_deduction": float(adv["deduction"]), "advance_balance": float(adv["balance"]),
+            "salary_due": float(gross - paid), "gross": float(gross), "paid": float(paid), "no_attendance": m["no_attendance"],
+        })
+    money_keys = ("salary", "deduction", "net", "allowance", "old_advance", "advance_taken", "advance_total", "advance_deduction",
+                  "advance_balance", "salary_due", "gross", "paid")
+    totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
+    return {"month": _month_key(first), "label": first.strftime("%B %Y"), "rows": rows, "totals": totals,
+            "in_progress": in_progress, "counted_until": counted_until.isoformat() if counted_until else None}
+
+
+def _sheet_months(today: date) -> list:
+    """Every month payroll covers, newest first."""
+    months, month = [], today.replace(day=1)
+    while month >= PAYROLL_START:
+        months.append({"value": _month_key(month), "label": month.strftime("%B %Y")})
+        month = add_months(month, -1)
+    return months
+
+
+def _sheet_month_arg(today: date):
+    raw = request.args.get("month") or _month_key(today)
+    try:
+        year, month = (int(x) for x in raw.split("-"))
+        first = date(year, month, 1)
+    except ValueError:
+        abort(422, "Give the month as YYYY-MM")
+    if first < PAYROLL_START or first > today.replace(day=1):
+        abort(422, "Pick a month payroll covers")
+    return year, month
+
+
+@bp.get("/api/payroll/sheet")
+def sheet():
+    today = today_local()
+    year, month = _sheet_month_arg(today)
+    return jsonify(**payment_sheet(year, month), months=_sheet_months(today), currency=settings_for_client()["currency"])
+
+
+def sheet_workbook(data: dict) -> list:
+    """The payment sheet as one Excel sheet, laid out like kohal's own: a title row, a two-row header (Work Days split into
+    From / To), one boxed row per employee and a totals row."""
+    n = len(SHEET_COLUMNS)
+    title = [f"PAYMENT SHEET OF {data['label']}"]
+    head = [c if c not in ("From", "To") else None for c in SHEET_COLUMNS]
+    head[2] = "Work Days"
+    sub = [None] * n
+    sub[2], sub[3] = "From", "To"
+    body = []
+    for i, r in enumerate(data["rows"], start=1):
+        body.append([i, r["name"], date.fromisoformat(r["from"]), date.fromisoformat(r["to"]), r["salary"], r["days_in_month"],
+                     r["per_day"], r["present"], r["absent"], r["deduction"], r["net"], r["allowance"], r["old_advance"],
+                     r["advance_taken"], r["advance_total"], r["advance_deduction"], r["advance_balance"], r["salary_due"],
+                     r["gross"], r["paid"]])
+    t = data["totals"]
+    total = [None, "Total", None, None, t["salary"], None, None, None, None, t["deduction"], t["net"], t["allowance"],
+             t["old_advance"], t["advance_taken"], t["advance_total"], t["advance_deduction"], t["advance_balance"],
+             t["salary_due"], t["gross"], t["paid"]]
+    last_col = _col(n - 1)
+    merges = [f"A1:{last_col}1", "C2:D2"] + [f"{_col(c)}2:{_col(c)}3" for c in range(n) if c not in (2, 3)]
+    rows = [title, head, sub] + body + [total]
+    styles = {0: "title", 1: "header", 2: "header", len(rows) - 1: "box_bold"}
+    styles.update({3 + i: "box" for i in range(len(body))})
+    widths = {0: 7, 1: 22, 2: 12, 3: 12}
+    widths.update({c: 11 for c in range(4, n)})
+    return [{"name": data["label"], "rows": rows, "row_styles": styles, "box_cols": n, "merges": merges, "widths": widths}]
+
+
+@bp.get("/api/payroll/sheet.xlsx")
+def sheet_xlsx():
+    today = today_local()
+    year, month = _sheet_month_arg(today)
+    data = payment_sheet(year, month)
+    return Response(build_workbook(sheet_workbook(data)),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="payment-sheet-{year}-{month:02d}.xlsx"',
+                             "Cache-Control": "no-store"})
 
 
 @bp.get("/api/payroll/overview")

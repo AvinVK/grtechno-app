@@ -354,6 +354,22 @@ def _employee_fields(payload):
                 else:
                     data["wage_amount"] = amount
 
+    # House rent / petrol (kohal, 2026-11-08): a fixed monthly amount added to a salary on the payment sheet. Blank means none.
+    if "allowance_amount" in payload:
+        raw = payload["allowance_amount"]
+        if raw in (None, ""):
+            data["allowance_amount"] = None
+        else:
+            try:
+                amount = int(str(raw))
+            except (TypeError, ValueError):
+                errors["allowance_amount"] = "Enter a whole number"
+            else:
+                if amount < 0 or amount > 10_000_000:
+                    errors["allowance_amount"] = "Enter a number from 0 to 1,00,00,000"
+                else:
+                    data["allowance_amount"] = amount or None
+
     # Fooding opt-in (kohal, 2026-10-18: "now there are salaried employees which can be on 200rs fooding
     # thing... a check mark... named 'fooding?'") - a daily-wage employee is already eligible regardless of
     # this (see Worker.fooding_eligible); this is purely the switch for anyone else.
