@@ -1095,6 +1095,21 @@ class AccountTransfer(db.Model):
     created_by = db.relationship("User")
 
 
+class AccountOpening(db.Model):
+    """What an account held on a chosen day (kohal, 2026-11-08: "add bank account opening balance and opening balance date also so that
+    the app calculates from that day and that amount all the credit and debit"). The Accounts view then ignores anything dated before
+    `as_of` and starts the balance from `amount`. One row per account; saving again replaces it."""
+
+    __tablename__ = "account_openings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    account = db.Column(db.String(40), nullable=False, unique=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    as_of = db.Column(db.Date, nullable=False)
+    updated_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class CashTopup(db.Model):
     """One "admin gave this employee cash" record - the human-readable ledger behind CashAccount.given_total,
     same relationship FoodingEntry has to FoodingAccount.allotted_total. Always applied immediately (the

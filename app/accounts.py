@@ -10,6 +10,9 @@ through (constants.PAYMENT_ACCOUNTS), so this page reads them all and lines them
                        paid out, inventory bought for cash, what the admin bought directly (admin purchases), payments made to
                        suppliers, self transfers out.
 
+An account can have an opening balance and date (AccountOpening): entries dated before that day are left out, and the balance is
+the opening amount plus what came in, less what went out, from that day on (the day itself counts).
+
 Left out on purpose, because the money already left through one of the above: an employee's own fooding expense
 and what they buy with the cash they were handed. Entries made before the account list existed carry an older
 mode ("Cash", "UPI"...) and belong to no account, so they are not here."""
@@ -22,7 +25,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 from .constants import PAYMENT_ACCOUNTS
 from .extensions import db
 from .models import (
-    AccountTransfer, AdminPurchase, CashTopup, PetrolPayout, SalaryAdvance, SupplierPayment, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
+    AccountOpening, AccountTransfer, AdminPurchase, CashTopup, PetrolPayout, SalaryAdvance, SupplierPayment, FoodingEntry, Lead, MaterialMovement, PetrolEntry, ProjectPayment, User, WorkerPayment, settings_for_client,
 )
 from .timeutil import today_local
 from .validation import Fields, api_errors, parse_money
@@ -57,8 +60,24 @@ def _worker_reason(worker):
     return "Wages" if worker.employment_type in ("daily_wages", "contractor") else "Salary"
 
 
-def ledger(account):
-    """Every debit and credit that went through `account`, newest first."""
+def opening_for(account):
+    return AccountOpening.query.filter_by(account=account).first()
+
+
+def _opening_dict(opening):
+    return {"amount": float(opening.amount), "date": opening.as_of.isoformat()} if opening else None
+
+
+def ledger(account, opening=None):
+    """Every debit and credit that went through `account`, newest first - from the opening date on, when it has one."""
+    rows = _all_rows(account)
+    if opening is not None:
+        since = opening.as_of.isoformat()
+        rows = [r for r in rows if r["date"] is None or r["date"] >= since]
+    return rows
+
+
+def _all_rows(account):
     rows = []
 
     for p in ProjectPayment.query.filter(ProjectPayment.mode == account, ProjectPayment.paid_date.isnot(None)).all():
@@ -110,10 +129,17 @@ def ledger(account):
     return rows
 
 
-def _totals(rows):
+def _totals(rows, opening=None):
     credit = sum(r["amount"] for r in rows if r["kind"] == "credit")
     debit = sum(r["amount"] for r in rows if r["kind"] == "debit")
-    return {"credits": round(credit, 2), "debits": round(debit, 2), "balance": round(credit - debit, 2), "count": len(rows)}
+    start = float(opening.amount) if opening else 0.0
+    return {"credits": round(credit, 2), "debits": round(debit, 2), "balance": round(start + credit - debit, 2), "count": len(rows),
+            "opening": _opening_dict(opening)}
+
+
+def _balance(account):
+    opening = opening_for(account)
+    return _totals(ledger(account, opening), opening)["balance"]
 
 
 @bp.get("/accounts")
@@ -123,7 +149,8 @@ def page():
 
 @bp.get("/api/accounts")
 def list_accounts():
-    return jsonify(accounts=[{"name": a, **_totals(ledger(a))} for a in PAYMENT_ACCOUNTS],
+    openings = {o.account: o for o in AccountOpening.query.all()}
+    return jsonify(accounts=[{"name": a, **_totals(ledger(a, openings.get(a)), openings.get(a))} for a in PAYMENT_ACCOUNTS],
                    currency=settings_for_client()["currency"])
 
 
@@ -132,9 +159,35 @@ def account_detail():
     name = request.args.get("name", "")
     if name not in PAYMENT_ACCOUNTS:
         abort(404)
-    rows = ledger(name)
-    return jsonify(name=name, **_totals(rows), entries=rows, account_names=PAYMENT_ACCOUNTS,
+    opening = opening_for(name)
+    rows = ledger(name, opening)
+    return jsonify(name=name, **_totals(rows, opening), entries=rows, account_names=PAYMENT_ACCOUNTS,
                    currency=settings_for_client()["currency"])
+
+
+@bp.put("/api/accounts/opening")
+def set_opening():
+    """Set (or change) what an account held on a day. Nothing is deleted - entries before that day are only left out of the view."""
+    payload = request.get_json(silent=True) or {}
+    f = Fields(payload)
+    f.choice("name", PAYMENT_ACCOUNTS)
+    f.date("as_of")
+    if f.errors.get("name") or "name" not in f.data:
+        abort(404)
+    amount = parse_money(payload.get("amount"), f.errors) if payload.get("amount") not in (None, "") else None
+    if amount is None and "amount" not in f.errors:
+        f.errors["amount"] = "Enter the opening balance (0 if it was empty)"
+    if not f.data.get("as_of") and "as_of" not in f.errors:
+        f.errors["as_of"] = "Pick the day this balance was true"
+    elif f.data.get("as_of") and f.data["as_of"] > today_local():
+        f.errors["as_of"] = "That day hasn't happened yet"
+    if f.errors:
+        return jsonify(error="Check the highlighted fields.", fields=f.errors), 422
+    opening = opening_for(f.data["name"]) or AccountOpening(account=f.data["name"])
+    opening.amount, opening.as_of, opening.updated_by_code = amount, f.data["as_of"], g.user.code
+    db.session.add(opening)
+    db.session.commit()
+    return jsonify(ok=True, opening=_opening_dict(opening))
 
 
 @bp.post("/api/accounts/transfers")
@@ -158,7 +211,7 @@ def add_transfer():
     if not f.errors and f.data["from_account"] == f.data["to_account"]:
         f.errors["to_account"] = "Pick a different account to move it to"
     if not f.errors:
-        have = Decimal(str(_totals(ledger(f.data["from_account"]))["balance"]))
+        have = Decimal(str(_balance(f.data["from_account"])))
         if amount > have:
             shown = f"{have:,.2f}".rstrip("0").rstrip(".")
             f.errors["amount"] = f"Only {settings_for_client()['currency']}{shown} in {f.data['from_account']}" if have > 0                 else f"There is no money in {f.data['from_account']}"

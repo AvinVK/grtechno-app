@@ -1913,7 +1913,8 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .acct-row { text-decoration: none; color: inherit; }
 .acct-credit { color: #1b7a3d; }
 .acct-debit { color: #a3281c; }
-.acct-actions { display: flex; justify-content: flex-end; margin: 0 0 12px; }
+.sheet-lead { margin: 0; }
+.acct-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .daily-food summary { list-style: none; cursor: pointer; }
 .daily-food summary::-webkit-details-marker { display: none; }
 .daily-food-days { list-style: none; margin: 0; padding: 0 0 0 16px; border-top: 1px solid var(--line); }

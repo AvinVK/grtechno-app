@@ -127,3 +127,71 @@ def test_removing_a_transfer_puts_both_accounts_back(admin_client):
     assert admin_client.delete(f"/api/accounts/transfers/{tid}").status_code == 200
     assert {a["name"]: a["count"] for a in admin_client.get("/api/accounts").get_json()["accounts"]}["CASH"] == 0
     assert admin_client.delete(f"/api/accounts/transfers/{tid}").status_code == 404
+
+
+# ---------- opening balance (kohal, 2026-11-08) ----------
+#
+# "add bank account opening balance and opening balance date also so that the app calculates from that day and that amount all the
+# credit and debit" - the balance starts at the opening amount on the opening day; anything dated before it is left out.
+
+def _open(client, name="GR BB", amount="10000", as_of="2026-10-22"):
+    return client.put("/api/accounts/opening", json={"name": name, "amount": amount, "as_of": as_of})
+
+
+def _bb():
+    # a 5,000 credit on 20 Oct (before the opening day below) and a 1,200 debit on 25 Oct (after it)
+    _payment("GR BB", "5000")
+    w = Worker(name="Sunny Welder", employment_type="daily_wages")
+    db.session.add(w)
+    db.session.flush()
+    w.payments.append(WorkerPayment(label="Week 1", amount=Decimal("1200"), mode="GR BB", paid_date=date(2026, 10, 25), position=1))
+    db.session.commit()
+
+
+def test_the_balance_starts_from_the_opening_amount_and_ignores_earlier_entries(admin_client):
+    _bb()
+    r = _open(admin_client)
+    assert r.status_code == 200 and r.get_json()["opening"] == {"amount": 10000.0, "date": "2026-10-22"}
+    detail = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()
+    assert [(e["kind"], e["amount"]) for e in detail["entries"]] == [("debit", 1200.0)]              # the 20 Oct credit is before the opening day
+    assert (detail["credits"], detail["debits"], detail["balance"]) == (0.0, 1200.0, 8800.0)         # 10,000 opening - 1,200
+    assert detail["opening"] == {"amount": 10000.0, "date": "2026-10-22"}
+    listing = {a["name"]: a for a in admin_client.get("/api/accounts").get_json()["accounts"]}
+    assert listing["GR BB"]["balance"] == 8800.0 and listing["GR BB"]["opening"]["date"] == "2026-10-22"
+    assert listing["CASH"]["opening"] is None and listing["CASH"]["balance"] == 0.0
+
+
+def test_entries_on_the_opening_day_itself_count(admin_client):
+    _bb()
+    _open(admin_client, as_of="2026-10-25")
+    detail = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()
+    assert detail["balance"] == 8800.0 and len(detail["entries"]) == 1
+
+
+def test_without_an_opening_balance_nothing_changes(admin_client):
+    _bb()
+    detail = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()
+    assert detail["opening"] is None and detail["balance"] == 3800.0 and len(detail["entries"]) == 2
+
+
+def test_saving_again_replaces_the_opening_balance(admin_client):
+    _bb()
+    _open(admin_client)
+    assert _open(admin_client, amount="2000", as_of="2026-10-01").status_code == 200
+    detail = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()
+    assert detail["opening"] == {"amount": 2000.0, "date": "2026-10-01"} and detail["balance"] == 5800.0   # 2,000 + 5,000 - 1,200
+
+
+def test_a_transfer_is_checked_against_the_balance_including_the_opening_amount(admin_client):
+    _open(admin_client, amount="3000", as_of="2026-10-01")
+    assert _transfer(admin_client, amount="3000").status_code == 201
+    assert _transfer(admin_client, amount="1").status_code == 422
+
+
+def test_an_opening_balance_is_checked_and_admin_only(admin_client, manager_client):
+    assert _open(manager_client).status_code == 403
+    assert _open(admin_client, name="Nope").status_code == 404
+    for kw in ({"amount": ""}, {"amount": "abc"}, {"amount": "-5"}, {"as_of": ""}, {"as_of": "soon"}, {"as_of": "2999-01-01"}):
+        r = _open(admin_client, **kw)
+        assert r.status_code == 422, kw
+    assert admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["opening"] is None
