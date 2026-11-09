@@ -34,6 +34,11 @@ attendance): salary per day = monthly salary / days in the month, rounded to the
 salary, otherwise salary per day x days present. Sundays are paid days off, the same rule daily wages use, so "present" counts
 them, and so does approved paid leave (app/leaves.py); an unpaid leave day is cut like an absence. Days that have not happened yet (or that attendance data does not reach yet) are never counted absent.
 
+Daily wages and contractors (kohal, 2026-11-09: "need to do the same payroll features and everything what u did for salaried
+employee with daily wages as well. no sick leave casual leave for daily wages, no sunday off as well. they work, they get paid
+bi-weekly"): paid for the days they were present, 1st-15th and 16th-end, with no Sunday credit and no leave. Their payment sheet is
+one pay period at a time (payment_sheet_daily below), laid out like the salaried one, with the same employee filter and Excel file.
+
 Gated by the "workforce" module (app/modules.py), same as Employee management - a look-only role
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
 
@@ -147,28 +152,15 @@ def _salaried_earned(w, today: date, data_until_end) -> Decimal:
     return total
 
 
-def _sundays_not_present(start: date, end: date, present: set) -> int:
-    """Every Sunday in [start, end] that isn't already a present day - a guaranteed paid day off (kohal,
-    2026-10-20: "both daily wages and salaried gets 4 leaves a month", meaning Sundays, not an absence
-    allowance) on top of whatever they actually worked, never double-paid against a Sunday they did work."""
-    count = 0
-    d = start + timedelta(days=(6 - start.weekday()) % 7)   # the first Sunday on or after start
-    while d <= end:
-        if d not in present:
-            count += 1
-        d += timedelta(days=7)
-    return count
-
-
-def _absent_days(start: date, end: date, present: set) -> int:
-    """Every non-Sunday day in [start, end] not in `present` - how many days someone simply didn't show up
-    (kohal, 2026-10-21: "once 15 days are over, it should show a flag saying 15 days cycle total is this
-    much, u were absent this much"). A Sunday is never "absent" here, same reasoning _sundays_not_present
-    already pays it regardless - there's nothing to be absent from."""
+def _absent_days(start: date, end: date, present: set, sundays_off: bool = True) -> int:
+    """Every day in [start, end] not in `present` - how many days someone simply didn't show up (kohal, 2026-10-21: "once 15
+    days are over, it should show a flag saying 15 days cycle total is this much, u were absent this much"). A Sunday is never
+    "absent" for someone on a salary, where it is the weekly day off; daily wages work every day of the week (kohal, 2026-11-09:
+    "no sunday off"), so for them `sundays_off` is False and a Sunday not worked counts like any other missed day."""
     count = 0
     d = start
     while d <= end:
-        if d.weekday() != 6 and d not in present:
+        if (not sundays_off or d.weekday() != 6) and d not in present:
             count += 1
         d += timedelta(days=1)
     return count
@@ -223,8 +215,8 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     effective_end = min(slot_end, data_until_end) if data_until_end else None
     if effective_start and effective_end and effective_end >= effective_start:
         present = _present_days(w, effective_start, effective_end)
-        days = len(present) + _sundays_not_present(effective_start, effective_end, present)
-        absent = _absent_days(effective_start, effective_end, present)
+        days = len(present)                       # paid for the days worked only - no Sunday credit (kohal, 2026-11-09)
+        absent = _absent_days(effective_start, effective_end, present, sundays_off=False)
     earned = round(wage * days, 2)
     paid = float(sum((p.amount for p in w.payments if p.period_start == slot_start and p.paid_date is not None),
                       start=Decimal("0")))
@@ -311,7 +303,7 @@ def _payroll_rows() -> list:
 def _day_by_day(w, start: date, end: date, data_until_end):
     """One row per calendar day in [start, end] - hours logged that day (if any - needs both a check-in
     and a check-out time to say, same as Attendance/WorkerAttendance's own `hours`), and whether it counts
-    toward pay (present, or an uncredited Sunday - the same rule _day_rate_slot_row uses) with the rupee
+    toward pay (present only for a day rate; a Sunday is a day off just for a salary) with the rupee
     figure that represents (kohal, 2026-10-20: "clicking on one should show logged in hours for each day
     and corresponding pay"). A day past whatever attendance data actually reaches is left blank, not
     guessed at - same "no data yet" principle as everywhere else attendance is read in this app."""
@@ -337,7 +329,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
         too_early = d < payroll_start
         if too_early or data_until_end is None or d > data_until_end:
             rows.append({"date": d.isoformat(), "present": False, "hours": None, "is_sunday": is_sunday,
-                         "not_yet": True, "pay": 0.0 if is_day_rate else None})
+                         "sunday_off": is_sunday and not is_day_rate, "not_yet": True, "pay": 0.0 if is_day_rate else None})
             d += timedelta(days=1)
             continue
         wa = wa_by_day.get(d)
@@ -349,13 +341,13 @@ def _day_by_day(w, start: date, end: date, data_until_end):
             timed = [a.hours for a in att_by_day[d] if a.hours is not None]
             if timed:
                 hours = round(sum(timed), 1)
-        counted = present or is_sunday
+        counted = present                         # a day rate is paid for days worked only, Sundays included (2026-11-09)
         # A day rate genuinely has a per-day figure; a flat salary doesn't (kohal picked unconditional,
         # not pro-rated, when this was built) - pay stays null for a salaried employee's days rather than
         # attributing a whole month's salary to one day, or inventing a daily rate nobody set.
         pay = (round(wage, 2) if counted else 0.0) if is_day_rate else None
         rows.append({"date": d.isoformat(), "present": present, "hours": hours, "is_sunday": is_sunday,
-                     "not_yet": False, "pay": pay})
+                     "sunday_off": is_sunday and not is_day_rate, "not_yet": False, "pay": pay})
         d += timedelta(days=1)
     return rows
 
@@ -465,12 +457,6 @@ def sheet():
 def sheet_workbook(data: dict) -> list:
     """The payment sheet as one Excel sheet, laid out like kohal's own: a title row, a two-row header (Work Days split into
     From / To), one boxed row per employee and a totals row."""
-    n = len(SHEET_COLUMNS)
-    title = [f"PAYMENT SHEET OF {data['label']}"]
-    head = [c if c not in ("From", "To") else None for c in SHEET_COLUMNS]
-    head[2] = "Work Days"
-    sub = [None] * n
-    sub[2], sub[3] = "From", "To"
     body = []
     for i, r in enumerate(data["rows"], start=1):
         body.append([i, r["name"], date.fromisoformat(r["from"]), date.fromisoformat(r["to"]), r["salary"], r["days_in_month"],
@@ -482,14 +468,160 @@ def sheet_workbook(data: dict) -> list:
     total = [None, "Total", None, None, t["salary"], None, None, None, None, None, None, None, None, t["deduction"], t["net"], t["allowance"],
              t["old_advance"], t["advance_taken"], t["advance_total"], t["advance_deduction"], t["advance_balance"],
              t["salary_due"], t["gross"], t["paid"]]
+    return _boxed_sheet(f"PAYMENT SHEET OF {data['label']}", data["label"], SHEET_COLUMNS, body, total)
+
+
+def _boxed_sheet(title_text: str, sheet_name: str, columns: list, body: list, total: list) -> list:
+    """One Excel sheet in the payment-sheet layout: a title row across, a two-row header (columns 3 and 4 - From / To - sit under
+    "Work Days"), a boxed row per employee and a bold totals row. Shared by the salaried and the daily-wage sheets."""
+    n = len(columns)
+    head = [c if c not in ("From", "To") else None for c in columns]
+    head[2] = "Work Days"
+    sub = [None] * n
+    sub[2], sub[3] = "From", "To"
     last_col = _col(n - 1)
     merges = [f"A1:{last_col}1", "C2:D2"] + [f"{_col(c)}2:{_col(c)}3" for c in range(n) if c not in (2, 3)]
-    rows = [title, head, sub] + body + [total]
+    rows = [[title_text], head, sub] + body + [total]
     styles = {0: "title", 1: "header", 2: "header", len(rows) - 1: "box_bold"}
     styles.update({3 + i: "box" for i in range(len(body))})
     widths = {0: 7, 1: 22, 2: 12, 3: 12}
     widths.update({c: 11 for c in range(4, n)})
-    return [{"name": data["label"], "rows": rows, "row_styles": styles, "box_cols": n, "merges": merges, "widths": widths}]
+    return [{"name": sheet_name, "rows": rows, "row_styles": styles, "box_cols": n, "merges": merges, "widths": widths}]
+
+
+# ---------- the bi-weekly payment sheet for daily wages (kohal, 2026-11-09) ----------
+#
+# Day-rate staff (daily wages and contractors) are paid for the days they worked, in 1st-15th and 16th-end periods: no Sunday credit,
+# no leave, no house rent. One pay period per sheet; the same layout, employee filter and Excel file as the salaried sheet.
+
+DAILY_SHEET_COLUMNS = [
+    "Sr. No.", "Name", "From", "To", "Daily wage", "Days in period", "Present days", "Absent days", "Wages earned", "Old adv bal",
+    "Advance taken", "Total adv due", "Advance deduction", "Advance balance", "Net payable", "Paid", "Balance due",
+]
+
+
+def _deducted_before_slot(w, slot_start: date) -> Decimal:
+    """Advance instalments already taken back before this pay period: every earlier month in full, plus the first half of this
+    month's when the period is its second half (see advances.slot_deduction)."""
+    months = {m for adv in w.advances for m, _ in instalments(adv)}
+    total = Decimal("0")
+    for m in months:
+        if m < slot_start.replace(day=1):
+            total += month_deduction(w, m.year, m.month)
+        elif m == slot_start.replace(day=1) and slot_start.day == 16:
+            total += (month_deduction(w, m.year, m.month) / 2).quantize(Decimal("0.01"))
+    return total
+
+
+def _daily_slot_start_arg(today: date) -> date:
+    raw = request.args.get("period")
+    if not raw:
+        return date(today.year, today.month, 1 if today.day <= 15 else 16)
+    try:
+        d = date.fromisoformat(raw)
+    except ValueError:
+        abort(422, "Give the pay period as its first day, YYYY-MM-DD")
+    if d.day not in (1, 16):
+        abort(422, "A pay period starts on the 1st or the 16th")
+    if d < PAYROLL_START or d > date(today.year, today.month, 1 if today.day <= 15 else 16):
+        abort(422, "Pick a pay period payroll covers")
+    return d
+
+
+def _daily_periods(today: date) -> list:
+    """Every pay period payroll covers, newest first."""
+    out, y, m, half = [], today.year, today.month, 1 if today.day <= 15 else 2
+    while date(y, m, 1 if half == 1 else 16) >= PAYROLL_START:
+        last = calendar.monthrange(y, m)[1]
+        d1, d2 = (1, 15) if half == 1 else (16, last)
+        out.append({"value": date(y, m, d1).isoformat(), "label": f"{d1}–{d2} {MONTH_ABBR[m]} {y}"})
+        if half == 2:
+            half = 1
+        else:
+            half, m = 2, m - 1
+            if m == 0:
+                m, y = 12, y - 1
+    return out
+
+
+def payment_sheet_daily(slot_start: date, worker_id=None) -> dict:
+    """Every day-rate employee's row for one pay period (DAILY_SHEET_COLUMNS), in name order - or just one's."""
+    _, data_until = _period()
+    today = today_local()
+    data_until_end = min(today, data_until) if data_until else None
+    last_day = calendar.monthrange(slot_start.year, slot_start.month)[1]
+    slot_end = date(slot_start.year, slot_start.month, 15 if slot_start.day == 1 else last_day)
+    label = f"{slot_start.day}–{slot_end.day} {MONTH_ABBR[slot_start.month]} {slot_start.year}"
+    workers = (Worker.query.filter(Worker.employment_type.in_(DAY_RATE_TYPES), Worker.wage_amount.isnot(None))
+               .order_by(Worker.name).all())
+    employees = [{"value": str(w.id), "label": w.name} for w in workers]
+    if worker_id is not None:
+        workers = [w for w in workers if w.id == worker_id]
+    rows = []
+    for w in workers:
+        start = max(slot_start, _payroll_start(w))
+        if start > slot_end:
+            continue                                                  # had not started by the end of this period
+        r = _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end)
+        given_before = sum((a.amount for a in w.advances if a.given_date < slot_start), Decimal("0"))
+        taken = sum((a.amount for a in w.advances if slot_start <= a.given_date <= slot_end), Decimal("0"))
+        old = given_before - _deducted_before_slot(w, slot_start)
+        deduction = Decimal(str(r["advance_deduction"]))
+        earned = Decimal(str(r["earned"]))
+        paid = Decimal(str(r["paid"]))
+        net = earned - deduction
+        counted_end = min(slot_end, data_until_end) if data_until_end else None
+        in_days = (slot_end - start).days + 1
+        rows.append({
+            "id": w.id, "name": w.name, "from": start.isoformat(), "to": slot_end.isoformat(), "wage": r["wage_amount"],
+            "days_in_period": in_days, "present": r["days"], "absent": r["absent"], "earned": float(earned),
+            "old_advance": float(old), "advance_taken": float(taken), "advance_total": float(old + taken),
+            "advance_deduction": float(deduction), "advance_balance": float(old + taken - deduction),
+            "net": float(net), "paid": float(paid), "due": float(net - paid),
+            "no_attendance": r["days"] == 0 and r["absent"] > 0,
+            "_complete": counted_end is not None and counted_end >= slot_end,
+        })
+    money_keys = ("earned", "old_advance", "advance_taken", "advance_total", "advance_deduction", "advance_balance", "net", "paid", "due")
+    totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
+    in_progress = not all([r.pop("_complete") for r in rows])         # popped for every row, not just up to the first incomplete one
+    counted_until = min(slot_end, data_until_end) if in_progress and data_until_end and data_until_end >= slot_start else None
+    return {"period": slot_start.isoformat(), "label": label, "rows": rows, "totals": totals, "employees": employees,
+            "worker_id": worker_id, "in_progress": in_progress,
+            "counted_until": counted_until.isoformat() if counted_until else None}
+
+
+@bp.get("/api/payroll/sheet/daily")
+def sheet_daily():
+    today = today_local()
+    slot = _daily_slot_start_arg(today)
+    return jsonify(**payment_sheet_daily(slot, request.args.get("worker_id", type=int)), periods=_daily_periods(today),
+                   currency=settings_for_client()["currency"])
+
+
+def daily_sheet_workbook(data: dict) -> list:
+    body = []
+    for i, r in enumerate(data["rows"], start=1):
+        body.append([i, r["name"], date.fromisoformat(r["from"]), date.fromisoformat(r["to"]), r["wage"], r["days_in_period"],
+                     r["present"], r["absent"], r["earned"], r["old_advance"], r["advance_taken"], r["advance_total"],
+                     r["advance_deduction"], r["advance_balance"], r["net"], r["paid"], r["due"]])
+    t = data["totals"]
+    total = [None, "Total", None, None, None, None, None, None, t["earned"], t["old_advance"], t["advance_taken"], t["advance_total"],
+             t["advance_deduction"], t["advance_balance"], t["net"], t["paid"], t["due"]]
+    return _boxed_sheet(f"PAYMENT SHEET OF DAILY WAGES {data['label']}", data["label"], DAILY_SHEET_COLUMNS, body, total)
+
+
+@bp.get("/api/payroll/sheet/daily.xlsx")
+def sheet_daily_xlsx():
+    today = today_local()
+    slot = _daily_slot_start_arg(today)
+    data = payment_sheet_daily(slot, request.args.get("worker_id", type=int))
+    who = ""
+    if data["worker_id"] and data["rows"]:
+        who = "-" + re.sub(r"[^a-z0-9]+", "-", data["rows"][0]["name"].lower()).strip("-")
+    return Response(build_workbook(daily_sheet_workbook(data)),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="daily-wages-sheet-{slot.isoformat()}{who}.xlsx"',
+                             "Cache-Control": "no-store"})
 
 
 @bp.get("/api/payroll/sheet.xlsx")

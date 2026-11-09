@@ -198,7 +198,7 @@ def _month_end(year, month):
 
 def payroll_report(year, month):
     """Daily-wage (and contractor, who are on a day rate too) and salaried employees for one month, worked out with
-    the same rules the Payroll screen uses - a day rate for every day present plus an unworked Sunday, two half-month
+    the same rules the Payroll screen uses - a day rate for every day present (no Sunday credit), two half-month
     pay periods; a monthly salary cut for absences, plus house rent / petrol (app/payroll.py's salaried_month) - so the file
     always agrees with what the app shows."""
     cur = settings_for_client()["currency"]
@@ -223,21 +223,18 @@ def payroll_report(year, month):
             r = _day_rate_slot_row(w, start, end, slot_label, data_until_end)
             day_rows.append([w.name, CATEGORY_LABEL[w.employment_type], role(w), r["wage_amount"], slot_label, r["days"], r["absent"],
                              r["earned"], r["paid"], r["outstanding"]])
-        marks, present, sundays, absent, hours = [], 0, 0, 0, 0.0
+        marks, present, absent, hours = [], 0, 0, 0.0
         for d in _day_by_day(w, first, last, data_until_end):
             if d["not_yet"]:
                 marks.append("-")
             elif d["present"]:
                 marks.append("P")
                 present += 1
-            elif d["is_sunday"]:
-                marks.append("S")
-                sundays += 1
             else:
                 marks.append("A")
                 absent += 1
             hours += d["hours"] or 0
-        att_rows.append([w.name, CATEGORY_LABEL[w.employment_type]] + marks + [present, sundays, absent, round(hours, 1)])
+        att_rows.append([w.name, CATEGORY_LABEL[w.employment_type]] + marks + [present, absent, round(hours, 1)])
     day_total = ["Total", None, None, None, None, sum(r[5] for r in day_rows), sum(r[6] for r in day_rows),
                  round(sum(r[7] for r in day_rows), 2), round(sum(r[8] for r in day_rows), 2), round(sum(r[9] for r in day_rows), 2)]
 
@@ -273,7 +270,7 @@ def payroll_report(year, month):
         [f"Earned in {label} ({cur})", day_total[7]],
         [f"Paid for these periods ({cur})", day_total[8]],
         [f"Still due for these periods ({cur})", day_total[9]],
-        ["Days counted (present + Sundays not worked)", day_total[5]],
+        ["Days worked", day_total[5]],
         ["Days absent", day_total[6]],
         [None, None],
         ["Salaried", None],
@@ -297,8 +294,8 @@ def payroll_report(year, month):
             ["Employee", "Type", "Role", f"Daily rate ({cur})", "Pay period", "Days counted", "Days absent", f"Earned ({cur})",
              f"Paid for period ({cur})", f"Outstanding ({cur})"]] + day_rows + [day_total]},
         {"name": "Attendance (daily wages)", "freeze": 1, "bold_rows": {0}, "rows": [
-            ["Employee", "Type"] + [str(d) for d in range(1, last.day + 1)] + ["Present", "Sundays credited", "Absent", "Hours logged"]] + att_rows
-            + [[None], ["P = present, S = Sunday not worked (paid), A = absent, - = no attendance data for that day"]]},
+            ["Employee", "Type"] + [str(d) for d in range(1, last.day + 1)] + ["Present", "Absent", "Hours logged"]] + att_rows
+            + [[None], ["P = present (paid), A = absent, - = no attendance data for that day. Daily wages are paid for days worked only, Sundays included."]]},
         {"name": "Salaried", "freeze": 1, "bold_rows": {0, len(sal_rows) + 1}, "rows": [
             ["Employee", "Role", f"Monthly salary ({cur})", f"Salary for month ({cur})", f"Paid in month ({cur})",
              f"Paid to date ({cur})", f"Owed at month end ({cur})"]] + sal_rows + [sal_total]},

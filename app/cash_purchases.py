@@ -25,7 +25,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
 
-from .constants import PAYMENT_ACCOUNTS
+from .constants import EXPENSE_HEADS, PAYMENT_ACCOUNTS
 from .auth import PROJECT_MANAGER_ROLE_KEYS, can_manage_cash_purchases
 from .extensions import db
 from .fooding import FOODING_SOURCE, raise_auto_topup
@@ -245,7 +245,7 @@ def request_cash():
     return jsonify(request=req.to_dict()), 201
 
 
-def _purchase_fields(payload):
+def _purchase_fields(payload, require_head=False):
     f = Fields(payload)
     f.date("entry_date")
     f.text("material_name", 120, required=True, label="what was bought")
@@ -273,6 +273,15 @@ def _purchase_fields(payload):
         f.data["gst_percent"], f.data["gst_amount"], f.data["amount"] = gst_percent, gst_amount, amount + gst_amount
     if "category" not in f.data:                  # mandatory (kohal, 2026-11-04) - missing or blank
         errors["category"] = "Choose a category"
+    # Only the admin's own purchase says which kind of expense it was (kohal, 2026-11-09: "only in the admin purchase") - office,
+    # travel, fooding, stationery... An employee's logged purchase has no such field.
+    if require_head and f.data.get("category") == "other":
+        if payload.get("expense_head") in EXPENSE_HEADS:
+            f.data["expense_head"] = payload["expense_head"]
+        else:
+            errors["expense_head"] = "Choose the expense type"
+    else:
+        f.data["expense_head"] = ""
     # A material purchase becomes a stock-in once approved, and a stock-in needs a count and a unit.
     if f.data.get("category") == "material":
         if f.data.get("quantity") is None:
@@ -624,6 +633,7 @@ def list_admin_purchases():
         materials=[{"name": m.name, "unit": m.unit} for m in Material.query.filter_by(is_active=True).order_by(Material.name)],
         suppliers=[name for (name,) in db.session.query(Supplier.name).order_by(Supplier.name)],
         units=[u.name for u in MaterialUnit.query.order_by(MaterialUnit.name)],
+        expense_heads=EXPENSE_HEADS,
         payment_accounts=list(PAYMENT_ACCOUNTS),
         currency=settings_for_client()["currency"],
     )
@@ -634,14 +644,14 @@ def add_admin_purchase():
     _manage_only()
     _admin_decides()
     payload = _payload()
-    f, errors = _purchase_fields(payload)
+    f, errors = _purchase_fields(payload, require_head=True)
     account = payload.get("payment_account")
     if account not in PAYMENT_ACCOUNTS:
         errors["payment_account"] = "Choose the account it was paid from"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     purchase = AdminPurchase(
-        category=f.data["category"], entry_date=f.data.get("entry_date") or today_local(),
+        category=f.data["category"], expense_head=f.data.get("expense_head", ""), entry_date=f.data.get("entry_date") or today_local(),
         material_name=f.data["material_name"], quantity=f.data.get("quantity"), unit=f.data.get("unit", ""),
         gst_percent=f.data.get("gst_percent") or 0, gst_amount=f.data.get("gst_amount") or 0, amount=f.data["amount"],
         supplier=f.data.get("supplier", ""), note=f.data.get("note", ""), payment_account=account,

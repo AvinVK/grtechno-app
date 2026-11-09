@@ -305,7 +305,7 @@
     return h('li', { class: 'p-row' },
       h('span', { class: 'p-main' },
         h('span', { class: 'row-title' }, e.material_name),
-        h('span', { class: 'row-sub' }, [e.category === 'material' ? 'Material' : 'Other expenses', sub].join(' · ')),
+        h('span', { class: 'row-sub' }, [e.category === 'material' ? 'Material' : (e.expense_head || 'Other expenses'), sub].join(' · ')),
         h('span', { class: 'bill-links' }, adminBill(e, onChanged))),
       h('span', { class: 'row-value' }, money(e.amount, cur)));
   }
@@ -320,6 +320,8 @@
     const accountSel = selectField(data.payment_accounts.map((a) => ({ value: a, label: a })), '', { title: 'Paid from', placeholder: 'Choose an account' });
     const materialPick = searchAddField((data.materials || []).map((m) => ({ value: m.name, label: m.name, unit: m.unit })), '', { placeholder: 'Search or add a material' });
     const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off' });
+    // Which kind of expense, for Other expenses (kohal, 2026-11-09).
+    const headSel = selectField(data.expense_heads || [], '', { title: 'Expense type', placeholder: 'Choose the expense type' });
     const supplierPick = searchAddField(data.suppliers || [], '', { placeholder: 'Search or add a supplier' });
     const qtyInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off' });
     const unitInput = h('input', { type: 'text', maxlength: 20, autocomplete: 'off', placeholder: 'e.g. bags, litres', list: 'admin-units' });
@@ -347,6 +349,7 @@
 
     const materialField = field('material_pick', 'Material', materialPick, { wide: true });
     const plainField = field('material_name', 'What did you buy', nameInput, { wide: true });
+    const headField = field('expense_head', 'Expense type', headSel, { wide: true });
     const supplierPickField = field('supplier_pick', 'Supplier', supplierPick, { wide: true });
     const qtyRow = h('div', { class: 'field-row' }, field('quantity', 'Quantity', qtyInput), field('unit', 'Unit', unitInput));
     const stockHint = h('p', { class: 'hint' }, 'A material purchase goes straight into Inventory stock, and the amount shows as a debit on the account.');
@@ -355,6 +358,7 @@
     const syncCategory = () => {
       materialField.hidden = !isMaterial();
       plainField.hidden = isMaterial();
+      headField.hidden = categorySel.value !== 'other';
       supplierPickField.hidden = !isMaterial();
       qtyRow.hidden = !isMaterial();
       stockHint.hidden = !isMaterial();
@@ -379,7 +383,7 @@
         try {
           await api('/api/admin-purchases', {
             method: 'POST', body: {
-              category: categorySel.value, payment_account: accountSel.value, entry_date: dateInput.value,
+              category: categorySel.value, expense_head: isMaterial() ? '' : headSel.value, payment_account: accountSel.value, entry_date: dateInput.value,
               material_name: isMaterial() ? materialPick.value : nameInput.value, quantity: isMaterial() ? (qtyInput.value || null) : null, unit: isMaterial() ? unitInput.value : '',
               amount: amountInput.value, gst_percent: isMaterial() ? (gstInput.value || '0') : '0',
               supplier: isMaterial() ? supplierPick.value : '', note: noteInput.value,
@@ -400,6 +404,7 @@
       h('p', { class: 'hint' }, 'If it is a material purchase, choose Material as the category.'),
       errorBox,
       field('category', 'Category', categorySel, { wide: true }),
+      headField,
       materialField, plainField, unitList,
       qtyRow,
       h('div', { class: 'field-row' }, costField, field('entry_date', 'Date', dateInput)),

@@ -2010,6 +2010,7 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .ps-bar .btn { white-space: nowrap; display: inline-flex; align-items: center; }
 .ps-filter { margin: 0 0 12px; }
 .ps-filter .field-picker { width: 100%; }
+.ps-kinds { margin-top: 0; }
 .ps-title { font: 600 18px/1.2 var(--font-display); margin: 4px 0 8px; }
 .ps-scroll { overflow-x: auto; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--panel); margin: 0 0 12px; }
 .pay-sheet { border-collapse: separate; border-spacing: 0; font-size: 13px; min-width: 100%; }

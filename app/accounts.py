@@ -111,12 +111,12 @@ def _all_rows(account):
                          requested_by=m.created_by.name if m.created_by else None, approved_by=_name(m.approved_by_code)))
 
     for p in AdminPurchase.query.filter_by(payment_account=account).all():
-        rows.append(_row("debit", p.entry_date, p.amount, "Material purchase" if p.category == "material" else "Other expense",
+        rows.append(_row("debit", p.entry_date, p.amount, "Material purchase" if p.category == "material" else (p.expense_head or "Other expense"),
                          p.supplier, p.material_name, requested_by=p.created_by.name if p.created_by else None))
 
     for c in CommissionPayment.query.filter_by(payment_account=account).all():
         e = c.expense
-        rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.worker.name if e.worker else "", f"{e.project.code} · {e.project.title}",
+        rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.given_to, f"{e.project.code} · {e.project.title}",
                          requested_by=c.created_by.name if c.created_by else None))
 
     for p in SupplierPayment.query.filter_by(payment_account=account).all():

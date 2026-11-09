@@ -148,7 +148,7 @@
      span the history covers, is marked Absent; Sundays and today (still time to check in) never are. More
      than one session on the same day (a lunch break, a second site) becomes one row with every session's
      times joined and the day's total hours - see groupedDayRow. */
-  function historyWeeks(history, onDeleted) {
+  function historyWeeks(history, onDeleted, sundaysWork = false) {
     if (!history.length) return [h('p', { class: 'empty-state att-history-empty' }, 'No attendance recorded yet.')];
     const byDay = new Map();
     for (const a of history) {
@@ -185,7 +185,7 @@
             absent += 1;
           }
           rows.push(sessions.length === 1 ? recordRow(shortDate(day), sessions[0], onDeleted) : groupedDayRow(shortDate(day), sessions, onDeleted));
-        } else if (day < todayDate && day.getDay() !== 0) {
+        } else if (day < todayDate && (day.getDay() !== 0 || sundaysWork)) {      // daily wages work Sundays too (kohal, 2026-11-09)
           absent += 1;
           rows.push(dayRow({ title: shortDate(day), right: h('span', { class: 'chip chip-absent' }, 'Absent') }));
         }
@@ -318,7 +318,7 @@
     function renderHistory() {
       // A check-in someone logged themselves is never deleted from here (kohal, 2026-11-08: "if the attendance was logged by the
       // user then that should not be editable or deletable").
-      clear(historyBox).append(...historyWeeks(data.history, null));
+      clear(historyBox).append(...historyWeeks(data.history, null, data.works_sundays));
     }
 
     function renderAbsence() {

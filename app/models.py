@@ -620,6 +620,9 @@ class ProjectExpense(db.Model):
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     kind = db.Column(db.String(20), nullable=False, default="commission", server_default="commission")
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Who it was given to, typed in (kohal, 2026-11-09: "commission can be any person outside org as well") - worker_id is only set
+    # when that name is one of the employees, so their own commission totals still add up.
+    person_name = db.Column(db.String(120), nullable=False, default="", server_default="")
     percent = db.Column(db.Numeric(5, 2), nullable=False)
     basis_amount = db.Column(db.Numeric(14, 2), nullable=False)
     amount = db.Column(db.Numeric(14, 2), nullable=False)
@@ -636,7 +639,7 @@ class ProjectExpense(db.Model):
         return {
             "id": self.id, "kind": self.kind,
             "project_id": self.project_id, "project_code": self.project.code, "project_title": self.project.title,
-            "worker_id": self.worker_id, "worker_name": self.worker.name if self.worker else None,
+            "worker_id": self.worker_id, "worker_name": self.given_to or None, "person_name": self.person_name,
             "percent": float(self.percent), "basis_amount": float(self.basis_amount), "amount": float(self.amount),
             "entry_date": self.entry_date.isoformat(), "note": self.note,
             "created_by_name": self.created_by.name if self.created_by else None,
@@ -647,6 +650,11 @@ class ProjectExpense(db.Model):
     @property
     def paid_total(self):
         return sum((p.amount for p in self.payments), Decimal(0))
+
+    @property
+    def given_to(self) -> str:
+        """The name it was given to: the employee's current name when it is one, otherwise the name typed in."""
+        return self.worker.name if self.worker else self.person_name
 
 
 class CommissionPayment(db.Model):
@@ -1239,6 +1247,8 @@ class AdminPurchase(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     category = db.Column(db.String(10), nullable=False, default="other", server_default="other")
+    # For "Other expenses": which kind (constants.EXPENSE_HEADS, kohal 2026-11-09); empty for a material purchase.
+    expense_head = db.Column(db.String(60), nullable=False, default="", server_default="")
     entry_date = db.Column(db.Date, nullable=False)
     material_name = db.Column(db.String(120), nullable=False)
     quantity = db.Column(db.Numeric(12, 2), nullable=True)
@@ -1258,7 +1268,7 @@ class AdminPurchase(db.Model):
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "category": self.category, "entry_date": self.entry_date.isoformat(),
+            "id": self.id, "category": self.category, "expense_head": self.expense_head, "entry_date": self.entry_date.isoformat(),
             "material_name": self.material_name, "quantity": float(self.quantity) if self.quantity is not None else None,
             "unit": self.unit, "gst_percent": float(self.gst_percent), "gst_amount": float(self.gst_amount),
             "amount": float(self.amount), "supplier": self.supplier, "note": self.note,

@@ -570,7 +570,7 @@
       return h('li', {}, h('a', { class: 'p-row people-row', href: `#overview/person/${id}/${p.period_start}/${p.period_end}` },
         h('span', { class: 'p-main' },
           h('span', { class: 'row-title' }, p.period_label, isCurrent ? h('span', { class: 'chip chip-today' }, 'Current') : null),
-          h('span', { class: 'row-sub' }, [`${plural(p.days || 0, 'day', 'days')} paid, Sundays included`,
+          h('span', { class: 'row-sub' }, [`${plural(p.days || 0, 'day', 'days')} paid`,
             p.advance_deduction ? `advance \u2212${money(p.advance_deduction, cur)}` : null].filter(Boolean).join(' · '))),
         h('span', { class: 'row-value' }, money(p.outstanding, cur))));
     }
@@ -589,7 +589,7 @@
     let subLabel;
     if (d.not_yet) subLabel = 'No data yet';
     else if (d.present) subLabel = d.hours != null ? `${d.hours} h logged` : 'Present (no in/out time)';
-    else if (d.is_sunday) subLabel = 'Sunday · credited';
+    else if (d.sunday_off) subLabel = 'Sunday · day off';
     else subLabel = 'Absent';
     const payText = isDayRate ? money(d.pay, cur) : '';
     return h('li', { class: 'att-day' },
@@ -647,6 +647,77 @@
   const num = (v) => (v ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '');
   const dayMonth = (iso) => { const d = parseDay(iso); return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]}`; };
 
+  // Salaried (monthly) or Daily wages (every 15 days) - the two sheets of the Payment sheet tab (kohal, 2026-11-09).
+  function sheetKinds(active) {
+    return h('div', { class: 'stage-filter ps-kinds', role: 'group', 'aria-label': 'Payment sheet for' },
+      h('a', { class: 'filter-chip', href: '#sheet', 'aria-current': active === 'salaried' ? 'page' : null }, 'Salaried'),
+      h('a', { class: 'filter-chip', href: '#sheet/daily', 'aria-current': active === 'daily' ? 'page' : null }, 'Daily wages'));
+  }
+
+  // The same boxed table for either sheet: `cols` are [key, heading], the row's own name and From/To come first.
+  function sheetTable(data, cols, strongKey) {
+    const head = h('thead', {},
+      h('tr', {},
+        h('th', { rowspan: 2, class: 'ps-name' }, 'Name'),
+        h('th', { colspan: 2 }, 'Work days'),
+        cols.map(([, label]) => h('th', { rowspan: 2 }, label))),
+      h('tr', {}, h('th', {}, 'From'), h('th', {}, 'To')));
+    const body = h('tbody', {}, data.rows.map((r) => h('tr', {},
+      h('th', { class: 'ps-name', scope: 'row' }, r.name,
+        r.no_attendance ? h('span', { class: 'ps-flag' }, 'No attendance recorded') : null),
+      h('td', {}, dayMonth(r.from)), h('td', {}, dayMonth(r.to)),
+      cols.map(([key]) => h('td', { class: key === strongKey ? 'ps-strong' : null }, num(r[key]))))));
+    const t = data.totals;
+    const foot = h('tfoot', {}, h('tr', {},
+      h('th', { class: 'ps-name', scope: 'row' }, 'Total'), h('td', {}), h('td', {}),
+      cols.map(([key]) => h('td', {}, key in t ? num(t[key]) : ''))));
+    return h('div', { class: 'ps-scroll' }, h('table', { class: 'pay-sheet' }, head, body, foot));
+  }
+
+  /* Daily wages (kohal, 2026-11-09): paid every 15 days for the days they worked - no Sunday credit, no leave. One pay period per
+     sheet, with the same employee filter and Excel file as the salaried one. See app/payroll.py's payment_sheet_daily. */
+  async function showDailySheet(period, workerId) {
+    LD.resetAppbarBack?.();
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    const query = new URLSearchParams();
+    if (period) query.set('period', period);
+    if (workerId) query.set('worker_id', workerId);
+    try { data = await api(`/api/payroll/sheet/daily?${query}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    const go = (p, w) => showDailySheet(p, w ? Number(w) : null);
+    const periodSel = selectField(data.periods, data.period, { title: 'Pay period' });
+    periodSel.setAttribute('aria-label', 'Pay period');
+    periodSel.addEventListener('change', () => go(periodSel.value, workerId));
+    const employeeSel = selectField([{ value: '', label: 'All employees' }, ...data.employees], workerId ? String(workerId) : '', { title: 'Employee' });
+    employeeSel.setAttribute('aria-label', 'Employee');
+    employeeSel.addEventListener('change', () => go(data.period, employeeSel.value));
+    const download = h('a', { class: 'btn primary', download: '', href: `/api/payroll/sheet/daily.xlsx?period=${data.period}${workerId ? `&worker_id=${workerId}` : ''}` }, 'Download Excel');
+
+    const cols = [
+      ['wage', 'Daily wage'], ['days_in_period', 'Days in period'], ['present', 'Present days'], ['absent', 'Absent days'],
+      ['earned', 'Wages earned'], ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
+      ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['net', 'Net payable'], ['paid', 'Paid'], ['due', 'Balance due'],
+    ];
+    const note = data.in_progress
+      ? (data.counted_until
+        ? `This period is still going: days are counted up to ${shortDate(parseDay(data.counted_until))}.`
+        : 'No attendance recorded for this period yet.')
+      : null;
+    clear(view).append(h('div', {},
+      tabs('sheet'),
+      sheetKinds('daily'),
+      h('div', { class: 'ps-bar' }, periodSel, download),
+      h('div', { class: 'ps-filter' }, employeeSel),
+      h('h2', { class: 'ps-title' }, `Daily wages, ${data.label}`),
+      note ? h('p', { class: 'hint' }, note) : null,
+      data.rows.length
+        ? sheetTable(data, cols, 'net')
+        : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this period.' : 'No daily-wage employee with a wage set for this period.'),
+      h('p', { class: 'hint' }, 'Paid every 15 days for the days worked only - Sundays are paid like any other day if they worked, and not otherwise. '
+        + 'Net payable is wages earned less the advance taken back in this period; Balance due is what is left after what was paid for it.')));
+  }
+
   async function showSheet(month, workerId) {
     LD.resetAppbarBack?.();
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
@@ -676,22 +747,6 @@
       ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['salary_due', 'Salary due'],
       ['gross', 'Gross salary'], ['paid', 'Paid'],
     ];
-    const head = h('thead', {},
-      h('tr', {},
-        h('th', { rowspan: 2, class: 'ps-name' }, 'Name'),
-        h('th', { colspan: 2 }, 'Work days'),
-        cols.map(([, label]) => h('th', { rowspan: 2 }, label))),
-      h('tr', {}, h('th', {}, 'From'), h('th', {}, 'To')));
-    const body = h('tbody', {}, data.rows.map((r) => h('tr', {},
-      h('th', { class: 'ps-name', scope: 'row' }, r.name,
-        r.no_attendance ? h('span', { class: 'ps-flag' }, 'No attendance recorded') : null),
-      h('td', {}, dayMonth(r.from)), h('td', {}, dayMonth(r.to)),
-      cols.map(([key]) => h('td', { class: key === 'gross' ? 'ps-strong' : null }, num(r[key]))))));
-    const t = data.totals;
-    const foot = h('tfoot', {}, h('tr', {},
-      h('th', { class: 'ps-name', scope: 'row' }, 'Total'), h('td', {}), h('td', {}),
-      cols.map(([key]) => h('td', {}, key in t ? num(t[key]) : ''))));
-
     const note = data.in_progress
       ? (data.counted_until
         ? `This month is still going: absences are counted up to ${shortDate(parseDay(data.counted_until))}.`
@@ -700,12 +755,13 @@
 
     clear(view).append(h('div', {},
       tabs('sheet'),
+      sheetKinds('salaried'),
       h('div', { class: 'ps-bar' }, monthSel, download),
       h('div', { class: 'ps-filter' }, employeeSel),
       h('h2', { class: 'ps-title' }, `Payment sheet of ${data.label}`),
       note ? h('p', { class: 'hint' }, note) : null,
       data.rows.length
-        ? h('div', { class: 'ps-scroll' }, h('table', { class: 'pay-sheet' }, head, body, foot))
+        ? sheetTable(data, cols, 'gross')
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this month.' : 'No salaried employee with a salary set for this month.'),
       h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays and approved paid leave are '
         + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '
@@ -714,6 +770,8 @@
 
   function route() {
     const hash = window.location.hash;
+    let dly = /^#sheet\/daily(?:\/(\d{4}-\d{2}-\d{2}))?(?:\/(\d+))?$/.exec(hash);
+    if (dly) return showDailySheet(dly[1] || null, dly[2] ? Number(dly[2]) : null);
     let s = /^#sheet(?:\/(\d{4}-\d{2}))?(?:\/(\d+))?$/.exec(hash);
     if (s) return showSheet(s[1] || null, s[2] ? Number(s[2]) : null);
     let m = /^#overview\/person\/(\d+)\/cycles$/.exec(hash);

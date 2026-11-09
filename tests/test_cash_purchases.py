@@ -802,20 +802,20 @@ def test_an_admin_material_purchase_is_saved_and_stocked_in_at_once(app, admin_c
 
 def test_an_admin_purchase_shows_as_a_debit_on_its_account_once(app, admin_client):
     _admin_purchase(admin_client)
-    admin_client.post("/api/admin-purchases", json={"category": "other", "material_name": "Fuel", "amount": "300", "payment_account": "GR BB"})
+    admin_client.post("/api/admin-purchases", json={"category": "other", "expense_head": "Office expenses", "material_name": "Fuel", "amount": "300", "payment_account": "GR BB"})
     rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
     debits = sorted((r["reason"], r["amount"]) for r in rows if r["kind"] == "debit")
-    assert debits == [("Material purchase", 1180.0), ("Other expense", 300.0)]       # the stock-in is not counted twice
+    assert debits == [("Material purchase", 1180.0), ("Office expenses", 300.0)]       # an other expense shows its own kind (2026-11-09)       # the stock-in is not counted twice
 
 
 def test_an_admin_other_expense_touches_no_stock(app, admin_client):
     from app.models import Material
-    res = admin_client.post("/api/admin-purchases", json={"category": "other", "material_name": "Fuel", "amount": "300", "payment_account": "CASH"})
+    res = admin_client.post("/api/admin-purchases", json={"category": "other", "expense_head": "Office expenses", "material_name": "Fuel", "amount": "300", "payment_account": "CASH"})
     assert res.status_code == 201 and res.get_json()["entry"]["stocked"] is False and Material.query.count() == 0
 
 
 def test_an_admin_purchase_needs_an_account_and_a_category(app, admin_client):
-    res = admin_client.post("/api/admin-purchases", json={"category": "other", "material_name": "Fuel", "amount": "300"})
+    res = admin_client.post("/api/admin-purchases", json={"category": "other", "expense_head": "Office expenses", "material_name": "Fuel", "amount": "300"})
     assert res.status_code == 422 and "payment_account" in res.get_json()["fields"]
     res = admin_client.post("/api/admin-purchases", json={"material_name": "Fuel", "amount": "300", "payment_account": "CASH"})
     assert res.status_code == 422 and "category" in res.get_json()["fields"]
@@ -919,4 +919,31 @@ def test_a_material_with_broken_stock_history_gets_a_clear_message_not_a_server_
     res = admin_client.post(f"/api/cash-purchases/{eid}/approve")
     assert res.status_code == 422
     assert "PO Red Paint" in res.get_json()["error"] and "2026-11-01" in res.get_json()["error"]
-    assert db.session.get(CashPurchase, eid).status == "pending" and MaterialMovement.query.count() == 1
+    assert db.session.get(CashPurchase, eid).status == "pending" and MaterialMovement.query.count() == 1
+
+
+def test_the_admin_purchase_says_which_kind_of_expense(app, admin_client):
+    """kohal, 2026-11-09: "only in the admin purchase, these categories should be visible" - required there for Other expenses,
+    not asked of an employee's own logged purchase."""
+    base = {"category": "other", "material_name": "Bus fare", "amount": "120", "payment_account": "CASH"}
+    assert "Chandrapur office expenses" in admin_client.get("/api/admin-purchases").get_json()["expense_heads"]
+    res = admin_client.post("/api/admin-purchases", json=base)
+    assert res.status_code == 422 and "expense_head" in res.get_json()["fields"]
+    res = admin_client.post("/api/admin-purchases", json={**base, "expense_head": "Bribes"})
+    assert res.status_code == 422 and "expense_head" in res.get_json()["fields"]
+    res = admin_client.post("/api/admin-purchases", json={**base, "expense_head": "Travelling expenses"})
+    assert res.status_code == 201 and res.get_json()["entry"]["expense_head"] == "Travelling expenses"
+    rows = admin_client.get("/api/accounts/detail", query_string={"name": "CASH"}).get_json()["entries"]
+    assert [(r["reason"], r["amount"]) for r in rows] == [("Travelling expenses", 120.0)]
+    # a material purchase needs none
+    res = admin_client.post("/api/admin-purchases", json={"category": "material", "material_name": "Cement", "quantity": "2", "unit": "bags",
+                                                         "amount": "800", "payment_account": "CASH", "expense_head": "Travelling expenses"})
+    assert res.status_code == 201 and res.get_json()["entry"]["expense_head"] == ""
+
+
+def test_an_employees_logged_purchase_has_no_expense_type(app, admin_client):
+    who, wid = worker_user(app)
+    admin_client.post(f"/api/cash-purchases/{wid}/give", json={"amount": "2000", "payment_mode": "CASH"})
+    assert "expense_heads" not in who.get("/api/cash-purchases/me").get_json()
+    res = who.post("/api/cash-purchases/me", json={"category": "other", "material_name": "Bus fare", "amount": "120"})
+    assert res.status_code == 201 and "expense_head" not in res.get_json()["entry"]
