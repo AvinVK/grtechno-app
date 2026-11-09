@@ -1277,14 +1277,20 @@ def test_a_commission_does_not_need_the_projects_amount(app, admin_client):
     assert res.status_code == 201 and res.get_json()["expenses"][0]["percent"] == 0
 
 
-def test_commission_can_only_go_to_someone_in_the_chandrapur_role(app, client, admin_client):
+def test_commission_can_go_to_anyone_by_name(app, client, admin_client):
+    """kohal, 2026-11-09: "the person should be a text name and not a drop down. commission can be any person outside org as well"."""
     pid = project_with_amount(client, admin_client, 200000)
-    with app.app_context():
-        other = Worker(name="Wendy Welder", category="manpower", role_key="welder")
-        db.session.add(other)
-        db.session.commit()
-        wid = other.id
-    res = _commission(admin_client, pid, wid)
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"person_name": "  Ramesh   Broker ", "amount": "8000"})
+    assert res.status_code == 201
+    e = res.get_json()["expenses"][0]
+    assert (e["worker_id"], e["worker_name"], e["person_name"]) == (None, "Ramesh Broker", "Ramesh Broker")
+    pay = admin_client.post(f"/api/projects/{pid}/expenses/{e['id']}/payments", json={"amount": "8000", "payment_account": "CASH"})
+    assert pay.status_code == 201
+    cash = admin_client.get("/api/accounts/detail", query_string={"name": "CASH"}).get_json()["entries"]
+    assert [r["party"] for r in cash if r["reason"] == "Commission"] == ["Ramesh Broker"]
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"person_name": "", "amount": "8000"})
+    assert res.status_code == 422 and "person_name" in res.get_json()["fields"]
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": 99999, "amount": "8000"})
     assert res.status_code == 422 and "worker_id" in res.get_json()["fields"]
 
 
@@ -1358,8 +1364,8 @@ def test_editing_a_commission_changes_its_amount(app, client, admin_client):
     assert e["amount"] == 40000.0 and e["percent"] == 20.0
 
 
-def test_commission_workers_lists_the_chandrapur_role_and_every_salaried_employee(app, client, admin_client):
-    """kohal, 2026-11-08: "why is only pravin coming? i want to have any salaried employee to be selectable here"."""
+def test_every_employee_is_suggested_for_a_commission(app, client, admin_client):
+    """Suggestions while typing the name - every employee since 2026-11-09 (anyone else can be typed in)."""
     pid = project_with_amount(client, admin_client, 200000)
     with app.app_context():
         wid = commission_worker()
@@ -1370,20 +1376,12 @@ def test_commission_workers_lists_the_chandrapur_role_and_every_salaried_employe
         db.session.commit()
         sid = salaried.id
     data = admin_client.get(f"/api/projects/{pid}").get_json()
-    assert sorted(w["id"] for w in data["commission_workers"]) == sorted([wid, sid])
-    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": sid, "amount": "5000"})
-    assert res.status_code == 201 and res.get_json()["expenses"][0]["amount"] == 5000.0
+    assert {w["name"] for w in data["commission_workers"]} >= {"Chetan Chandrapur", "Wendy Welder", "Daily Dev", "Sunny Salaried"}
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": sid, "person_name": "Sunny Salaried", "amount": "5000"})
+    e = res.get_json()["expenses"][0]
+    assert res.status_code == 201 and e["amount"] == 5000.0 and e["worker_id"] == sid and e["worker_name"] == "Sunny Salaried"
 
 
-def test_commission_cannot_go_to_a_daily_wage_or_other_worker(app, client, admin_client):
-    pid = project_with_amount(client, admin_client, 200000)
-    with app.app_context():
-        w = Worker(name="Daily Dev", category="manpower", employment_type="daily_wages")
-        db.session.add(w)
-        db.session.commit()
-        wid = w.id
-    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "amount": "5000"})
-    assert res.status_code == 422 and "worker_id" in res.get_json()["fields"]
 
 
 # ---------- Daily-wage expense (kohal, 2026-10-20) ----------

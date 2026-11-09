@@ -4,7 +4,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, selectField, searchField, dateField, confirm, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, plural, money, fmtShort, field, showFieldErrors, selectField, searchField, searchAddField, dateField, confirm, closeOnBack } = window.LD;
 
   const STATUS = {
     planned: ['Planned', 'planned'],
@@ -1205,24 +1205,22 @@
     return h('section', { class: 'p-section' },
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Commission'),
-        workers.length
-          ? h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, cur) }, '+ Add commission')
-          : null),
-      !workers.length
-        ? h('p', { class: 'hint' }, 'No salaried employee or Project manager Chandrapur yet - add one from Employee management first.')
-        : null,
+        h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, cur) }, '+ Add commission')),
       rows.length
         ? h('ul', { class: 'card-group' }, rows.map(expenseRow))
-        : (workers.length ? h('p', { class: 'hint' }, 'No commission recorded yet.') : null),
+        : h('p', { class: 'hint' }, 'No commission recorded yet.'),
       rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_expense, cur)}`) : null);
   }
 
   function openExpenseSheet(projectId, expense, workers, reload, cur) {
     const isNew = !expense;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
-    const workerSel = selectField(
-      workers.map((w) => ({ value: w.id, label: w.name })), expense ? expense.worker_id : '',
-      { title: 'Given to', placeholder: 'Pick a person' });
+    // A name, typed in (kohal, 2026-11-09: "the person should be a text name and not a drop down. commission can be any person outside
+    // org as well") - employees are suggested while typing; picking one keeps it on their own commission total.
+    const people = workers.map((w) => ({ value: String(w.id), label: w.name }));
+    const givenTo = searchAddField(people, expense ? (expense.worker_id ? String(expense.worker_id) : expense.person_name) : '',
+      { placeholder: 'Type a name', maxlength: 120 });
+    const typedName = () => givenTo.querySelector('input').value.trim();
     // A rupee amount (kohal, 2026-11-08: "for Commission, have amount instead of percentage field") - the total agreed.
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', value: expense ? expense.amount : '' });
     const dateInput = dateField(expense ? expense.entry_date : todayIsoLocal(), { placeholder: 'Date' });
@@ -1239,7 +1237,8 @@
       saveBtn.disabled = true;
       errEl.textContent = '';
       const body = {
-        worker_id: workerSel.value ? Number(workerSel.value) : null, amount: amountInput.value,
+        worker_id: givenTo.item && givenTo.item.label === typedName() ? Number(givenTo.item.value) : null,
+        person_name: typedName(), amount: amountInput.value,
         entry_date: dateInput.value, note: noteInput.value,
       };
       try {
@@ -1255,7 +1254,7 @@
     };
     overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true' },
       h('h2', {}, isNew ? 'Add commission' : 'Edit commission'),
-      field('worker_id', 'Given to', workerSel),
+      field('person_name', 'Given to', givenTo),
       field('amount', 'Commission amount', amountInput),
       expense && expense.paid ? h('p', { class: 'hint' }, `${money(expense.paid, cur)} of it has been paid already.`) : null,
       field('entry_date', 'Date', dateInput),

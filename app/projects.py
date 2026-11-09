@@ -6,14 +6,14 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, g, jsonify, render_template, request
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from werkzeug.exceptions import abort
 
 from . import inventory as inv
 from .adhoc import _adhoc_kind, requested_names, stage_info, stock_options
 from .auth import PROJECT_MANAGER_ROLE_KEYS, visible_clients, visible_projects
 from .constants import (
-    ACCEPTED_PAYMENT_MODES, COMMISSION_ROLE_KEY, PAUSE_REASONS, PAYMENT_ACCOUNTS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
+    ACCEPTED_PAYMENT_MODES, PAUSE_REASONS, PAYMENT_ACCOUNTS, PAYMENT_MODES, PROJECT_ATTACHMENT_TYPES, PROJECT_DOCUMENT_TYPES, PROJECT_STAGES,
 )
 from .extensions import db
 from .models import Activity, Attendance, Client, CommissionPayment, Material, MaterialMovement, Project, ProjectDocument, ProjectExpense, ProjectPayment, ProjectStage, ProjectStagePhoto, Service, User, Worker, WorkerAttendance, settings_for_client, utcnow
@@ -425,7 +425,7 @@ def _detail(project):
         "pause_reasons": PAUSE_REASONS,
         # For the commission form's worker picker - the Project manager Chandrapur role (kohal, 2026-10-18) and, since 2026-11-08,
         # any salaried employee ("i want to have any salaried employee to be selectable here").
-        "commission_workers": [{"id": w.id, "name": w.name} for w in _commission_workers()],
+        "commission_workers": [{"id": w.id, "name": w.name} for w in _commission_workers()],     # suggestions only, since 2026-11-09
         "payment_accounts": PAYMENT_ACCOUNTS,                  # a commission part is paid from one of these (kohal, 2026-11-08)
         "dashboard": {
             # "Running for" counts from the start date when one is set, else from when the project was added.
@@ -1028,8 +1028,8 @@ def request_material(project_id):
 # routes themselves are unchanged, only where the frontend shows the form.
 
 def _commission_workers():
-    return (Worker.query.filter(or_(Worker.role_key == COMMISSION_ROLE_KEY, Worker.employment_type == "regular"))
-            .order_by(Worker.name).all())
+    """Every employee, offered as suggestions while typing who a commission went to - anyone else can be typed in too."""
+    return Worker.query.order_by(Worker.name).all()
 
 
 def _expense_fields(payload):
@@ -1041,12 +1041,20 @@ def _expense_fields(payload):
     f.text("note", 2000)
     errors = f.errors
 
+    # Given to anyone, by name (kohal, 2026-11-09: "the person should be a text name and not a drop down. commission can be any
+    # person outside org as well"); worker_id comes along only when one of the suggested employees was picked.
     worker = None
     raw_worker = payload.get("worker_id")
-    if str(raw_worker).isdigit():
-        worker = db.session.get(Worker, int(raw_worker))
-    if worker is None or not (worker.role_key == COMMISSION_ROLE_KEY or worker.employment_type == "regular"):
-        errors["worker_id"] = "Pick a salaried employee from the list"
+    if raw_worker not in (None, ""):
+        worker = db.session.get(Worker, int(raw_worker)) if str(raw_worker).isdigit() else None
+        if worker is None:
+            errors["worker_id"] = "That employee isn't on the list any more"
+    person_name = " ".join(str(payload.get("person_name") or "").split())
+    if worker is None and not person_name and "worker_id" not in errors:
+        errors["person_name"] = "Enter who it was given to"
+    elif len(person_name) > 120:
+        errors["person_name"] = "Keep the name under 120 characters"
+    f.data["person_name"] = worker.name if worker is not None else person_name
 
     amount = None
     if payload.get("amount") in (None, ""):
@@ -1082,7 +1090,7 @@ def add_expense(project_id):
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     percent, basis = _share(project, amount)
     expense = ProjectExpense(
-        project=project, kind="commission", worker=worker, percent=percent, basis_amount=basis, amount=amount,
+        project=project, kind="commission", worker=worker, person_name=data["person_name"], percent=percent, basis_amount=basis, amount=amount,
         entry_date=data["entry_date"], note=data.get("note", ""), created_by_code=g.user.code,
     )
     db.session.add(expense)
@@ -1105,6 +1113,7 @@ def update_expense(project_id, expense_id):
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     expense.worker = worker
+    expense.person_name = data["person_name"]
     expense.amount = amount
     expense.percent, expense.basis_amount = _share(project, amount)
     expense.entry_date = data["entry_date"]

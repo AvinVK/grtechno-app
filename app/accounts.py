@@ -116,7 +116,7 @@ def _all_rows(account):
 
     for c in CommissionPayment.query.filter_by(payment_account=account).all():
         e = c.expense
-        rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.worker.name if e.worker else "", f"{e.project.code} · {e.project.title}",
+        rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.given_to, f"{e.project.code} · {e.project.title}",
                          requested_by=c.created_by.name if c.created_by else None))
 
     for p in SupplierPayment.query.filter_by(payment_account=account).all():
