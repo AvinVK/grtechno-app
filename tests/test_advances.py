@@ -1,8 +1,9 @@
 """Advance salary (kohal, 2026-11-06) - money given ahead of pay, taken back in equal parts across the months that follow."""
 
+from datetime import date
 from decimal import Decimal
 
-from app.advances import add_months, instalments
+from app.advances import add_months, add_slots, deducted_before_slot, instalments, next_slot, slot_deduction, slot_start_of
 from app.extensions import db
 from app.models import SalaryAdvance, Worker
 from app.timeutil import today_local
@@ -66,15 +67,101 @@ def test_a_salaried_employees_due_comes_down_by_the_instalments_so_far(app, admi
     assert after["advance_deduction"] == 2000.0 and after["outstanding"] == round(before["outstanding"] - 2000, 2)
 
 
-def test_a_daily_wage_employees_month_share_is_split_across_the_two_pay_periods(app, admin_client):
+def test_an_advance_given_before_pay_periods_existed_keeps_splitting_its_month_across_the_two_periods(app):
+    """Daily-wage advances given earlier are monthly (unit "month") - they must keep working exactly as they did."""
+    with app.app_context():
+        w = Worker(name="Sita", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"))
+        db.session.add(w)
+        db.session.flush()
+        db.session.add(SalaryAdvance(worker=w, amount=Decimal("10000"), months=4, first_month=date(2026, 11, 1),
+                                     given_date=date(2026, 11, 2), payment_account="CASH"))      # 2,500 a month
+        db.session.add(SalaryAdvance(worker=w, amount=Decimal("5"), months=1, first_month=date(2026, 11, 1),
+                                     given_date=date(2026, 11, 2), payment_account="CASH"))      # an odd 5 rupees
+        db.session.commit()
+        assert [slot_deduction(w, date(2026, 11, 1)), slot_deduction(w, date(2026, 11, 16))] == [Decimal("1252.50"), Decimal("1252.50")]
+        assert deducted_before_slot(w, date(2026, 11, 16)) == Decimal("1252.50")
+        assert deducted_before_slot(w, date(2026, 12, 1)) == Decimal("2505.00")
+
+
+# ---------- 2-week pay periods for daily wages (kohal, 2026-11-09: "need 2 week advance deduction and not one month") ----------
+
+def _fortnight(client, wid, amount="10000", periods=4, first=None, account="CASH", **extra):
+    first = first or next_slot(slot_start_of(today_local())).isoformat()
+    return client.post("/api/payroll/advances", json={"worker_id": wid, "amount": amount, "periods": periods, "first_period": first,
+                                                       "payment_account": account, **extra})
+
+
+def test_pay_periods_step_1st_then_16th_then_the_next_months_1st():
+    assert next_slot(date(2026, 11, 1)) == date(2026, 11, 16)
+    assert next_slot(date(2026, 11, 16)) == date(2026, 12, 1)
+    assert next_slot(date(2026, 12, 16)) == date(2027, 1, 1)
+    assert add_slots(date(2026, 11, 16), 3) == date(2027, 1, 1)
+    assert slot_start_of(date(2026, 11, 15)) == date(2026, 11, 1) and slot_start_of(date(2026, 11, 16)) == date(2026, 11, 16)
+
+
+def test_a_daily_wage_advance_is_taken_back_per_two_week_pay_period(app, admin_client):
     wid = _worker(app, "Sita", "daily_wages", "500")
-    _give(admin_client, wid, "10000", 4, first=_month(0))                      # 2,500 this month
-    rows = sorted(_row(admin_client, wid), key=lambda r: r["period_start"])
-    assert [r["advance_deduction"] for r in rows] == [1250.0, 1250.0]
-    odd = _worker(app, "Gita", "contractor", "500")
-    _give(admin_client, odd, "5", 1, first=_month(0))
-    parts = [r["advance_deduction"] for r in sorted(_row(admin_client, odd), key=lambda r: r["period_start"])]
-    assert parts == [2.5, 2.5] and round(sum(parts), 2) == 5.0
+    r = _fortnight(admin_client, wid, "10000", 4, note="Wedding")
+    assert r.status_code == 201
+    adv = r.get_json()["advance"]
+    assert (adv["unit"], adv["months"], adv["part"]) == ("fortnight", 4, 2500.0)
+    first = next_slot(slot_start_of(today_local()))
+    assert [i["month"] for i in adv["instalments"]] == [add_slots(first, i).isoformat() for i in range(4)]
+    assert [i["amount"] for i in adv["instalments"]] == [2500.0] * 4          # 2,500 a pay period, not 5,000 a month
+    assert adv["deducted"] == 0.0 and adv["remaining"] == 10000.0
+    assert admin_client.get(f"/api/payroll/advances?worker_id={wid}").get_json()["unit"] == "fortnight"
+
+
+def test_this_pay_period_counts_as_deducted_and_comes_off_that_periods_due(app, admin_client):
+    wid = _worker(app, "Sita", "daily_wages", "500")
+    slot = slot_start_of(today_local())
+    before = {r["period_start"]: r["outstanding"] for r in _row(admin_client, wid)}
+    adv = _fortnight(admin_client, wid, "9000", 3, first=slot.isoformat()).get_json()["advance"]
+    assert [i["status"] for i in adv["instalments"]] == ["this period", "upcoming", "upcoming"]
+    assert adv["deducted"] == 3000.0 and adv["remaining"] == 6000.0
+    rows = {r["period_start"]: r for r in _row(admin_client, wid)}
+    assert rows[slot.isoformat()]["advance_deduction"] == 3000.0
+    assert rows[slot.isoformat()]["outstanding"] == round(before[slot.isoformat()] - 3000, 2)
+    if slot.day == 16:
+        assert rows[slot.replace(day=1).isoformat()]["advance_deduction"] == 0.0                # the earlier period is untouched
+
+
+def test_each_pay_period_takes_only_its_own_part(app):
+    with app.app_context():
+        w = Worker(name="Gita", category="manpower", employment_type="contractor", wage_amount=Decimal("500"))
+        db.session.add(w)
+        db.session.flush()
+        db.session.add(SalaryAdvance(worker=w, amount=Decimal("3000"), months=3, unit="fortnight", first_month=date(2026, 10, 16),
+                                     given_date=date(2026, 10, 5), payment_account="CASH"))
+        db.session.commit()
+        assert [slot_deduction(w, d) for d in (date(2026, 10, 1), date(2026, 10, 16), date(2026, 11, 1), date(2026, 11, 16), date(2026, 12, 1))] == [
+            0, 1000, 1000, 1000, 0]
+        assert [deducted_before_slot(w, d) for d in (date(2026, 10, 16), date(2026, 11, 1), date(2026, 11, 16), date(2026, 12, 1))] == [
+            0, 1000, 2000, 3000]
+
+
+def test_what_cannot_be_given_to_a_daily_wage_employee_is_refused(app, admin_client):
+    wid = _worker(app, "Sita", "daily_wages", "500")
+    slot = slot_start_of(today_local())
+    past = date(2020, 1, 1)
+    for kw, field in (({"periods": 0}, "periods"), ({"periods": 49}, "periods"), ({"first": "2026-11-05"}, "first_period"),
+                      ({"first": past.isoformat()}, "first_period"), ({"first": "nonsense"}, "first_period"),
+                      ({"amount": "0"}, "amount"), ({"account": "Piggy bank"}, "payment_account")):
+        r = _fortnight(admin_client, wid, **kw)
+        assert r.status_code == 422 and field in r.get_json()["fields"], kw
+    # months do not apply to them, and pay periods do not apply to a salaried employee
+    assert "periods" in admin_client.post("/api/payroll/advances", json={"worker_id": wid, "amount": "100", "months": 3, "payment_account": "CASH"}).get_json()["fields"]
+    salaried = _worker(app)
+    assert "months" in _fortnight(admin_client, salaried).get_json()["fields"]
+    with app.app_context():
+        assert SalaryAdvance.query.count() == 0
+
+
+def test_the_ledger_says_pay_periods_for_a_daily_wage_advance(app, admin_client):
+    wid = _worker(app, "Sita", "daily_wages", "500")
+    _fortnight(admin_client, wid, "10000", 4, account="YES BANK")
+    entry = admin_client.get("/api/accounts/detail", query_string={"name": "YES BANK"}).get_json()["entries"][0]
+    assert "4 pay periods" in str(entry)
 
 
 def test_the_advance_is_a_debit_on_the_account_it_was_paid_from(app, admin_client):

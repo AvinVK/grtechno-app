@@ -36,23 +36,28 @@ them, and so does approved paid leave (app/leaves.py); an unpaid leave day is cu
 
 Daily wages and contractors (kohal, 2026-11-09: "need to do the same payroll features and everything what u did for salaried
 employee with daily wages as well. no sick leave casual leave for daily wages, no sunday off as well. they work, they get paid
-bi-weekly"): paid for the days they were present, 1st-15th and 16th-end, with no Sunday credit and no leave. Their payment sheet is
+bi-weekly"): paid for the days they were present, 1st-15th and 16th-end, with no Sunday credit and no leave - plus any holiday the
+admin picked them for (kohal, 2026-11-10; app/holidays.py), paid as a day worked. A holiday is also a paid day for every salaried
+employee. Their payment sheet is
 one pay period at a time (payment_sheet_daily below), laid out like the salaried one, with the same employee filter and Excel file.
 
 Gated by the "workforce" module (app/modules.py), same as Employee management - a look-only role
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
 
 import calendar
+import json
 import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from flask import Blueprint, Response, abort, g, jsonify, render_template, request
 
-from .advances import add_months, deduction_to_date, instalments, month_deduction, slot_deduction
+from .advances import add_months, deducted_before_slot, deduction_to_date, instalments, month_deduction, slot_deduction
+from .deductions import amount_to_date, month_amount, slot_amount
 from .extensions import db
+from .holidays import holiday_days
 from .leaves import balance as leave_balance, month_tally, paid_leave_days
-from .models import Attendance, Worker, WorkerAttendance, settings_for_client
+from .models import Attendance, SalarySlip, Worker, WorkerAttendance, settings_for_client
 from .modules import can_write, check_module
 from .timeutil import today_local
 from .validation import api_errors
@@ -119,16 +124,17 @@ def salaried_month(w, year: int, month: int, data_until_end) -> dict | None:
     per_day = (salary / days_in_month).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     known_end = min(last, data_until_end) if data_until_end else None
     absent, recorded = 0, 0
+    holidays = holiday_days(w, start, last)                  # declared holidays are paid days for every salaried employee
     if known_end is not None and known_end >= start:
         present = _present_days(w, start, known_end)
         on_paid_leave = {d for d, (_, paid) in paid_leave_days(w, start, known_end).items() if paid}
-        absent, recorded = _absent_days(start, known_end, present | on_paid_leave), len(present | on_paid_leave)
+        absent, recorded = _absent_days(start, known_end, present | on_paid_leave | holidays), len(present | on_paid_leave)
     before_start = (start - first).days
     paid_days = days_in_month - before_start - absent
     net = salary if paid_days == days_in_month else per_day * paid_days
     return {
         "from": start, "to": last, "salary": salary, "days_in_month": days_in_month, "per_day": per_day,
-        "present": paid_days, "absent": absent, "cut": salary - net, "net": net,
+        "present": paid_days, "absent": absent, "holidays": len(holidays), "cut": salary - net, "net": net,
         "allowance": Decimal(w.allowance_amount or 0),
         # Not one day recorded present: likely their attendance just isn't being recorded, rather than a month away - flagged on
         # the payment sheet so it is checked before paying.
@@ -211,22 +217,30 @@ def _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end):
     wage = float(w.wage_amount)
     days = 0
     absent = 0
+    worked = 0
+    holidays = 0
     effective_start = max(slot_start, _payroll_start(w))
     effective_end = min(slot_end, data_until_end) if data_until_end else None
     if effective_start and effective_end and effective_end >= effective_start:
         present = _present_days(w, effective_start, effective_end)
-        days = len(present)                       # paid for the days worked only - no Sunday credit (kohal, 2026-11-09)
-        absent = _absent_days(effective_start, effective_end, present, sundays_off=False)
+        # Paid for the days worked only - no Sunday credit (kohal, 2026-11-09) - plus a holiday they were picked for (2026-11-10);
+        # a holiday they came in on anyway is just a day worked.
+        off = holiday_days(w, effective_start, effective_end) - present
+        worked, holidays = len(present), len(off)
+        days = worked + holidays
+        absent = _absent_days(effective_start, effective_end, present | off, sundays_off=False)
     earned = round(wage * days, 2)
     paid = float(sum((p.amount for p in w.payments if p.period_start == slot_start and p.paid_date is not None),
                       start=Decimal("0")))
     # What is being taken back from this period for any salary advance (kohal, 2026-11-06) - see app/advances.py.
     deduction = float(slot_deduction(w, slot_start))
+    other = float(slot_amount(w, slot_start))                  # anything else the admin put against this period (app/deductions.py)
     return {
         "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
-        "months": None, "days": days, "absent": absent,
+        "months": None, "days": days, "present_days": worked, "holidays": holidays, "absent": absent,
         "period_start": slot_start.isoformat(), "period_end": slot_end.isoformat(), "period_label": label,
-        "earned": earned, "paid": paid, "advance_deduction": deduction, "outstanding": round(earned - paid - deduction, 2),
+        "earned": earned, "paid": paid, "advance_deduction": deduction, "other_deduction": other,
+        "outstanding": round(earned - paid - deduction - other, 2),
         "last_paid": _last_paid(w),
     }
 
@@ -288,10 +302,12 @@ def _payroll_rows() -> list:
             paid = float(w.paid_amount)
             # Every advance instalment due up to this month, counted in full like the month's salary (kohal, 2026-11-06).
             deduction = float(deduction_to_date(w, today))
+            other = float(amount_to_date(w, today))            # plus every deduction put against this month or an earlier one
             rows.append({
                 "id": w.id, "name": w.name, "employment_type": w.employment_type, "wage_amount": wage,
                 "months": months, "days": None, "period_start": None, "period_end": None, "period_label": None,
-                "earned": earned, "paid": paid, "advance_deduction": deduction, "outstanding": round(earned - paid - deduction, 2),
+                "earned": earned, "paid": paid, "advance_deduction": deduction, "other_deduction": other,
+                "outstanding": round(earned - paid - deduction - other, 2),
                 "last_paid": _last_paid(w),
             })
         else:
@@ -310,6 +326,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
     is_day_rate = w.employment_type in DAY_RATE_TYPES
     wage = float(w.wage_amount) if w.wage_amount is not None else 0.0
     payroll_start = _payroll_start(w)
+    off = holiday_days(w, start, end)
     wa_by_day = {a.work_date: a for a in WorkerAttendance.query.filter_by(worker_id=w.id)
                  .filter(WorkerAttendance.work_date >= start, WorkerAttendance.work_date <= end)}
     att_by_day = {}
@@ -328,7 +345,7 @@ def _day_by_day(w, start: date, end: date, data_until_end):
         # out higher than the "Total" above it, computed the same way but period-wide.
         too_early = d < payroll_start
         if too_early or data_until_end is None or d > data_until_end:
-            rows.append({"date": d.isoformat(), "present": False, "hours": None, "is_sunday": is_sunday,
+            rows.append({"date": d.isoformat(), "present": False, "hours": None, "is_sunday": is_sunday, "holiday": False,
                          "sunday_off": is_sunday and not is_day_rate, "not_yet": True, "pay": 0.0 if is_day_rate else None})
             d += timedelta(days=1)
             continue
@@ -341,12 +358,13 @@ def _day_by_day(w, start: date, end: date, data_until_end):
             timed = [a.hours for a in att_by_day[d] if a.hours is not None]
             if timed:
                 hours = round(sum(timed), 1)
-        counted = present                         # a day rate is paid for days worked only, Sundays included (2026-11-09)
+        holiday = d in off and not present        # a paid holiday they did not work
+        counted = present or holiday              # a day rate is paid for days worked only, Sundays included (2026-11-09), and for a holiday
         # A day rate genuinely has a per-day figure; a flat salary doesn't (kohal picked unconditional,
         # not pro-rated, when this was built) - pay stays null for a salaried employee's days rather than
         # attributing a whole month's salary to one day, or inventing a daily rate nobody set.
         pay = (round(wage, 2) if counted else 0.0) if is_day_rate else None
-        rows.append({"date": d.isoformat(), "present": present, "hours": hours, "is_sunday": is_sunday,
+        rows.append({"date": d.isoformat(), "present": present, "hours": hours, "is_sunday": is_sunday, "holiday": holiday,
                      "sunday_off": is_sunday and not is_day_rate, "not_yet": False, "pay": pay})
         d += timedelta(days=1)
     return rows
@@ -356,8 +374,8 @@ def _day_by_day(w, start: date, end: date, data_until_end):
 
 SHEET_COLUMNS = [
     "Sr. No.", "Name", "From", "To", "Salary", "Total days of month", "Salary per day", "Present days in month", "Absent days",
-    "Sick leave", "Casual leave", "Sick leave balance", "Casual leave balance", "Deduction", "Month net salary", "House rent / petrol", "Old adv bal", "Advance taken", "Total adv due", "Advance deduction",
-    "Advance balance", "Salary due", "Gross salary", "Paid",
+    "Sick leave", "Casual leave", "Sick leave balance", "Casual leave balance", "Holidays", "Deduction", "Month net salary", "House rent / petrol", "Old adv bal", "Advance taken", "Total adv due", "Advance deduction",
+    "Advance balance", "Other deduction", "Salary due", "Gross salary", "Paid",
 ]
 
 
@@ -403,7 +421,8 @@ def payment_sheet(year: int, month: int, worker_id=None) -> dict:
         adv = _advance_columns(w, first, last)
         leave = month_tally(w, first, last)
         left = leave_balance(w, last, used_until=last)
-        gross = m["net"] + m["allowance"] - adv["deduction"]
+        other = month_amount(w, year, month)                 # fines etc. the admin put against this month (app/deductions.py)
+        gross = m["net"] + m["allowance"] - adv["deduction"] - other
         paid = _paid_for_month(w, first, last)
         if not m["complete"]:
             counted_until = m["counted_until"]
@@ -413,17 +432,44 @@ def payment_sheet(year: int, month: int, worker_id=None) -> dict:
             "salary": float(m["salary"]), "days_in_month": m["days_in_month"], "per_day": float(m["per_day"]),
             "present": m["present"], "absent": m["absent"], "sick_leave": leave["sick"], "casual_leave": leave["casual"],
             "unpaid_leave": leave["unpaid"], "sick_balance": round(left["sick"]["balance"], 1),
-            "casual_balance": round(left["casual"]["balance"], 1), "deduction": float(m["cut"]), "net": float(m["net"]),
+            "casual_balance": round(left["casual"]["balance"], 1), "holidays": m["holidays"], "deduction": float(m["cut"]), "net": float(m["net"]),
             "allowance": float(m["allowance"]), "old_advance": float(adv["old"]), "advance_taken": float(adv["taken"]),
             "advance_total": float(adv["total"]), "advance_deduction": float(adv["deduction"]), "advance_balance": float(adv["balance"]),
-            "salary_due": float(gross - paid), "gross": float(gross), "paid": float(paid), "no_attendance": m["no_attendance"],
+            "other_deduction": float(other), "salary_due": float(gross - paid), "gross": float(gross), "paid": float(paid), "no_attendance": m["no_attendance"],
+            "has_login": bool(w.user_code),
         })
     money_keys = ("salary", "deduction", "net", "allowance", "old_advance", "advance_taken", "advance_total", "advance_deduction",
-                  "advance_balance", "salary_due", "gross", "paid")
+                  "advance_balance", "other_deduction", "salary_due", "gross", "paid")
     totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
+    _attach_slips("salaried", first, rows)
     return {"month": _month_key(first), "label": first.strftime("%B %Y"), "rows": rows, "totals": totals, "employees": employees,
             "worker_id": worker_id,
             "in_progress": in_progress, "counted_until": counted_until.isoformat() if counted_until else None}
+
+
+# What a released slip is compared on to say "Changed since release" - the figures an employee sees, not what was paid afterwards.
+_SLIP_WATCH = {
+    "salaried": ("salary", "present", "absent", "holidays", "sick_leave", "casual_leave", "net", "allowance", "old_advance", "advance_taken",
+                 "advance_deduction", "other_deduction", "gross"),
+    "daily": ("wage", "present", "absent", "holidays", "earned", "old_advance", "advance_taken", "advance_deduction", "other_deduction", "net"),
+}
+
+
+def _attach_slips(kind: str, period_start: date, rows: list) -> None:
+    """Add `slip` to each row: None, or the released slip's id / day and whether the row has changed since it was released
+    (kohal, 2026-11-10: the Release salary button - app/slips.py)."""
+    slips = {}
+    if rows:
+        slips = {s.worker_id: s for s in SalarySlip.query.filter(SalarySlip.kind == kind, SalarySlip.period_start == period_start,
+                                                                   SalarySlip.worker_id.in_([r["id"] for r in rows]))}
+    for r in rows:
+        s = slips.get(r["id"])
+        if s is None:
+            r["slip"] = None
+            continue
+        kept = json.loads(s.data)["row"]
+        r["slip"] = {"id": s.id, "released_on": s.released_at.date().isoformat(),
+                     "stale": any(round(float(kept.get(k) or 0), 2) != round(float(r.get(k) or 0), 2) for k in _SLIP_WATCH[kind])}
 
 
 def _sheet_months(today: date) -> list:
@@ -461,13 +507,13 @@ def sheet_workbook(data: dict) -> list:
     for i, r in enumerate(data["rows"], start=1):
         body.append([i, r["name"], date.fromisoformat(r["from"]), date.fromisoformat(r["to"]), r["salary"], r["days_in_month"],
                      r["per_day"], r["present"], r["absent"], r["sick_leave"], r["casual_leave"], r["sick_balance"],
-                     r["casual_balance"], r["deduction"], r["net"], r["allowance"], r["old_advance"],
-                     r["advance_taken"], r["advance_total"], r["advance_deduction"], r["advance_balance"], r["salary_due"],
-                     r["gross"], r["paid"]])
+                     r["casual_balance"], r["holidays"], r["deduction"], r["net"], r["allowance"], r["old_advance"],
+                     r["advance_taken"], r["advance_total"], r["advance_deduction"], r["advance_balance"], r["other_deduction"],
+                     r["salary_due"], r["gross"], r["paid"]])
     t = data["totals"]
-    total = [None, "Total", None, None, t["salary"], None, None, None, None, None, None, None, None, t["deduction"], t["net"], t["allowance"],
+    total = [None, "Total", None, None, t["salary"], None, None, None, None, None, None, None, None, None, t["deduction"], t["net"], t["allowance"],
              t["old_advance"], t["advance_taken"], t["advance_total"], t["advance_deduction"], t["advance_balance"],
-             t["salary_due"], t["gross"], t["paid"]]
+             t["other_deduction"], t["salary_due"], t["gross"], t["paid"]]
     return _boxed_sheet(f"PAYMENT SHEET OF {data['label']}", data["label"], SHEET_COLUMNS, body, total)
 
 
@@ -495,22 +541,9 @@ def _boxed_sheet(title_text: str, sheet_name: str, columns: list, body: list, to
 # no leave, no house rent. One pay period per sheet; the same layout, employee filter and Excel file as the salaried sheet.
 
 DAILY_SHEET_COLUMNS = [
-    "Sr. No.", "Name", "From", "To", "Daily wage", "Days in period", "Present days", "Absent days", "Wages earned", "Old adv bal",
-    "Advance taken", "Total adv due", "Advance deduction", "Advance balance", "Net payable", "Paid", "Balance due",
+    "Sr. No.", "Name", "From", "To", "Daily wage", "Days in period", "Present days", "Absent days", "Paid holidays", "Wages earned", "Old adv bal",
+    "Advance taken", "Total adv due", "Advance deduction", "Advance balance", "Other deduction", "Net payable", "Paid", "Balance due",
 ]
-
-
-def _deducted_before_slot(w, slot_start: date) -> Decimal:
-    """Advance instalments already taken back before this pay period: every earlier month in full, plus the first half of this
-    month's when the period is its second half (see advances.slot_deduction)."""
-    months = {m for adv in w.advances for m, _ in instalments(adv)}
-    total = Decimal("0")
-    for m in months:
-        if m < slot_start.replace(day=1):
-            total += month_deduction(w, m.year, m.month)
-        elif m == slot_start.replace(day=1) and slot_start.day == 16:
-            total += (month_deduction(w, m.year, m.month) / 2).quantize(Decimal("0.01"))
-    return total
 
 
 def _daily_slot_start_arg(today: date) -> date:
@@ -565,25 +598,27 @@ def payment_sheet_daily(slot_start: date, worker_id=None) -> dict:
         r = _day_rate_slot_row(w, slot_start, slot_end, label, data_until_end)
         given_before = sum((a.amount for a in w.advances if a.given_date < slot_start), Decimal("0"))
         taken = sum((a.amount for a in w.advances if slot_start <= a.given_date <= slot_end), Decimal("0"))
-        old = given_before - _deducted_before_slot(w, slot_start)
+        old = given_before - deducted_before_slot(w, slot_start)
         deduction = Decimal(str(r["advance_deduction"]))
+        other = Decimal(str(r["other_deduction"]))
         earned = Decimal(str(r["earned"]))
         paid = Decimal(str(r["paid"]))
-        net = earned - deduction
+        net = earned - deduction - other
         counted_end = min(slot_end, data_until_end) if data_until_end else None
         in_days = (slot_end - start).days + 1
         rows.append({
             "id": w.id, "name": w.name, "from": start.isoformat(), "to": slot_end.isoformat(), "wage": r["wage_amount"],
-            "days_in_period": in_days, "present": r["days"], "absent": r["absent"], "earned": float(earned),
+            "days_in_period": in_days, "present": r["present_days"], "absent": r["absent"], "holidays": r["holidays"], "earned": float(earned),
             "old_advance": float(old), "advance_taken": float(taken), "advance_total": float(old + taken),
             "advance_deduction": float(deduction), "advance_balance": float(old + taken - deduction),
-            "net": float(net), "paid": float(paid), "due": float(net - paid),
-            "no_attendance": r["days"] == 0 and r["absent"] > 0,
+            "other_deduction": float(other), "net": float(net), "paid": float(paid), "due": float(net - paid),
+            "no_attendance": r["present_days"] == 0 and r["absent"] > 0, "has_login": bool(w.user_code),
             "_complete": counted_end is not None and counted_end >= slot_end,
         })
-    money_keys = ("earned", "old_advance", "advance_taken", "advance_total", "advance_deduction", "advance_balance", "net", "paid", "due")
+    money_keys = ("earned", "old_advance", "advance_taken", "advance_total", "advance_deduction", "advance_balance", "other_deduction", "net", "paid", "due")
     totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
     in_progress = not all([r.pop("_complete") for r in rows])         # popped for every row, not just up to the first incomplete one
+    _attach_slips("daily", slot_start, rows)
     counted_until = min(slot_end, data_until_end) if in_progress and data_until_end and data_until_end >= slot_start else None
     return {"period": slot_start.isoformat(), "label": label, "rows": rows, "totals": totals, "employees": employees,
             "worker_id": worker_id, "in_progress": in_progress,
@@ -602,11 +637,11 @@ def daily_sheet_workbook(data: dict) -> list:
     body = []
     for i, r in enumerate(data["rows"], start=1):
         body.append([i, r["name"], date.fromisoformat(r["from"]), date.fromisoformat(r["to"]), r["wage"], r["days_in_period"],
-                     r["present"], r["absent"], r["earned"], r["old_advance"], r["advance_taken"], r["advance_total"],
-                     r["advance_deduction"], r["advance_balance"], r["net"], r["paid"], r["due"]])
+                     r["present"], r["absent"], r["holidays"], r["earned"], r["old_advance"], r["advance_taken"], r["advance_total"],
+                     r["advance_deduction"], r["advance_balance"], r["other_deduction"], r["net"], r["paid"], r["due"]])
     t = data["totals"]
-    total = [None, "Total", None, None, None, None, None, None, t["earned"], t["old_advance"], t["advance_taken"], t["advance_total"],
-             t["advance_deduction"], t["advance_balance"], t["net"], t["paid"], t["due"]]
+    total = [None, "Total", None, None, None, None, None, None, None, t["earned"], t["old_advance"], t["advance_taken"], t["advance_total"],
+             t["advance_deduction"], t["advance_balance"], t["other_deduction"], t["net"], t["paid"], t["due"]]
     return _boxed_sheet(f"PAYMENT SHEET OF DAILY WAGES {data['label']}", data["label"], DAILY_SHEET_COLUMNS, body, total)
 
 

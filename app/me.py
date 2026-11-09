@@ -125,6 +125,12 @@ def _extra_tiles():
     # below. The Suppliers tile (kohal, 2026-11-04) goes on either list - it must not be what decides which one applies, or a
     # project manager given Inventory lost their own Petrol tile (reported 2026-11-05).
     manager = bool(tiles)
+    worker = Worker.query.filter_by(user_code=g.user.code).first()
+    if worker is not None and worker.wage_amount is not None:
+        # Their salary slips, once the admin releases them (kohal, 2026-11-10) - a salaried or daily-wage person, an accountant on a salary too.
+        from .models import SalarySlip
+        latest = SalarySlip.query.filter_by(worker_id=worker.id).order_by(SalarySlip.period_start.desc(), SalarySlip.id.desc()).first()
+        tiles.append({"href": "/salary-slips", "icon": "payslip", "name": "Salary slips", "sum": latest.label if latest else None})
 
     def with_suppliers(rows):
         if has_module(g.user, "inventory"):
@@ -133,7 +139,6 @@ def _extra_tiles():
 
     if manager:
         return with_suppliers(tiles)
-    worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker and worker.employment_type == "daily_wages":
         tiles.append({"href": "/wages", "icon": "wages", "name": "Wages", "sum": None})
     if worker and worker.fooding_eligible:

@@ -230,6 +230,8 @@ def payroll_report(year, month):
             elif d["present"]:
                 marks.append("P")
                 present += 1
+            elif d.get("holiday"):
+                marks.append("H")                                    # a paid holiday: neither present nor absent
             else:
                 marks.append("A")
                 absent += 1

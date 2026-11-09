@@ -1918,6 +1918,15 @@ class Worker(db.Model):
         "SalaryAdvance", back_populates="worker", cascade="all, delete-orphan",
         order_by="SalaryAdvance.given_date, SalaryAdvance.id",
     )
+    # Salary slips released to this person (see SalarySlip).
+    slips = db.relationship("SalarySlip", back_populates="worker", cascade="all, delete-orphan")
+    # Holidays this person was picked for (see HolidayWorker) - daily-wage / contractor staff only; a salaried employee gets every holiday.
+    holiday_links = db.relationship("HolidayWorker", back_populates="worker", cascade="all, delete-orphan")
+    # Deductions the admin has put against this person's pay (see PayDeduction).
+    pay_deductions = db.relationship(
+        "PayDeduction", back_populates="worker", cascade="all, delete-orphan",
+        order_by="PayDeduction.period_start, PayDeduction.id",
+    )
     # Commission this person has earned, across every project (see ProjectExpense) - not this worker's own
     # "owned" rows the way payments/attendance are (no cascade on delete: a removed worker's past commission
     # stays on the project's own record, just with worker_id cleared - see ProjectExpense.worker_id).
@@ -2056,8 +2065,11 @@ class SalaryAdvance(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
     amount = db.Column(db.Numeric(14, 2), nullable=False)
-    months = db.Column(db.Integer, nullable=False)
-    first_month = db.Column(db.Date, nullable=False)                    # the first of the month the first deduction comes off
+    months = db.Column(db.Integer, nullable=False)                      # how many equal parts it is taken back in (months or pay periods, see `unit`)
+    first_month = db.Column(db.Date, nullable=False)                    # the first of the month - or, for a fortnight advance, the 1st/16th - the first part comes off
+    # "month" for a salaried employee (a part comes off each month's salary), "fortnight" for a daily-wage/contractor employee (a part
+    # comes off each 2-week pay period; kohal, 2026-11-09). Advances given before this existed are all "month".
+    unit = db.Column(db.String(10), nullable=False, default="month", server_default="month")
     given_date = db.Column(db.Date, nullable=False)
     payment_account = db.Column(db.String(40), nullable=False, default="", server_default="")
     note = db.Column(db.String(300), nullable=False, default="", server_default="")
@@ -2065,6 +2077,75 @@ class SalaryAdvance(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     worker = db.relationship("Worker", back_populates="advances")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+
+
+class SalarySlip(db.Model):
+    """A salary slip the admin released to one employee (kohal, 2026-11-10: "Release salary ... show the same payroll sheet to the employee"):
+    their row of the payment sheet for one month (`kind` "salaried") or one 2-week pay period ("daily"), kept as JSON in `data` as it was when
+    released so the slip does not shift if attendance or an advance changes later. See app/slips.py."""
+
+    __tablename__ = "salary_slips"
+    __table_args__ = (db.UniqueConstraint("worker_id", "kind", "period_start", name="uq_salary_slip_period"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                       # "salaried" or "daily"
+    period_start = db.Column(db.Date, nullable=False)                     # the first of the month, or the 1st / 16th of the pay period
+    label = db.Column(db.String(40), nullable=False, default="", server_default="")
+    data = db.Column(db.Text, nullable=False)
+    released_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    released_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+
+    worker = db.relationship("Worker", back_populates="slips")
+
+
+class Holiday(db.Model):
+    """A day the admin declared a holiday (kohal, 2026-11-10): a paid day off for every salaried employee, and for the daily-wage /
+    contractor employees picked in `links`. See app/holidays.py."""
+
+    __tablename__ = "holidays"
+
+    id = db.Column(db.Integer, primary_key=True)
+    holiday_date = db.Column(db.Date, nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    links = db.relationship("HolidayWorker", back_populates="holiday", cascade="all, delete-orphan")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+
+
+class HolidayWorker(db.Model):
+    """One daily-wage / contractor employee a holiday is paid for."""
+
+    __tablename__ = "holiday_workers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    holiday_id = db.Column(db.Integer, db.ForeignKey("holidays.id", ondelete="CASCADE"), nullable=False, index=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    holiday = db.relationship("Holiday", back_populates="links")
+    worker = db.relationship("Worker", back_populates="holiday_links")
+
+
+class PayDeduction(db.Model):
+    """An amount the admin takes off one person's pay (kohal, 2026-11-09: a "Give deduction" section below Give advance - "this
+    deduction should be taken into consideration when calculating salary for salaried or daily wages"): a fine, damage, anything.
+    It comes off one pay period only - `period_start` is the first of the month for a salaried employee, the 1st or 16th for a
+    daily-wage/contractor one. No money moves (unlike an advance), so it is not in Accounts; the admin can remove one given by mistake."""
+
+    __tablename__ = "pay_deductions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    period_start = db.Column(db.Date, nullable=False)
+    reason = db.Column(db.String(300), nullable=False, default="", server_default="")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    worker = db.relationship("Worker", back_populates="pay_deductions")
     created_by = db.relationship("User", foreign_keys=[created_by_code])
 
 

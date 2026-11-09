@@ -1589,6 +1589,7 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .wk-dot.absent { background: var(--signal); }
 .wk-dot.none { border: 1.5px solid var(--line-strong); }
 .wk-dot.off { background: var(--line-strong); }
+.wk-dot.holiday { border: 2px solid var(--ok); }
 .wk-dot.live { background: var(--amber); }
 .att-bar > i.low { background: var(--signal); }
 button.people-row { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
@@ -1632,7 +1633,14 @@ button.people-row { width: 100%; border: 0; background: none; font: inherit; tex
 .fn-date.absent { border-color: var(--signal); background: var(--signal-tint); color: var(--signal); }
 .fn-date.none { border-style: dashed; }
 .fn-date.off { border-color: var(--line); background: var(--line); color: var(--muted); }
+.fn-date.holiday { border-color: var(--ok); background: transparent; color: var(--ok-ink); }
 .att-day-off .att-day-date, .att-day-off .att-day-hours { color: var(--muted); }
+/* Declare / edit a holiday: the daily-wage staff to pick, in a box that scrolls when the list is long (kohal, 2026-11-10). */
+.holiday-pick-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: -6px 0 12px; }
+.holiday-pick { display: grid; gap: 10px; max-height: 220px; overflow-y: auto; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--panel); }
+.holiday-count { margin: 0; }
+.holiday-actions { display: flex; gap: 16px; }
+.holiday-lead { margin: 14px 0; }
 /* The present / not switch on a day of someone's attendance record (kohal, 2026-11-08). */
 .att-day-top .att-switch { margin-left: 10px; }
 .att-day-top.has-switch { justify-content: flex-start; }
@@ -2020,6 +2028,32 @@ button.chooser-row { border: 1px solid var(--line); font: inherit; cursor: point
 .pay-sheet .ps-name { position: sticky; left: 0; z-index: 1; background: var(--panel); text-align: left; font-weight: 600; min-width: 120px; max-width: 150px; white-space: normal; box-shadow: 1px 0 0 var(--line-strong); }
 .pay-sheet thead .ps-name { z-index: 2; }
 .pay-sheet .ps-strong { font-weight: 700; }
+/* Release salary (kohal, 2026-11-10): the sheet's last column and the Release all row. */
+.ps-slip { white-space: normal; min-width: 150px; }
+.ps-slip-cell { display: grid; gap: 6px; justify-items: start; }
+.ps-slip-links { display: flex; gap: 14px; }
+.ps-release { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; flex-wrap: wrap; }
+.ps-release .hint { margin: 0; }
+/* The employee's own salary slip: vertical, one column of label / value rows (app/static/js/salary_slips.js). */
+.slip-wrap { max-width: 480px; margin: 0 auto; display: grid; gap: 14px; }
+.slip { background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-card); overflow: hidden; }
+.slip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 14px 16px; background: var(--accent); color: #fff; }
+.slip-title { font: 700 18px/1.2 var(--font-display); letter-spacing: .04em; text-transform: uppercase; }
+.slip-period { font: 600 14px/1.2 var(--font-display); }
+.slip-who { display: grid; gap: 2px; padding: 14px 16px 6px; }
+.slip-who strong { font: 700 18px/1.2 var(--font-display); }
+.slip-who span { color: var(--muted); font-size: 14px; }
+.slip-sec { padding: 6px 16px 4px; }
+.slip-sec h3 { font: 700 13px/1.2 var(--font-display); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 10px 0 6px; border-bottom: 2px solid var(--line); }
+.slip-sec dl { display: grid; grid-template-columns: 1fr auto; margin: 0; }
+.slip-sec dt, .slip-sec dd { margin: 0; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.slip-sec dd { text-align: right; font-variant-numeric: tabular-nums; padding-left: 12px; }
+.slip-sec .is-strong { font-weight: 700; }
+.slip-net { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 12px 16px 6px; padding: 12px 14px; border: 1.5px solid var(--ok); border-radius: var(--r-control); background: var(--ok-tint); color: var(--ok-ink); }
+.slip-net span { font: 700 15px/1.2 var(--font-display); }
+.slip-net strong { font: 700 20px/1.2 var(--font-num); font-variant-numeric: tabular-nums; }
+.slip-foot { margin: 0; padding: 4px 16px 14px; font-size: 13px; color: var(--muted); }
+.slip-download { text-align: center; justify-content: center; }
 .ps-flag { display: block; font-weight: 500; font-size: 11px; color: var(--signal); }
 .pay-sheet tfoot th, .pay-sheet tfoot td { font-weight: 700; border-bottom: 0; }
 .pay-sheet tr > :last-child { border-right: 0; }

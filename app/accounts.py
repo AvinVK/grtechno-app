@@ -90,7 +90,7 @@ def _all_rows(account):
     for p in WorkerPayment.query.filter(WorkerPayment.mode == account, WorkerPayment.paid_date.isnot(None)).all():
         rows.append(_row("debit", p.paid_date, p.amount, _worker_reason(p.worker), p.worker.name, p.label))
     for a in SalaryAdvance.query.filter_by(payment_account=account).all():
-        rows.append(_row("debit", a.given_date, a.amount, "Salary advance", a.worker.name, f"Taken back over {a.months} month{'s' if a.months != 1 else ''}",
+        rows.append(_row("debit", a.given_date, a.amount, "Salary advance", a.worker.name, f"Taken back over {a.months} {'pay period' if a.unit == 'fortnight' else 'month'}{'s' if a.months != 1 else ''}",
                          requested_by=a.created_by.name if a.created_by else None))
     for e in FoodingEntry.query.filter_by(kind="allot", status="approved", payment_mode=account).all():
         rows.append(_row("debit", e.entry_date, e.amount, "Fooding", e.account.worker.name,
