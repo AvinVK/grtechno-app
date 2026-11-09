@@ -20,6 +20,7 @@ from datetime import date, timedelta
 from flask import Blueprint, abort, g, jsonify, request
 
 from .extensions import db
+from .holidays import declared_days
 from .models import LeaveRequest, Worker, utcnow
 from .timeutil import today_local
 from .validation import api_errors
@@ -68,10 +69,12 @@ def _months(worker, first: date, last: date) -> int:
 
 
 def working_days(start: date, end: date) -> list:
-    """Every day in [start, end] but Sundays."""
+    """Every day in [start, end] but Sundays and declared holidays (kohal, 2026-11-10: a holiday is a paid day already, so it is never
+    taken off the leave balance)."""
+    skip = declared_days(start, end)
     out, d = [], start
     while d <= end:
-        if d.weekday() != 6:
+        if d.weekday() != 6 and d not in skip:
             out.append(d)
         d += timedelta(days=1)
     return out
@@ -207,7 +210,7 @@ def apply_leave():
         else:
             days = working_days(start, end)
             if not days:
-                errors["end_date"] = "Those are all Sundays - nothing to ask for"
+                errors["end_date"] = "Those are all Sundays or holidays - nothing to ask for"
     if not errors:
         clash = [r for r in worker.leave_requests if r.status in ("pending", "approved") and r.start_date <= end and r.end_date >= start]
         if clash:

@@ -704,6 +704,7 @@
     let subLabel;
     if (d.not_yet) subLabel = 'No data yet';
     else if (d.present) subLabel = d.hours != null ? `${d.hours} h logged` : 'Present (no in/out time)';
+    else if (d.holiday) subLabel = 'Paid holiday';
     else if (d.sunday_off) subLabel = 'Sunday · day off';
     else subLabel = 'Absent';
     const payText = isDayRate ? money(d.pay, cur) : '';
@@ -810,7 +811,7 @@
     const download = h('a', { class: 'btn primary', download: '', href: `/api/payroll/sheet/daily.xlsx?period=${data.period}${workerId ? `&worker_id=${workerId}` : ''}` }, 'Download Excel');
 
     const cols = [
-      ['wage', 'Daily wage'], ['days_in_period', 'Days in period'], ['present', 'Present days'], ['absent', 'Absent days'],
+      ['wage', 'Daily wage'], ['days_in_period', 'Days in period'], ['present', 'Present days'], ['absent', 'Absent days'], ['holidays', 'Paid holidays'],
       ['earned', 'Wages earned'], ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
       ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['other_deduction', 'Other deduction'], ['net', 'Net payable'], ['paid', 'Paid'], ['due', 'Balance due'],
     ];
@@ -829,7 +830,7 @@
       data.rows.length
         ? sheetTable(data, cols, 'net')
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this period.' : 'No daily-wage employee with a wage set for this period.'),
-      h('p', { class: 'hint' }, 'Paid every 15 days for the days worked only - Sundays are paid like any other day if they worked, and not otherwise. '
+      h('p', { class: 'hint' }, 'Paid every 15 days for the days worked only - Sundays are paid like any other day if they worked, and not otherwise - plus any holiday you picked them for. '
         + 'Net payable is wages earned less the advance taken back and any other deduction in this period; Balance due is what is left after what was paid for it.')));
   }
 
@@ -857,7 +858,7 @@
     const cols = [
       ['salary', 'Salary'], ['days_in_month', 'Total days of month'], ['per_day', 'Salary per day'], ['present', 'Present days'],
       ['absent', 'Absent days'], ['sick_leave', 'Sick leave'], ['casual_leave', 'Casual leave'],
-      ['sick_balance', 'Sick leave balance'], ['casual_balance', 'Casual leave balance'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'],
+      ['sick_balance', 'Sick leave balance'], ['casual_balance', 'Casual leave balance'], ['holidays', 'Holidays'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'],
       ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
       ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['other_deduction', 'Other deduction'], ['salary_due', 'Salary due'],
       ['gross', 'Gross salary'], ['paid', 'Paid'],
@@ -878,7 +879,7 @@
       data.rows.length
         ? sheetTable(data, cols, 'gross')
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this month.' : 'No salaried employee with a salary set for this month.'),
-      h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays and approved paid leave are '
+      h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays, declared holidays and approved paid leave are '
         + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '
         + 'Deduction is what absences took off the salary; Gross salary is the month net salary plus house rent / petrol, less the advance deduction and any other deduction.')));
   }

@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, plural, confirm, dateField, timeField, pickList, field, closeOnBack, selectField, searchField } = window.LD;
+  const { $, h, clear, api, toast, plural, confirm, dateField, timeField, pickList, field, closeOnBack, selectField, searchField, showFieldErrors } = window.LD;
   // Location, project picking and time helpers shared with the Me hub's check-in card (attendance-core.js).
   const { fmtTime, elapsedSince, renderToday } = window.ATT;
   const view = $('#view');
@@ -297,7 +297,8 @@
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Attendance section' },
       h('a', { class: 'filter-chip', href: window.location.pathname, 'aria-current': active === 'today' ? 'page' : null }, "Today's attendance"),
       canSeeWorkforce ? h('a', { class: 'filter-chip', href: '#register', 'aria-current': active === 'register' ? 'page' : null }, 'Attendance register') : null,
-      canLeave || leaveAdmin ? h('a', { class: 'filter-chip', href: '#leave', 'aria-current': active === 'leave' ? 'page' : null }, 'Leave requests') : null);
+      canLeave || leaveAdmin ? h('a', { class: 'filter-chip', href: '#leave', 'aria-current': active === 'leave' ? 'page' : null }, 'Leave requests') : null,
+      h('a', { class: 'filter-chip', href: '#holidays', 'aria-current': active === 'holidays' ? 'page' : null }, 'Holidays'));
   }
 
   /* ---------- my attendance ---------- */
@@ -865,8 +866,117 @@
     return leaveAdmin ? showLeaveAdmin() : showMyLeave();
   }
 
+  /* ---------- Holidays (kohal, 2026-11-10: "give power to admin to declare a holiday on any particular day. once declared, that day should
+     be a paid leave for selected employees ... for salaried it will be for all the employees who are salaried. have a subtab in
+     attendance called holidays") - the admin declares a day with a name and picks which daily-wage / contractor staff get it; every
+     salaried employee gets it automatically. Everyone else here just sees the list. Rules in app/holidays.py. ---------- */
+
+  const holidayDate = (iso) => { const d = parseDay(iso); return `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
+
+  function openHolidaySheet(data, holiday, onDone) {
+    const dateInput = dateField(holiday ? holiday.date : today(), { clearable: false });
+    const nameInput = h('input', { type: 'text', maxlength: 120, autocomplete: 'off', placeholder: 'e.g. Diwali', value: holiday ? holiday.name : '' });
+    const picked = new Set((holiday ? holiday.workers : []).map((w) => String(w.id)));
+    const boxes = data.employees.map((e) => {
+      const cb = h('input', { type: 'checkbox' });
+      cb.checked = picked.has(e.value);
+      return { id: Number(e.value), cb, row: h('label', { class: 'check-row' }, cb, h('span', {}, e.label)) };
+    });
+    const count = h('span', { class: 'hint holiday-count' });
+    const drawCount = () => { count.textContent = boxes.length ? `${boxes.filter((b) => b.cb.checked).length} of ${boxes.length} picked` : ''; };
+    boxes.forEach((b) => b.cb.addEventListener('change', drawCount));
+    const setAll = (on) => { boxes.forEach((b) => { b.cb.checked = on; }); drawCount(); };
+    drawCount();
+    const list = boxes.length
+      ? h('div', { class: 'holiday-pick' }, boxes.map((b) => b.row))
+      : h('p', { class: 'hint' }, 'No daily-wage or contractor employees yet.');
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, holiday ? 'Save holiday' : 'Declare holiday');
+    const form = h('form', { novalidate: true },
+      field('date', 'Date', dateInput),
+      field('name', 'Holiday name', nameInput),
+      h('p', { class: 'hint' }, 'Every salaried employee gets this holiday as a paid day. Pick the daily-wage and contractor staff who get it too - they are paid a day\u2019s wage for it.'),
+      field('worker_ids', 'Daily wages and contractors', list),
+      boxes.length ? h('div', { class: 'holiday-pick-head' }, count,
+        h('span', {}, h('button', { type: 'button', class: 'link-btn', onclick: () => setAll(true) }, 'Select all'), ' ',
+          h('button', { type: 'button', class: 'link-btn', onclick: () => setAll(false) }, 'Clear'))) : null,
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    const finish = closeOnBack(() => overlay.remove());
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay', onclick: (e) => { if (e.target === overlay) finish(); } });
+    cancelBtn.onclick = () => finish();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      const body = { date: dateInput.value, name: nameInput.value, worker_ids: boxes.filter((b) => b.cb.checked).map((b) => b.id) };
+      try {
+        await api(holiday ? `/api/holidays/${holiday.id}` : '/api/holidays', { method: holiday ? 'PATCH' : 'POST', body });
+        finish();
+        toast(holiday ? 'Holiday saved' : 'Holiday declared');
+        onDone();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': holiday ? 'Edit holiday' : 'Declare holiday' },
+      h('h2', {}, holiday ? 'Edit holiday' : 'Declare a holiday'), form));
+    document.body.append(overlay);
+  }
+
+  async function showHolidays() {
+    LD.resetAppbarBack?.();
+    setTeamLink(false);
+    stopElapsedTimer();
+    document.body.classList.remove('has-att-bar');
+    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
+    let data;
+    try { data = await api('/api/holidays'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+
+    const manage = data.can_manage;
+    function row(hol) {
+      const actions = manage ? h('span', { class: 'att-day-sub-line holiday-actions' },
+        h('button', { type: 'button', class: 'link-btn', onclick: () => openHolidaySheet(data, hol, showHolidays) }, 'Edit'),
+        h('button', {
+          type: 'button', class: 'link-btn',
+          onclick: async () => {
+            if (!await confirm(`Remove ${hol.name} (${holidayDate(hol.date)})? That day stops being a paid holiday.`, { ok: 'Remove', danger: true, title: 'Remove holiday' })) return;
+            try { await api(`/api/holidays/${hol.id}`, { method: 'DELETE' }); toast('Holiday removed'); showHolidays(); } catch (err) { toast(err.message, true); }
+          },
+        }, 'Remove')) : null;
+      const who = manage
+        ? `Every salaried employee${hol.workers.length ? ` + ${hol.workers.map((w) => w.name).join(', ')}` : ' (no daily-wage staff picked)'}`
+        : 'Paid holiday';
+      return h('li', { class: 'att-day' },
+        h('div', { class: 'att-day-top' },
+          h('span', { class: 'att-day-date' }, hol.name),
+          h('span', { class: 'att-day-hours' }, hol.date === data.today ? 'Today' : hol.upcoming ? 'Upcoming' : 'Past')),
+        h('span', { class: 'att-day-sub' },
+          h('span', { class: 'att-day-sub-line' }, holidayDate(hol.date)),
+          h('span', { class: 'att-day-sub-line' }, who),
+          actions));
+    }
+    const upcoming = data.holidays.filter((x) => x.upcoming).reverse();
+    const past = data.holidays.filter((x) => !x.upcoming);
+    const section = (title, rows, empty, button) => h('section', { class: 'att-week' },
+      h('div', { class: 'att-week-head' }, h('h3', {}, title), button || null),
+      rows.length ? h('ul', { class: 'att-week-card' }, rows.map(row)) : (empty ? h('p', { class: 'hint' }, empty) : null));
+    const declareBtn = manage ? h('button', { class: 'btn small primary', type: 'button', onclick: () => openHolidaySheet(data, null, showHolidays) }, '+ Declare holiday') : null;
+    clear(view).append(h('div', {},
+      tabs('holidays'),
+      h('p', { class: 'hint holiday-lead' }, manage
+        ? 'A holiday is a paid day: salaried employees get every one, and you pick which daily-wage staff get it.'
+        : (data.mine ? 'Paid holidays that apply to you.' : 'Declared holidays.')),
+      section('Upcoming', upcoming, 'No holiday declared yet.', declareBtn),
+      past.length ? section('Past', past, null, null) : null));
+  }
+
   function route() {
     if (addBtn) addBtn.hidden = true;                       // shown again by the team register, the one screen it belongs to
+    if ((canSeeWorkforce || canLeave || leaveAdmin) && window.location.hash === '#holidays') return showHolidays();
     if ((canLeave || leaveAdmin) && window.location.hash === '#leave') return showLeave();
     if (canSeeWorkforce && window.location.hash === '#register') return showRegister();
     if (teamOnly || window.location.hash === '#team') return showTeam();

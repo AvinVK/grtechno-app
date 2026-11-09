@@ -26,6 +26,7 @@ from werkzeug.exceptions import HTTPException, abort
 
 from .constants import ACCEPTED_PAYMENT_MODES, PAYMENT_MODES
 from .extensions import db
+from .holidays import HolidayBook
 from .models import Attendance, Role, User, Worker, WorkerAttendance, WorkerPayment, settings_for_client
 from .modules import can_write, check_module, has_module
 from .validation import Fields, parse_money
@@ -205,7 +206,7 @@ def works_sundays(worker) -> bool:
     return worker.employment_type in ("daily_wages", "contractor")
 
 
-def _day_status(day, present, worker, data_until, today, checked_in_now):
+def _day_status(day, present, worker, data_until, today, checked_in_now, off=()):
     # "live" wins over the WhatsApp import's own present/absent for today specifically - someone with an
     # open session right now (see app/attendance.py) is obviously present, whatever the import otherwise
     # shows or hasn't caught up to yet.
@@ -215,13 +216,16 @@ def _day_status(day, present, worker, data_until, today, checked_in_now):
         return "present"
     if data_until is None or day > data_until or (worker.first_seen and day < worker.first_seen):
         return "none"
+    # A holiday the admin declared (and picked them for, if they are on a day rate): a paid day, never absent (kohal, 2026-11-10).
+    if day in off:
+        return "holiday"
     # Sunday is the weekly day off (kohal, 2026-11-08: "it shows absent for sundays, sundays are off anyways, dont show that").
     if day.weekday() == 6 and not works_sundays(worker):
         return "off"
     return "absent"
 
 
-def _person_row(worker, period, data_until, today):
+def _person_row(worker, period, data_until, today, book):
     present = {a.work_date for a in worker.attendance if a.status == "present"}
     # A Worker linked to a User (see app/auth.py sync_worker_for_user) also counts a day present from their
     # own self-check-in (app/attendance.py) - only once it's approved (kohal, 2026-10-16: a pending one
@@ -244,10 +248,11 @@ def _person_row(worker, period, data_until, today):
                         or WorkerAttendance._map_url(latest.check_out_lat, latest.check_out_lng)),
         }
     # Today first (kohal, 2026-10-16) - most recent day leftmost, not buried at the end.
+    off = book.days(worker)
     week = []
     for back in range(WEEK_DAYS):
         day = today - timedelta(days=back)
-        week.append({"date": day.isoformat(), "status": _day_status(day, present, worker, data_until, today, checked_in_now)})
+        week.append({"date": day.isoformat(), "status": _day_status(day, present, worker, data_until, today, checked_in_now, off)})
 
     days = present_days = 0
     if period:
@@ -255,7 +260,7 @@ def _person_row(worker, period, data_until, today):
         in_range = [start + timedelta(days=i) for i in range(max(0, (end - start).days + 1))]
         present_days = sum(1 for d in present if start <= d <= end)
         # A Sunday is a day off, not a day to be counted against them - unless they came in anyway.
-        days = sum(1 for d in in_range if d.weekday() != 6 or d in present or works_sundays(worker))
+        days = sum(1 for d in in_range if (d.weekday() != 6 or d in present or works_sundays(worker)) and (d not in off or d in present))
     # Someone who arrived from Users & roles (see app/auth.py sync_worker_for_user) starts with none of
     # their own HR detail filled in - flagged here so the admin can find and fill them in from Edit, until
     # they do (any phone or joining date on file clears it, not a separate "done" switch to maintain).
@@ -270,10 +275,11 @@ def workforce():
     today = date.today()
     workers = Worker.query.order_by(Worker.name).all()
     roles = {r.key: r.name for r in Role.query.filter(Role.key != "admin").order_by(Role.name)}
+    book = HolidayBook(min([today - timedelta(days=WEEK_DAYS)] + ([period[0]] if period else [])), today)
     groups = {}
     for w in workers:
         key = w.role_key if w.role_key in roles else UNASSIGNED
-        groups.setdefault(key, []).append(_person_row(w, period, data_until, today))
+        groups.setdefault(key, []).append(_person_row(w, period, data_until, today, book))
     return jsonify(
         **groups, roles=roles,          # roles is a {key: name} object, not an array, so it's not mistaken
         today=today.isoformat(), data_until=data_until.isoformat() if data_until else None,  # for a group above
@@ -293,14 +299,17 @@ def person(worker_id):
     start = _record_start(worker)
     own = None
     records = []
+    holidays = []
     if start is not None:
         start = max(start, today - timedelta(days=RECORD_MAX_DAYS - 1))
         if start <= today:
             own = {"start": start.isoformat(), "end": today.isoformat()}
             records = _attendance_records(worker, start, today)
+            holidays = [{"date": d.isoformat(), "name": n}
+                        for d, n in sorted(HolidayBook(start, today).labels(worker).items())]
     roles = {r.key: r.name for r in Role.query.filter(Role.key != "admin").order_by(Role.name)}
     from .attendance import can_manage_attendance
-    return jsonify(worker=worker.to_dict(detail=True), period=own, attendance=records, roles=roles,
+    return jsonify(worker=worker.to_dict(detail=True), period=own, attendance=records, holidays=holidays, roles=roles,
                    can_edit_attendance=can_manage_attendance(g.user),
                    payment_modes=PAYMENT_MODES, currency=settings_for_client()["currency"],
                    today=date.today().isoformat(), data_until=data_until.isoformat() if data_until else None)

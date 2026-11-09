@@ -72,7 +72,7 @@
 
   /* ---------- Employee management: where each person is, and their last 7 days ---------- */
 
-  const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet', live: 'checked in now', off: 'Sunday, day off' };
+  const DOT_LABEL = { present: 'present', absent: 'absent', none: 'no data yet', live: 'checked in now', off: 'Sunday, day off', holiday: 'paid holiday' };
 
   function weekDots(week) {
     const present = week.filter((d) => d.status === 'present').length;
@@ -122,6 +122,7 @@
         h('i', { class: 'wk-dot present' }), ' present ',
         h('i', { class: 'wk-dot absent' }), ' absent ',
         h('i', { class: 'wk-dot off' }), ' Sunday off ',
+        h('i', { class: 'wk-dot holiday' }), ' holiday ',
         h('i', { class: 'wk-dot none' }), ' no data yet ',
         h('i', { class: 'wk-dot live' }), ' checked in now');
     const order = sheet
@@ -179,10 +180,13 @@
   // Daily wages and contractors work every day and are paid for the days they work: no Sunday off for them (kohal, 2026-11-09).
   const worksSundays = (w) => !!w && (w.employment_type === 'daily_wages' || w.employment_type === 'contractor');
 
+  const holidayName = (data, dayIso) => ((data.holidays || []).find((x) => x.date === dayIso) || {}).name || null;
+
   function dayStatus(dayIso, byDay, data) {
     const a = byDay.get(dayIso);
     if (a && a.status === 'present') return 'present';
     if (!data.period || !data.data_until || dayIso > data.data_until || dayIso < data.period.start) return 'none';
+    if (holidayName(data, dayIso)) return 'holiday';                                       // a paid holiday (app/holidays.py), never absent
     if (parseDay(dayIso).getDay() === 0 && !worksSundays(data.worker)) return 'off';   // Sunday: the weekly day off, never absent
     return 'absent';
   }
@@ -238,7 +242,7 @@
     const came = inFortnight.filter((a) => a.status === 'present');
     const counted = [...Array(FORTNIGHT).keys()]
       .map((i) => dayStatus(dayKey(addDays(today, -i)), byDay, data))
-      .filter((s) => s !== 'none' && s !== 'off').length;
+      .filter((s) => s !== 'none' && s !== 'off' && s !== 'holiday').length;
     const timed = came.filter((a) => a.hours != null);
     const avg = timed.length ? roundHours(timed.reduce((sum, a) => sum + a.hours, 0) / timed.length) : null;
 
@@ -269,6 +273,7 @@
           h('i', { class: 'wk-dot present' }), ' present ',
           h('i', { class: 'wk-dot absent' }), ' absent ',
           h('i', { class: 'wk-dot off' }), ' Sunday off ',
+          h('i', { class: 'wk-dot holiday' }), ' holiday ',
           h('i', { class: 'wk-dot none' }), ' no data yet')),
       h('a', { class: 'fn-full-link', href: `/attendance-sheet#p${p.id}` }, 'Full attendance record →'),
     ];
@@ -562,6 +567,14 @@
         h('span', { class: 'att-day-hours' }, 'Day off')));
   }
 
+  function holidayRow(day, name) {
+    return h('li', { class: 'att-day att-day-off' },
+      h('div', { class: 'att-day-top' },
+        h('span', { class: 'att-day-date' }, shortDate(day)),
+        h('span', { class: 'att-day-hours' }, 'Holiday')),
+      h('span', { class: 'att-day-sub' }, `${name} \u00b7 paid`));
+  }
+
   function absentRow(day, a) {
     return h('li', { class: 'att-day' },
       h('div', { class: 'att-day-top' },
@@ -639,6 +652,8 @@
           rows.push(offRow(day));                                       // Sunday off: not a missed day
         } else if (!dataUntil || day > dataUntil) {
           rows.push(withToggle(noDataRow(day), dayToggle(data, day, false, a)));   // past the last recorded day: not counted
+        } else if (holidayName(data, dayKey(day))) {
+          rows.push(withToggle(holidayRow(day, holidayName(data, dayKey(day))), dayToggle(data, day, false, a)));   // paid, not a missed day
         } else {
           days += 1;
           rows.push(withToggle(absentRow(day, a), dayToggle(data, day, false, a)));
@@ -691,7 +706,7 @@
     const countedEnd = data.period && data.data_until && data.data_until < data.period.end ? data.data_until : data.period?.end;
     if (data.period) {
       for (let d = parseDay(data.period.start); d <= parseDay(countedEnd); d = addDays(d, 1)) {
-        if (d.getDay() !== 0 || presentOn.has(dayKey(d)) || worksSundays(data.worker)) days += 1;
+        if ((d.getDay() !== 0 || presentOn.has(dayKey(d)) || worksSundays(data.worker)) && (!holidayName(data, dayKey(d)) || presentOn.has(dayKey(d)))) days += 1;
       }
     }
     const label = groupLabel(key, data.roles);

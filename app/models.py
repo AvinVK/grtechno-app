@@ -1918,6 +1918,8 @@ class Worker(db.Model):
         "SalaryAdvance", back_populates="worker", cascade="all, delete-orphan",
         order_by="SalaryAdvance.given_date, SalaryAdvance.id",
     )
+    # Holidays this person was picked for (see HolidayWorker) - daily-wage / contractor staff only; a salaried employee gets every holiday.
+    holiday_links = db.relationship("HolidayWorker", back_populates="worker", cascade="all, delete-orphan")
     # Deductions the admin has put against this person's pay (see PayDeduction).
     pay_deductions = db.relationship(
         "PayDeduction", back_populates="worker", cascade="all, delete-orphan",
@@ -2074,6 +2076,35 @@ class SalaryAdvance(db.Model):
 
     worker = db.relationship("Worker", back_populates="advances")
     created_by = db.relationship("User", foreign_keys=[created_by_code])
+
+
+class Holiday(db.Model):
+    """A day the admin declared a holiday (kohal, 2026-11-10): a paid day off for every salaried employee, and for the daily-wage /
+    contractor employees picked in `links`. See app/holidays.py."""
+
+    __tablename__ = "holidays"
+
+    id = db.Column(db.Integer, primary_key=True)
+    holiday_date = db.Column(db.Date, nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    links = db.relationship("HolidayWorker", back_populates="holiday", cascade="all, delete-orphan")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+
+
+class HolidayWorker(db.Model):
+    """One daily-wage / contractor employee a holiday is paid for."""
+
+    __tablename__ = "holiday_workers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    holiday_id = db.Column(db.Integer, db.ForeignKey("holidays.id", ondelete="CASCADE"), nullable=False, index=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    holiday = db.relationship("Holiday", back_populates="links")
+    worker = db.relationship("Worker", back_populates="holiday_links")
 
 
 class PayDeduction(db.Model):
