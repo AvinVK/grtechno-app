@@ -164,19 +164,19 @@ def test_the_payroll_report_follows_the_payroll_screens_rules(app, admin_client)
 
     rows = {(r[0].value, r[4].value): [c.value for c in r] for r in wb["Daily wages"].iter_rows(min_row=2) if r[0].value != "Total"}
     first_half = rows[("Deepak Daily", "1-15 Oct 2026")]
-    # 4 days present + the Sundays of the 4th and 11th not worked = 6 days; 15 days less 2 Sundays less 4 present = 9 absent
-    assert first_half[5] == 6 and first_half[6] == 9 and first_half[7] == 3000 and first_half[8] == 800 and first_half[9] == 2200
+    # paid for the days worked only - no Sunday credit (kohal, 2026-11-09): 4 days present = 4 x 500; the other 11 days are absent
+    assert first_half[5] == 4 and first_half[6] == 11 and first_half[7] == 2000 and first_half[8] == 800 and first_half[9] == 1200
     second_half = rows[("Deepak Daily", "16-31 Oct 2026")]
-    assert second_half[5] == 2 and second_half[7] == 1000 and second_half[8] == 0                # only the 18th and 25th, Sundays
+    assert second_half[5] == 0 and second_half[7] == 0 and second_half[8] == 0
     assert rows[("Chandu Contractor", "1-15 Oct 2026")][1] == "Contractor (daily rate)"          # a contractor is on a day rate too
-    # the contractor (700 a day, nobody present) earns only their four Sundays: 4 x 700 = 2,800; Deepak 3,000 + 1,000
+    # the contractor (700 a day) was never present, so earns nothing; Deepak 2,000
     total = [c.value for c in wb["Daily wages"][wb["Daily wages"].max_row]]
-    assert total[0] == "Total" and total[7] == 6800 and total[8] == 800 and total[9] == 6000
+    assert total[0] == "Total" and total[7] == 2000 and total[8] == 800 and total[9] == 1200
 
     deepak = next(r for r in wb["Attendance (daily wages)"].iter_rows(values_only=True) if r[0] == "Deepak Daily")
-    marks = ["A"] * 3 + ["S"] + ["P"] * 4 + ["A"] * 2 + ["S"] + ["A"] * 6 + ["S"] + ["A"] * 6 + ["S"] + ["A"] * 6
+    marks = ["A"] * 4 + ["P"] * 4 + ["A"] * 23                                                   # Sundays are not a day off for daily wages
     assert list(deepak[2:33]) == marks and len(marks) == 31
-    assert deepak[33:37] == (4, 4, 23, 0)                                                        # present, Sundays credited, absent, hours
+    assert deepak[33:36] == (4, 27, 0)                                                           # present, absent, hours
 
     salaried = [c.value for c in wb["Salaried"][2]]
     # salary cut for her 2 absences (kohal, 2026-11-08): 30,000 / 31 = 968 a day x 29 days = 28,072

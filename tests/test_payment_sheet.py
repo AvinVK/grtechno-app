@@ -4,7 +4,7 @@ house rent / petrol amount per employee ("Fixed per employee"). See app/payroll.
 
 import io
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from openpyxl import load_workbook
@@ -207,3 +207,117 @@ def test_the_day_toggle_on_the_attendance_record_changes_the_salary(app, admin_c
     assert (row["absent"], row["net"]) == (1, 1000 * 30)                                    # 31,000 / 31 = 1,000 a day
     admin_client.post("/api/attendance/manual/day", json={"worker_id": wid, "work_date": "2026-10-14", "present": True})
     assert _row(_sheet(admin_client), "Ritesh")["net"] == 31000
+
+
+
+# ---------- daily wages (kohal, 2026-11-09) ----------
+#
+# "need to do the same payroll features and everything what u did for salaried employee with daily wages as well. no sick leave
+# casual leave for daily wages, no sunday off as well. they work, they get paid bi-weekly."
+
+def _daily(name, rate="500", present=(), kind="daily_wages"):
+    w = Worker(name=name, category="manpower", employment_type=kind, wage_amount=Decimal(rate))
+    db.session.add(w)
+    db.session.flush()
+    for day in present:
+        db.session.add(WorkerAttendance(worker=w, work_date=date(2026, 10, day)))
+    return w
+
+
+def _daily_sheet(client, period="2026-10-01", **extra):
+    query = "&".join([f"period={period}"] + [f"{k}={v}" for k, v in extra.items()])
+    return client.get(f"/api/payroll/sheet/daily?{query}").get_json()
+
+
+def test_daily_wages_are_paid_for_the_days_worked_and_sundays_are_not_a_day_off(app, admin_client):
+    with app.app_context():
+        _daily("Sita", "500", present=(3, 4, 5))                 # Sat 3rd, Sun 4th, Mon 5th
+        _pusher()
+        db.session.commit()
+    row = _row(_daily_sheet(admin_client), "Sita")
+    assert (row["present"], row["earned"]) == (3, 1500)                                   # the Sunday worked is paid like any other day
+    assert row["absent"] == 12 and row["days_in_period"] == 15                              # 15 days less 3 worked - Sundays included
+    second = _row(_daily_sheet(admin_client, "2026-10-16"), "Sita")
+    assert (second["present"], second["earned"], second["absent"]) == (0, 0, 16)           # no credit for the Sundays not worked
+    assert second["no_attendance"] is True
+
+
+def test_the_daily_sheet_has_the_advance_and_paid_columns(app, admin_client):
+    with app.app_context():
+        w = _daily("Gita", "500", present=(1, 2, 3, 6, 7, 8, 9, 10), kind="contractor")        # 8 days = 4,000
+        db.session.add(SalaryAdvance(worker=w, amount=Decimal("3000"), months=2, first_month=date(2026, 10, 1),
+                                     given_date=date(2026, 10, 5), payment_account="CASH"))
+        db.session.add(WorkerPayment(worker=w, label="First half", amount=Decimal("700"), paid_date=date(2026, 10, 17),
+                                     period_start=date(2026, 10, 1), mode="CASH", position=1))
+        _pusher()
+        db.session.commit()
+    first = _row(_daily_sheet(admin_client), "Gita")
+    # 1,500 a month taken back, half in each period: 750 now
+    assert (first["old_advance"], first["advance_taken"], first["advance_deduction"], first["advance_balance"]) == (0, 3000, 750, 2250)
+    assert (first["earned"], first["net"], first["paid"], first["due"]) == (4000, 3250, 700, 2550)
+    second = _row(_daily_sheet(admin_client, "2026-10-16"), "Gita")
+    assert (second["old_advance"], second["advance_taken"], second["advance_deduction"], second["advance_balance"]) == (2250, 0, 750, 1500)
+    assert second["net"] == -750 and second["due"] == -750                                   # nothing worked, so the advance is owed back
+    assert _daily_sheet(admin_client)["totals"]["earned"] == 4000
+
+
+def test_the_daily_sheet_is_for_day_rate_staff_only_and_salaried_staff_stay_on_theirs(app, admin_client):
+    with app.app_context():
+        _daily("Sita", present=(5,))
+        _salaried("Ravi", "31000")
+        _pusher()
+        db.session.commit()
+    assert [r["name"] for r in _daily_sheet(admin_client)["rows"]] == ["Sita"]
+    assert "Sita" not in [r["name"] for r in _sheet(admin_client)["rows"]]
+
+
+def test_the_daily_sheet_filter_periods_and_excel(app, admin_client):
+    with app.app_context():
+        sita = _daily("Sita Devi", "500", present=(1, 2))
+        _daily("Gita", "600", present=(3,))
+        _pusher()
+        db.session.commit()
+        sid = sita.id
+    data = _daily_sheet(admin_client, worker_id=sid)
+    assert [r["name"] for r in data["rows"]] == ["Sita Devi"] and data["totals"]["earned"] == 1000
+    assert [e["label"] for e in data["employees"]] == ["Gita", "Sita Devi"]
+    assert data["periods"][-1] == {"value": "2026-10-01", "label": "1–15 Oct 2026"}
+    assert data["periods"][0]["value"] in (date.today().replace(day=1).isoformat(), date.today().replace(day=16).isoformat())
+    res = admin_client.get(f"/api/payroll/sheet/daily.xlsx?period=2026-10-01&worker_id={sid}")
+    assert res.status_code == 200 and "daily-wages-sheet-2026-10-01-sita-devi.xlsx" in res.headers["Content-Disposition"]
+    ws = load_workbook(io.BytesIO(res.data)).worksheets[0]
+    assert ws["A1"].value == "PAYMENT SHEET OF DAILY WAGES 1–15 Oct 2026" and "A1:Q1" in {str(m) for m in ws.merged_cells.ranges}
+    assert [c.value for c in ws[4]][:9] == [1, "Sita Devi", ws["C4"].value, ws["D4"].value, 500, 15, 2, 13, 1000]
+    assert ws["B5"].value == "Total"
+    for bad in ("2026-09-16", "2026-10-05", "soon", "2099-01-01"):
+        assert admin_client.get(f"/api/payroll/sheet/daily?period={bad}").status_code == 422, bad
+
+
+def test_the_daily_sheet_is_for_payroll_access_only(app, client):
+    assert client.get("/api/payroll/sheet/daily").status_code in (403, 404)
+    assert client.get("/api/payroll/sheet/daily.xlsx").status_code in (403, 404)
+
+
+def test_attendance_screens_treat_sunday_as_a_working_day_for_daily_wages(app, admin_client):
+    from conftest import make_user, signed_in
+    today = date.today()
+    with app.app_context():
+        daily_user, salaried_user = make_user("Daily Person"), make_user("Salaried Person")
+        d = Worker(name="Daily Person", category="manpower", employment_type="daily_wages", wage_amount=Decimal("500"),
+                   user_code=daily_user.code, first_seen=today - timedelta(days=60))
+        s = Worker(name="Salaried Person", category="staff", employment_type="regular", wage_amount=Decimal("30000"),
+                   user_code=salaried_user.code, first_seen=today - timedelta(days=60))
+        db.session.add_all([d, s])
+        db.session.flush()
+        for w in (d, s):
+            db.session.add(WorkerAttendance(worker=w, work_date=today))
+        db.session.commit()
+        daily_client, salaried_client = signed_in(app, daily_user), signed_in(app, salaried_user)
+    assert daily_client.get("/api/attendance/state").get_json()["works_sundays"] is True
+    assert salaried_client.get("/api/attendance/state").get_json()["works_sundays"] is False
+    register = admin_client.get("/api/workforce").get_json()
+    people = {p["name"]: p for k, v in register.items() if isinstance(v, list) for p in v}
+    def sunday_status(name):
+        return next(day["status"] for day in people[name]["week"] if date.fromisoformat(day["date"]).weekday() == 6)
+    if today.weekday() != 6:                                  # on a Sunday itself both are present today
+        assert sunday_status("Daily Person") == "absent" and sunday_status("Salaried Person") == "off"

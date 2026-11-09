@@ -95,6 +95,12 @@ def _team_access(user) -> bool:
     return bool(user.sees_all or can_manage_attendance(user))
 
 
+def _works_sundays(user) -> bool:
+    """Daily wages and contractors work every day, Sundays included (kohal, 2026-11-09: "no sunday off")."""
+    worker = Worker.query.filter_by(user_code=user.code).first()
+    return worker is not None and worker.employment_type in ("daily_wages", "contractor")
+
+
 def _no_admin_check_ins():
     if g.user.is_admin:
         abort(403, "The admin doesn't check in or out.")
@@ -125,6 +131,7 @@ def state():
         # Petrol payment (kohal, 2026-10-27): on means an odometer photo + reading at check-in and check-out.
         petrol_required=petrol_on(g.user),
         can_mark_absent=_is_daily_wage(g.user),
+        works_sundays=_works_sundays(g.user),
         my_absences=[a.to_dict() for a in AbsenceRequest.query.filter_by(user_code=g.user.code)
                      .order_by(AbsenceRequest.for_date.desc()).limit(10).all()],
     )

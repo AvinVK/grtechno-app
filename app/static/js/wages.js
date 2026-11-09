@@ -31,7 +31,6 @@
     let subLabel;
     if (d.not_yet) subLabel = 'No data yet';
     else if (d.present) subLabel = d.hours != null ? `${d.hours} h logged` : 'Present (no in/out time)';
-    else if (d.is_sunday) subLabel = 'Sunday · credited';
     else subLabel = 'Absent';
     return h('li', { class: 'att-day' },
       h('div', { class: 'att-day-top' },

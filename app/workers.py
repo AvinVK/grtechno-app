@@ -199,6 +199,12 @@ def _attendance_records(worker, start, end):
     return [by_day[d] for d in sorted(by_day)]
 
 
+def works_sundays(worker) -> bool:
+    """Daily wages and contractors work every day of the week and are paid only for the days they work (kohal, 2026-11-09: "no sunday
+    off") - Sunday is a day off for everyone else."""
+    return worker.employment_type in ("daily_wages", "contractor")
+
+
 def _day_status(day, present, worker, data_until, today, checked_in_now):
     # "live" wins over the WhatsApp import's own present/absent for today specifically - someone with an
     # open session right now (see app/attendance.py) is obviously present, whatever the import otherwise
@@ -210,7 +216,7 @@ def _day_status(day, present, worker, data_until, today, checked_in_now):
     if data_until is None or day > data_until or (worker.first_seen and day < worker.first_seen):
         return "none"
     # Sunday is the weekly day off (kohal, 2026-11-08: "it shows absent for sundays, sundays are off anyways, dont show that").
-    if day.weekday() == 6:
+    if day.weekday() == 6 and not works_sundays(worker):
         return "off"
     return "absent"
 
@@ -249,7 +255,7 @@ def _person_row(worker, period, data_until, today):
         in_range = [start + timedelta(days=i) for i in range(max(0, (end - start).days + 1))]
         present_days = sum(1 for d in present if start <= d <= end)
         # A Sunday is a day off, not a day to be counted against them - unless they came in anyway.
-        days = sum(1 for d in in_range if d.weekday() != 6 or d in present)
+        days = sum(1 for d in in_range if d.weekday() != 6 or d in present or works_sundays(worker))
     # Someone who arrived from Users & roles (see app/auth.py sync_worker_for_user) starts with none of
     # their own HR detail filled in - flagged here so the admin can find and fill them in from Edit, until
     # they do (any phone or joining date on file clears it, not a separate "done" switch to maintain).

@@ -176,11 +176,14 @@
 
   /* How a day stands for this person: present, absent, or "none" - after the data ends, before they first
      turned up (period.start is already their own start), or no data at all. Same rule as the week dots. */
+  // Daily wages and contractors work every day and are paid for the days they work: no Sunday off for them (kohal, 2026-11-09).
+  const worksSundays = (w) => !!w && (w.employment_type === 'daily_wages' || w.employment_type === 'contractor');
+
   function dayStatus(dayIso, byDay, data) {
     const a = byDay.get(dayIso);
     if (a && a.status === 'present') return 'present';
     if (!data.period || !data.data_until || dayIso > data.data_until || dayIso < data.period.start) return 'none';
-    if (parseDay(dayIso).getDay() === 0) return 'off';                 // Sunday: the weekly day off, never absent
+    if (parseDay(dayIso).getDay() === 0 && !worksSundays(data.worker)) return 'off';   // Sunday: the weekly day off, never absent
     return 'absent';
   }
 
@@ -571,7 +574,7 @@
      attendance register ... should be a toggle"). On adds the day (07:00-19:00); off removes it, after asking. A day they checked
      in for themselves on the app stays locked on - that is removed from the team register instead. */
   function dayToggle(data, day, isPresent, a) {
-    if (!data.can_edit_attendance || day.getDay() === 0 && !isPresent) return null;
+    if (!data.can_edit_attendance || day.getDay() === 0 && !isPresent && !worksSundays(data.worker)) return null;
     // A day they logged themselves on the app is theirs: no switch at all, just who logged it (kohal, 2026-11-08).
     if (isPresent && a && a.source === 'app') return h('span', { class: 'att-own-log' }, 'Logged by them');
     const locked = false;
@@ -632,7 +635,7 @@
           came += 1;
           total += a.hours || 0;
           rows.push(withToggle(presentRow(day, a), dayToggle(data, day, true, a)));
-        } else if (day.getDay() === 0) {
+        } else if (day.getDay() === 0 && !worksSundays(data.worker)) {
           rows.push(offRow(day));                                       // Sunday off: not a missed day
         } else if (!dataUntil || day > dataUntil) {
           rows.push(withToggle(noDataRow(day), dayToggle(data, day, false, a)));   // past the last recorded day: not counted
@@ -688,7 +691,7 @@
     const countedEnd = data.period && data.data_until && data.data_until < data.period.end ? data.data_until : data.period?.end;
     if (data.period) {
       for (let d = parseDay(data.period.start); d <= parseDay(countedEnd); d = addDays(d, 1)) {
-        if (d.getDay() !== 0 || presentOn.has(dayKey(d))) days += 1;
+        if (d.getDay() !== 0 || presentOn.has(dayKey(d)) || worksSundays(data.worker)) days += 1;
       }
     }
     const label = groupLabel(key, data.roles);
