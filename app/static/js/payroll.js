@@ -756,6 +756,48 @@
       h('ul', { class: 'att-week-card' }, data.days.map((d) => dayRow(d, cur, isDayRate)))));
   }
 
+  /* ---------- Release salary (kohal, 2026-11-10: "in payroll sheet, have a Release salary button. once clicked, it should show the same
+     payroll sheet to the employee the salary was released") - the admin releases one employee's row, or every row, and the employee gets
+     it as a vertical slip. The figures are kept as they were when released; see app/slips.py. ---------- */
+
+  const slipQuery = (kind, data) => (kind === 'salaried' ? { kind, period: data.month } : { kind, period: data.period });
+
+  async function releaseSlips(kind, data, who, redraw) {
+    const names = who ? who.name : `${data.rows.length} employees`;
+    const noLogin = who ? (who.has_login ? [] : [who.name]) : data.rows.filter((r) => !r.has_login).map((r) => r.name);
+    const text = `Release the ${data.label} salary slip${who ? '' : 's'} of ${names}? ${who ? 'They' : 'Each one'} will see ${who ? 'it' : 'their own'} in the app and can download it.`
+      + (noLogin.length ? ` ${noLogin.join(', ')} ${noLogin.length === 1 ? 'has' : 'have'} no login in the app yet, so can't open ${noLogin.length === 1 ? 'it' : 'theirs'} - you can still download the PDF for them.` : '')
+      + (data.in_progress ? ' This period is still going, so these figures can still change - release again later to update the slip.' : '');
+    if (!await confirm(text, { ok: 'Release', title: 'Release salary' })) return;
+    try {
+      await api('/api/payroll/slips', { method: 'POST', body: { ...slipQuery(kind, data), ...(who ? { worker_id: who.id } : {}) } });
+      toast(who ? 'Salary released' : 'Salaries released');
+      redraw();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  // The sheet's last column, admin only: Release salary / Released (+ changed since, release again, withdraw) and the slip as a PDF.
+  function slipCell(kind, data, r, redraw) {
+    const pdf = h('a', { class: 'link-btn', download: '', href: `/api/payroll/slips/pdf?${new URLSearchParams({ ...slipQuery(kind, data), worker_id: r.id })}` }, 'PDF');
+    const release = () => releaseSlips(kind, data, r, redraw);
+    const withdraw = async () => {
+      if (!await confirm(`Withdraw ${r.name}'s ${data.label} salary slip? They will no longer see it.`, { ok: 'Withdraw', danger: true, title: 'Withdraw slip' })) return;
+      try { await api(`/api/payroll/slips/${r.slip.id}`, { method: 'DELETE' }); toast('Slip withdrawn'); redraw(); } catch (err) { toast(err.message, true); }
+    };
+    if (!r.slip) return h('div', { class: 'ps-slip-cell' }, h('button', { class: 'btn small', type: 'button', onclick: release }, 'Release salary'), pdf);
+    return h('div', { class: 'ps-slip-cell' },
+      h('span', { class: 'chip chip-role' }, 'Released'),
+      r.slip.stale ? h('span', { class: 'ps-flag' }, 'Changed since release') : null,
+      r.slip.stale ? h('button', { class: 'btn small', type: 'button', onclick: release }, 'Release again') : null,
+      h('span', { class: 'ps-slip-links' }, h('button', { class: 'link-btn', type: 'button', onclick: withdraw }, 'Withdraw'), pdf));
+  }
+
+  const releaseAllBar = (kind, data, redraw) => (isAdmin && data.rows.length && !data.worker_id
+    ? h('div', { class: 'ps-release' },
+      h('button', { class: 'btn', type: 'button', onclick: () => releaseSlips(kind, data, null, redraw) }, 'Release all salaries'),
+      h('span', { class: 'hint' }, 'Each employee sees their own slip.'))
+    : null);
+
   /* ---------- Payment sheet (kohal, 2026-11-08: "this is now the payslip is suppose to look, is it possible to show in the app
      and then have excel downloadable?") - one month, a row per salaried employee, laid out like kohal's own sheet, with the same
      thing as an Excel file. Wide, so it scrolls sideways with the name kept in view. See app/payroll.py's payment_sheet. ---------- */
@@ -771,22 +813,25 @@
   }
 
   // The same boxed table for either sheet: `cols` are [key, heading], the row's own name and From/To come first.
-  function sheetTable(data, cols, strongKey) {
+  function sheetTable(data, cols, strongKey, extra = null) {
     const head = h('thead', {},
       h('tr', {},
         h('th', { rowspan: 2, class: 'ps-name' }, 'Name'),
         h('th', { colspan: 2 }, 'Work days'),
-        cols.map(([, label]) => h('th', { rowspan: 2 }, label))),
+        cols.map(([, label]) => h('th', { rowspan: 2 }, label)),
+        extra ? h('th', { rowspan: 2 }, extra.head) : null),
       h('tr', {}, h('th', {}, 'From'), h('th', {}, 'To')));
     const body = h('tbody', {}, data.rows.map((r) => h('tr', {},
       h('th', { class: 'ps-name', scope: 'row' }, r.name,
         r.no_attendance ? h('span', { class: 'ps-flag' }, 'No attendance recorded') : null),
       h('td', {}, dayMonth(r.from)), h('td', {}, dayMonth(r.to)),
-      cols.map(([key]) => h('td', { class: key === strongKey ? 'ps-strong' : null }, num(r[key]))))));
+      cols.map(([key]) => h('td', { class: key === strongKey ? 'ps-strong' : null }, num(r[key]))),
+      extra ? h('td', { class: 'ps-slip' }, extra.cell(r)) : null)));
     const t = data.totals;
     const foot = h('tfoot', {}, h('tr', {},
       h('th', { class: 'ps-name', scope: 'row' }, 'Total'), h('td', {}), h('td', {}),
-      cols.map(([key]) => h('td', {}, key in t ? num(t[key]) : ''))));
+      cols.map(([key]) => h('td', {}, key in t ? num(t[key]) : '')),
+      extra ? h('td', {}) : null));
     return h('div', { class: 'ps-scroll' }, h('table', { class: 'pay-sheet' }, head, body, foot));
   }
 
@@ -825,10 +870,11 @@
       sheetKinds('daily'),
       h('div', { class: 'ps-bar' }, periodSel, download),
       h('div', { class: 'ps-filter' }, employeeSel),
+      releaseAllBar('daily', data, () => go(data.period, workerId)),
       h('h2', { class: 'ps-title' }, `Daily wages, ${data.label}`),
       note ? h('p', { class: 'hint' }, note) : null,
       data.rows.length
-        ? sheetTable(data, cols, 'net')
+        ? sheetTable(data, cols, 'net', isAdmin ? { head: 'Salary slip', cell: (r) => slipCell('daily', data, r, () => go(data.period, workerId)) } : null)
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this period.' : 'No daily-wage employee with a wage set for this period.'),
       h('p', { class: 'hint' }, 'Paid every 15 days for the days worked only - Sundays are paid like any other day if they worked, and not otherwise - plus any holiday you picked them for. '
         + 'Net payable is wages earned less the advance taken back and any other deduction in this period; Balance due is what is left after what was paid for it.')));
@@ -874,10 +920,11 @@
       sheetKinds('salaried'),
       h('div', { class: 'ps-bar' }, monthSel, download),
       h('div', { class: 'ps-filter' }, employeeSel),
+      releaseAllBar('salaried', data, () => go(data.month, workerId)),
       h('h2', { class: 'ps-title' }, `Payment sheet of ${data.label}`),
       note ? h('p', { class: 'hint' }, note) : null,
       data.rows.length
-        ? sheetTable(data, cols, 'gross')
+        ? sheetTable(data, cols, 'gross', isAdmin ? { head: 'Salary slip', cell: (r) => slipCell('salaried', data, r, () => go(data.month, workerId)) } : null)
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this month.' : 'No salaried employee with a salary set for this month.'),
       h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays, declared holidays and approved paid leave are '
         + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '

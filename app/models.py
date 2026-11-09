@@ -1918,6 +1918,8 @@ class Worker(db.Model):
         "SalaryAdvance", back_populates="worker", cascade="all, delete-orphan",
         order_by="SalaryAdvance.given_date, SalaryAdvance.id",
     )
+    # Salary slips released to this person (see SalarySlip).
+    slips = db.relationship("SalarySlip", back_populates="worker", cascade="all, delete-orphan")
     # Holidays this person was picked for (see HolidayWorker) - daily-wage / contractor staff only; a salaried employee gets every holiday.
     holiday_links = db.relationship("HolidayWorker", back_populates="worker", cascade="all, delete-orphan")
     # Deductions the admin has put against this person's pay (see PayDeduction).
@@ -2076,6 +2078,26 @@ class SalaryAdvance(db.Model):
 
     worker = db.relationship("Worker", back_populates="advances")
     created_by = db.relationship("User", foreign_keys=[created_by_code])
+
+
+class SalarySlip(db.Model):
+    """A salary slip the admin released to one employee (kohal, 2026-11-10: "Release salary ... show the same payroll sheet to the employee"):
+    their row of the payment sheet for one month (`kind` "salaried") or one 2-week pay period ("daily"), kept as JSON in `data` as it was when
+    released so the slip does not shift if attendance or an advance changes later. See app/slips.py."""
+
+    __tablename__ = "salary_slips"
+    __table_args__ = (db.UniqueConstraint("worker_id", "kind", "period_start", name="uq_salary_slip_period"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                       # "salaried" or "daily"
+    period_start = db.Column(db.Date, nullable=False)                     # the first of the month, or the 1st / 16th of the pay period
+    label = db.Column(db.String(40), nullable=False, default="", server_default="")
+    data = db.Column(db.Text, nullable=False)
+    released_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    released_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+
+    worker = db.relationship("Worker", back_populates="slips")
 
 
 class Holiday(db.Model):

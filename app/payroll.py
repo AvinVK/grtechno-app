@@ -45,6 +45,7 @@ Gated by the "workforce" module (app/modules.py), same as Employee management - 
 (Accountant, Office Assistant) can see Overview and look at payments but not add/edit/remove one."""
 
 import calendar
+import json
 import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -56,7 +57,7 @@ from .deductions import amount_to_date, month_amount, slot_amount
 from .extensions import db
 from .holidays import holiday_days
 from .leaves import balance as leave_balance, month_tally, paid_leave_days
-from .models import Attendance, Worker, WorkerAttendance, settings_for_client
+from .models import Attendance, SalarySlip, Worker, WorkerAttendance, settings_for_client
 from .modules import can_write, check_module
 from .timeutil import today_local
 from .validation import api_errors
@@ -435,13 +436,40 @@ def payment_sheet(year: int, month: int, worker_id=None) -> dict:
             "allowance": float(m["allowance"]), "old_advance": float(adv["old"]), "advance_taken": float(adv["taken"]),
             "advance_total": float(adv["total"]), "advance_deduction": float(adv["deduction"]), "advance_balance": float(adv["balance"]),
             "other_deduction": float(other), "salary_due": float(gross - paid), "gross": float(gross), "paid": float(paid), "no_attendance": m["no_attendance"],
+            "has_login": bool(w.user_code),
         })
     money_keys = ("salary", "deduction", "net", "allowance", "old_advance", "advance_taken", "advance_total", "advance_deduction",
                   "advance_balance", "other_deduction", "salary_due", "gross", "paid")
     totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
+    _attach_slips("salaried", first, rows)
     return {"month": _month_key(first), "label": first.strftime("%B %Y"), "rows": rows, "totals": totals, "employees": employees,
             "worker_id": worker_id,
             "in_progress": in_progress, "counted_until": counted_until.isoformat() if counted_until else None}
+
+
+# What a released slip is compared on to say "Changed since release" - the figures an employee sees, not what was paid afterwards.
+_SLIP_WATCH = {
+    "salaried": ("salary", "present", "absent", "holidays", "sick_leave", "casual_leave", "net", "allowance", "old_advance", "advance_taken",
+                 "advance_deduction", "other_deduction", "gross"),
+    "daily": ("wage", "present", "absent", "holidays", "earned", "old_advance", "advance_taken", "advance_deduction", "other_deduction", "net"),
+}
+
+
+def _attach_slips(kind: str, period_start: date, rows: list) -> None:
+    """Add `slip` to each row: None, or the released slip's id / day and whether the row has changed since it was released
+    (kohal, 2026-11-10: the Release salary button - app/slips.py)."""
+    slips = {}
+    if rows:
+        slips = {s.worker_id: s for s in SalarySlip.query.filter(SalarySlip.kind == kind, SalarySlip.period_start == period_start,
+                                                                   SalarySlip.worker_id.in_([r["id"] for r in rows]))}
+    for r in rows:
+        s = slips.get(r["id"])
+        if s is None:
+            r["slip"] = None
+            continue
+        kept = json.loads(s.data)["row"]
+        r["slip"] = {"id": s.id, "released_on": s.released_at.date().isoformat(),
+                     "stale": any(round(float(kept.get(k) or 0), 2) != round(float(r.get(k) or 0), 2) for k in _SLIP_WATCH[kind])}
 
 
 def _sheet_months(today: date) -> list:
@@ -584,12 +612,13 @@ def payment_sheet_daily(slot_start: date, worker_id=None) -> dict:
             "old_advance": float(old), "advance_taken": float(taken), "advance_total": float(old + taken),
             "advance_deduction": float(deduction), "advance_balance": float(old + taken - deduction),
             "other_deduction": float(other), "net": float(net), "paid": float(paid), "due": float(net - paid),
-            "no_attendance": r["present_days"] == 0 and r["absent"] > 0,
+            "no_attendance": r["present_days"] == 0 and r["absent"] > 0, "has_login": bool(w.user_code),
             "_complete": counted_end is not None and counted_end >= slot_end,
         })
     money_keys = ("earned", "old_advance", "advance_taken", "advance_total", "advance_deduction", "advance_balance", "other_deduction", "net", "paid", "due")
     totals = {k: round(sum(r[k] for r in rows), 2) for k in money_keys}
     in_progress = not all([r.pop("_complete") for r in rows])         # popped for every row, not just up to the first incomplete one
+    _attach_slips("daily", slot_start, rows)
     counted_until = min(slot_end, data_until_end) if in_progress and data_until_end and data_until_end >= slot_start else None
     return {"period": slot_start.isoformat(), "label": label, "rows": rows, "totals": totals, "employees": employees,
             "worker_id": worker_id, "in_progress": in_progress,
