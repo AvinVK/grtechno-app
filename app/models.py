@@ -1247,6 +1247,8 @@ class AdminPurchase(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     category = db.Column(db.String(10), nullable=False, default="other", server_default="other")
+    # For "Other expenses": which kind (constants.EXPENSE_HEADS, kohal 2026-11-09); empty for a material purchase.
+    expense_head = db.Column(db.String(60), nullable=False, default="", server_default="")
     entry_date = db.Column(db.Date, nullable=False)
     material_name = db.Column(db.String(120), nullable=False)
     quantity = db.Column(db.Numeric(12, 2), nullable=True)
@@ -1266,7 +1268,7 @@ class AdminPurchase(db.Model):
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "category": self.category, "entry_date": self.entry_date.isoformat(),
+            "id": self.id, "category": self.category, "expense_head": self.expense_head, "entry_date": self.entry_date.isoformat(),
             "material_name": self.material_name, "quantity": float(self.quantity) if self.quantity is not None else None,
             "unit": self.unit, "gst_percent": float(self.gst_percent), "gst_amount": float(self.gst_amount),
             "amount": float(self.amount), "supplier": self.supplier, "note": self.note,

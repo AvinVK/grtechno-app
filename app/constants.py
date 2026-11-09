@@ -92,3 +92,9 @@ DEFAULT_SETTINGS = {
     "currency": "₹",
     "country_code": "91",
 }
+
+# What an "Other expenses" purchase was for (kohal, 2026-11-09: "add these categories in office expense form").
+EXPENSE_HEADS = [
+    "Office expenses", "Dhanbad office expenses", "Chandrapur office expenses", "Travelling expenses", "Fooding exp",
+    "Stationery and printing", "Mobile expenses", "Misc expenses",
+]
