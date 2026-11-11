@@ -147,7 +147,7 @@ def _extra_tiles():
         remaining = account.remaining if account else None
         cur = settings_for_client()["currency"]
         tiles.append({"href": "/fooding", "icon": "fooding", "name": "Fooding",
-                       "sum": f"{cur}{remaining:.0f} left" if remaining is not None else None})
+                       "sum": None if remaining is None else (f"{cur}{remaining:.0f} left" if remaining >= 0 else f"{cur}{-remaining:.0f} below zero")})
     if worker and worker.petrol_enabled:
         tiles.append({"href": "/petrol", "icon": "petrol", "name": "Petrol", "sum": None})
     if worker and worker.role_key == COMMISSION_ROLE_KEY:

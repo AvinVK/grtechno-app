@@ -158,7 +158,7 @@ def _amount_and_mode(payload, *, balance_cap=None):
         errors["amount"] = "Enter an amount greater than 0"
         amount = None
     elif balance_cap is not None and amount > balance_cap:
-        errors["amount"] = f"Only {balance_cap} remaining"
+        errors["amount"] = f"Only {balance_cap} remaining" if balance_cap > 0 else "You have nothing left in your fooding balance"
         amount = None
     elif amount is not None:
         amount = amount.quantize(Decimal("0.01"))
@@ -181,7 +181,7 @@ def add_my_expense():
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
     account = account_for(worker, create=True)
-    amount, _mode, errors = _amount_and_mode(payload, balance_cap=account.remaining)
+    amount, _mode, errors = _amount_and_mode(payload, balance_cap=max(account.remaining, Decimal("0")))
     errors.pop("payment_mode", None)            # no account to pick - it always comes out of their own balance
     mode = FOODING_SOURCE
     purpose = str(payload.get("purpose") or "").strip()[:200]

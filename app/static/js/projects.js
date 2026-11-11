@@ -1205,14 +1205,14 @@
     return h('section', { class: 'p-section' },
       h('div', { class: 'p-section-head' },
         h('h3', {}, 'Commission'),
-        h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, cur) }, '+ Add commission')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openExpenseSheet(P.id, null, workers, reload, cur, data.payment_accounts || []) }, '+ Add commission')),
       rows.length
         ? h('ul', { class: 'card-group' }, rows.map(expenseRow))
         : h('p', { class: 'hint' }, 'No commission recorded yet.'),
       rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_expense, cur)}`) : null);
   }
 
-  function openExpenseSheet(projectId, expense, workers, reload, cur) {
+  function openExpenseSheet(projectId, expense, workers, reload, cur, accounts = []) {
     const isNew = !expense;
     const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
     // A name, typed in (kohal, 2026-11-09: "the person should be a text name and not a drop down. commission can be any person outside
@@ -1225,7 +1225,10 @@
     const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', value: expense ? expense.amount : '' });
     const dateInput = dateField(expense ? expense.entry_date : todayIsoLocal(), { placeholder: 'Date' });
     const noteInput = h('input', { type: 'text', maxlength: 2000, autocomplete: 'off', value: expense ? (expense.note || '') : '' });
-
+    // Part of it paid right away, and the account it comes from (kohal, 2026-11-11: "add the account selection field back") - new
+    // commissions only; later parts go through "Pay a part". Paid on the date above.
+    const paidNowInput = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: 'Optional' });
+    const accountSel = selectField(accounts, '', { title: 'Paid from', placeholder: 'Choose an account' });
 
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -1241,6 +1244,7 @@
         person_name: typedName(), amount: amountInput.value,
         entry_date: dateInput.value, note: noteInput.value,
       };
+      if (isNew) Object.assign(body, { paid_now: paidNowInput.value, payment_account: accountSel.value });
       try {
         if (isNew) await api(`/api/projects/${projectId}/expenses`, { method: 'POST', body });
         else await api(`/api/projects/${projectId}/expenses/${expense.id}`, { method: 'PATCH', body });
@@ -1258,6 +1262,8 @@
       field('amount', 'Commission amount', amountInput),
       expense && expense.paid ? h('p', { class: 'hint' }, `${money(expense.paid, cur)} of it has been paid already.`) : null,
       field('entry_date', 'Date', dateInput),
+      isNew ? field('paid_now', 'Paid now', paidNowInput, { hint: 'If part of it is paid today, say how much and from which account - it comes off that account in Accounts.' }) : null,
+      isNew ? field('payment_account', 'Paid from', accountSel) : null,
       field('note', 'Note', noteInput),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn)));

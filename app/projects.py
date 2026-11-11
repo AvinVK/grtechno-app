@@ -1086,6 +1086,22 @@ def add_expense(project_id):
     if not isinstance(payload, dict):
         abort(415, "Send a JSON object")
     worker, amount, data, errors = _expense_fields(payload)
+    # Part of it can be paid right away, from an account (kohal, 2026-11-11: "add the account selection field back" to Add commission):
+    # "paid_now" and "payment_account" together record the first part, dated the commission's own date.
+    paid_now = None
+    account = payload.get("payment_account")
+    if payload.get("paid_now") not in (None, ""):
+        paid_now = parse_money(payload.get("paid_now"), errors, "paid_now")
+        if paid_now is not None and paid_now <= 0:
+            errors["paid_now"] = "Enter an amount greater than 0"
+        elif paid_now is not None and amount is not None and paid_now > amount:
+            errors["paid_now"] = "That is more than the commission"
+        if account not in PAYMENT_ACCOUNTS:
+            errors["payment_account"] = "Choose the account it was paid from"
+        if data.get("entry_date") and data["entry_date"] > today_local():
+            errors["entry_date"] = "It can't be paid on a day that hasn't happened yet"
+    elif account not in (None, ""):
+        errors["paid_now"] = "Enter how much is paid now, or clear the account"
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     percent, basis = _share(project, amount)
@@ -1094,6 +1110,9 @@ def add_expense(project_id):
         entry_date=data["entry_date"], note=data.get("note", ""), created_by_code=g.user.code,
     )
     db.session.add(expense)
+    if paid_now is not None:
+        db.session.add(CommissionPayment(expense=expense, amount=paid_now, paid_date=data["entry_date"], payment_account=account,
+                                         created_by_code=g.user.code))
     db.session.commit()
     return jsonify(_detail(project)), 201
 

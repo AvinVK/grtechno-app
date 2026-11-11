@@ -141,10 +141,10 @@ def test_the_excel_file_is_laid_out_like_the_sheet(app, admin_client):
     ws = wb["October 2026"]
     assert ws["A1"].value == "PAYMENT SHEET OF October 2026"
     merged = {str(m) for m in ws.merged_cells.ranges}
-    assert {"A1:Z1", "C2:D2", "A2:A3", "B2:B3", "Z2:Z3"} <= merged
+    assert {"A1:AA1", "C2:D2", "A2:A3", "B2:B3", "AA2:AA3"} <= merged
     assert (ws["C2"].value, ws["C3"].value, ws["D3"].value) == ("Work Days", "From", "To")
     row = [c.value for c in ws[4]]
-    assert row[0] == 1 and row[1] == "Ankush" and row[2].date() == date(2026, 10, 1) and row[4] == 15000 and row[24] == 16000
+    assert row[0] == 1 and row[1] == "Ankush" and row[2].date() == date(2026, 10, 1) and row[4] == 15000 and row[25] == 16000
     assert (ws["J2"].value, ws["K2"].value, ws["L2"].value, ws["M2"].value) == ("Sick leave", "Casual leave", "Sick leave balance", "Casual leave balance")
     assert ws.cell(row=5, column=2).value == "Total"
     assert ws["B4"].border.left.style == "thin"
@@ -286,7 +286,7 @@ def test_the_daily_sheet_filter_periods_and_excel(app, admin_client):
     res = admin_client.get(f"/api/payroll/sheet/daily.xlsx?period=2026-10-01&worker_id={sid}")
     assert res.status_code == 200 and "daily-wages-sheet-2026-10-01-sita-devi.xlsx" in res.headers["Content-Disposition"]
     ws = load_workbook(io.BytesIO(res.data)).worksheets[0]
-    assert ws["A1"].value == "PAYMENT SHEET OF DAILY WAGES 1–15 Oct 2026" and "A1:S1" in {str(m) for m in ws.merged_cells.ranges}
+    assert ws["A1"].value == "PAYMENT SHEET OF DAILY WAGES 1–15 Oct 2026" and "A1:T1" in {str(m) for m in ws.merged_cells.ranges}
     assert [c.value for c in ws[4]][:10] == [1, "Sita Devi", ws["C4"].value, ws["D4"].value, 500, 15, 2, 13, 0, 1000]
     assert ws["B5"].value == "Total"
     for bad in ("2026-09-16", "2026-10-05", "soon", "2099-01-01"):

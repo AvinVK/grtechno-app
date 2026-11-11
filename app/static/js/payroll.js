@@ -27,7 +27,8 @@
   const shortDate = (d) => `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
   // What is being taken back from a due, as ["advance −500", "deduction −200"] - advance parts and the admin's own deductions (app/deductions.py).
   const takenBack = (r, cur) => [r.advance_deduction ? `advance \u2212${money(r.advance_deduction, cur)}` : null,
-    r.other_deduction ? `deduction \u2212${money(r.other_deduction, cur)}` : null].filter(Boolean);
+    r.other_deduction ? `deduction \u2212${money(r.other_deduction, cur)}` : null,
+    r.other_allowance ? `allowance +${money(r.other_allowance, cur)}` : null].filter(Boolean);
   const toNumber = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? 0 : Number(v));
 
   // Recent pay periods for the "which period was this for" picker below, newest first - same 1-15/16-end
@@ -96,10 +97,11 @@
     // for them), so it still goes straight to this month's days-so-far, for attendance context only.
     const byId = new Map();
     for (const e of rows) {
-      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0, advance_deduction: 0, other_deduction: 0 });
+      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0, advance_deduction: 0, other_deduction: 0, other_allowance: 0 });
       byId.get(e.id).outstanding += e.outstanding;
       byId.get(e.id).advance_deduction += e.advance_deduction || 0;
       byId.get(e.id).other_deduction += e.other_deduction || 0;
+      byId.get(e.id).other_allowance += e.other_allowance || 0;
     }
     const people = [...byId.values()];
 
@@ -388,10 +390,11 @@
     const byId = new Map();
     for (const e of data.employees || []) {
       if ((e.employment_type === 'regular') !== wantRegular) continue;
-      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0, advance_deduction: 0, other_deduction: 0 });
+      if (!byId.has(e.id)) byId.set(e.id, { ...e, outstanding: 0, advance_deduction: 0, other_deduction: 0, other_allowance: 0 });
       byId.get(e.id).outstanding += e.outstanding;
       byId.get(e.id).advance_deduction += e.advance_deduction || 0;
       byId.get(e.id).other_deduction += e.other_deduction || 0;
+      byId.get(e.id).other_allowance += e.other_allowance || 0;
     }
     const people = [...byId.values()];
     const state = { q: '' };
@@ -546,24 +549,43 @@
     await draw();
   }
 
-  /* ---------- deductions (admin only; kohal, 2026-11-09: "give deduction subtab below give advance. this deduction should be taken
-     into consideration when calculating salary") - an amount and a reason put against one month (salaried) or one 2-week pay period
-     (daily wages); Payroll takes it off what they are due - app/deductions.py. ---------- */
+  /* ---------- deductions and allowances (admin only; kohal, 2026-11-09: "give deduction subtab below give advance"; 2026-11-11: "add
+     allowance as well ... a note ... to specify which allowance it is") - an amount and a note put against one month (salaried) or one
+     2-week pay period (daily wages); Payroll takes a deduction off what they are due and adds an allowance to it - app/deductions.py,
+     app/allowances.py. The two share one sheet, one list and one section, told apart by this table. ---------- */
 
-  function openDeductionSheet(worker, info, onDone) {
+  const ADJUSTMENTS = {
+    deduction: {
+      endpoint: '/api/payroll/deductions', list: 'deductions', noteKey: 'reason', heading: 'Deductions', give: 'Give deduction',
+      amountLabel: 'Deduction amount', noteLabel: 'Note', notePlaceholder: 'e.g. Damaged equipment', done: 'Deduction given', applied: 'Taken off',
+      whenSalaried: 'Take it off month', whenDaily: 'Take it off pay period', removeTitle: 'Remove deduction', removeToast: 'Deduction removed',
+      removeNote: 'It will stop coming off their pay.',
+      empty: (unit) => `No deduction. A deduction comes off their pay for one ${unit}, together with any advance being taken back.`,
+    },
+    allowance: {
+      endpoint: '/api/payroll/allowances', list: 'allowances', noteKey: 'note', heading: 'Allowances', give: 'Give allowance',
+      amountLabel: 'Allowance amount', noteLabel: 'Which allowance', notePlaceholder: 'e.g. Travel allowance', done: 'Allowance given', applied: 'Added',
+      whenSalaried: 'Add it to month', whenDaily: 'Add it to pay period', removeTitle: 'Remove allowance', removeToast: 'Allowance removed',
+      removeNote: 'It will stop being added to their pay.',
+      empty: (unit) => `No allowance. An allowance is added to their pay for one ${unit} - the note says which allowance it is.`,
+    },
+  };
+
+  function openAdjustmentSheet(cfg, worker, info, onDone) {
     const cur = info.currency;
     const fortnight = info.unit === 'fortnight';
+    const when = fortnight ? cfg.whenDaily : cfg.whenSalaried;
     const amount = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: 'e.g. 500' });
-    const period = selectField(info.periods, info.current_period, { title: fortnight ? 'Take it off pay period' : 'Take it off month', placeholder: fortnight ? 'Pick a pay period' : 'Pick a month' });
-    const reason = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'e.g. Damaged equipment' });
+    const period = selectField(info.periods, info.current_period, { title: when, placeholder: fortnight ? 'Pick a pay period' : 'Pick a month' });
+    const note = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: cfg.notePlaceholder });
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
-    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Give deduction');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, cfg.give);
     const form = h('form', { novalidate: true },
       h('p', { class: 'hint' }, `${worker.name} \u00b7 ${EMPLOYMENT_LABEL[worker.employment_type]}${worker.wage_amount != null ? ` ${money(worker.wage_amount, cur)}` : ''}`),
-      field('amount', 'Deduction amount', amount),
-      field('period', fortnight ? 'Take it off pay period' : 'Take it off month', period),
-      field('reason', 'Reason', reason),
+      field('amount', cfg.amountLabel, amount),
+      field('period', when, period),
+      field(cfg.noteKey, cfg.noteLabel, note),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
     const finish = closeOnBack(() => overlay.remove());
@@ -575,52 +597,52 @@
       errEl.textContent = '';
       showFieldErrors(form, {});
       try {
-        await api('/api/payroll/deductions', { method: 'POST', body: { worker_id: worker.id, amount: amount.value, period: period.value, reason: reason.value } });
+        await api(cfg.endpoint, { method: 'POST', body: { worker_id: worker.id, amount: amount.value, period: period.value, [cfg.noteKey]: note.value } });
         finish();
-        toast('Deduction given');
+        toast(cfg.done);
         onDone();
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
         saveBtn.disabled = false;
       }
     };
-    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Give deduction' },
-      h('h2', {}, 'Give deduction'), form));
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': cfg.give },
+      h('h2', {}, cfg.give), form));
     document.body.append(overlay);
   }
 
-  function deductionRow(d, cur, onRemove) {
+  function adjustmentRow(cfg, d, cur, onRemove) {
     const removeBtn = h('button', { type: 'button', class: 'link-btn' }, 'Remove');
     removeBtn.onclick = async () => {
-      const sure = await confirm(`Remove the ${money(d.amount, cur)} deduction for ${d.period_label}? It will stop coming off their pay.`, { ok: 'Remove', danger: true, title: 'Remove deduction' });
+      const sure = await confirm(`Remove the ${money(d.amount, cur)} ${cfg.removeTitle.toLowerCase().replace('remove ', '')} for ${d.period_label}? ${cfg.removeNote}`, { ok: 'Remove', danger: true, title: cfg.removeTitle });
       if (sure) onRemove(d);
     };
     return h('li', { class: 'att-day' },
       h('div', { class: 'att-day-top' },
         h('span', { class: 'att-day-date' }, `${money(d.amount, cur)} \u00b7 ${d.period_label}`),
-        h('span', { class: 'att-day-hours' }, d.applied ? 'Taken off' : 'Upcoming')),
+        h('span', { class: 'att-day-hours' }, d.applied ? cfg.applied : 'Upcoming')),
       h('span', { class: 'att-day-sub' },
-        h('span', { class: 'att-day-sub-line' }, d.reason),
+        h('span', { class: 'att-day-sub-line' }, d[cfg.noteKey]),
         h('span', { class: 'att-day-sub-line' }, [d.created_by_name ? `By ${d.created_by_name}` : null, removeBtn].filter(Boolean))));
   }
 
-  async function deductionSection(box, worker, id, onChange) {
+  async function adjustmentSection(cfg, box, worker, id, onChange) {
     async function draw() {
       let info;
-      try { info = await api(`/api/payroll/deductions?worker_id=${id}`); } catch (err) { clear(box).append(h('p', { class: 'hint' }, err.message)); return; }
-      const giveBtn = h('button', { class: 'btn small', type: 'button' }, '+ Give deduction');
-      giveBtn.onclick = () => openDeductionSheet(worker, info, async () => { await draw(); onChange?.(); });
+      try { info = await api(`${cfg.endpoint}?worker_id=${id}`); } catch (err) { clear(box).append(h('p', { class: 'hint' }, err.message)); return; }
+      const giveBtn = h('button', { class: 'btn small', type: 'button' }, `+ ${cfg.give}`);
+      giveBtn.onclick = () => openAdjustmentSheet(cfg, worker, info, async () => { await draw(); onChange?.(); });
       const remove = async (d) => {
-        try { await api(`/api/payroll/deductions/${d.id}`, { method: 'DELETE' }); } catch (err) { toast(err.message); return; }
-        toast('Deduction removed');
+        try { await api(`${cfg.endpoint}/${d.id}`, { method: 'DELETE' }); } catch (err) { toast(err.message); return; }
+        toast(cfg.removeToast);
         await draw();
         onChange?.();
       };
       clear(box).append(h('section', { class: 'att-week' },
-        h('div', { class: 'att-week-head' }, h('h3', {}, 'Deductions'), giveBtn),
-        info.deductions.length
-          ? h('ul', { class: 'att-week-card' }, info.deductions.map((d) => deductionRow(d, info.currency, remove)))
-          : h('p', { class: 'hint' }, `No deduction. A deduction comes off their pay for one ${info.unit === 'fortnight' ? '2-week pay period' : 'month'}, together with any advance being taken back.`)));
+        h('div', { class: 'att-week-head' }, h('h3', {}, cfg.heading), giveBtn),
+        info[cfg.list].length
+          ? h('ul', { class: 'att-week-card' }, info[cfg.list].map((d) => adjustmentRow(cfg, d, info.currency, remove)))
+          : h('p', { class: 'hint' }, cfg.empty(info.unit === 'fortnight' ? '2-week pay period' : 'month'))));
     }
     await draw();
   }
@@ -643,11 +665,13 @@
     const headBox = h('div', {});
     const advanceBox = h('div', {});
     const deductionBox = h('div', {});
+    const allowanceBox = h('div', {});
     const sectionBox = h('div', {});
     // The name, what is due now and when they were last paid - drawn again after an advance or deduction changes the due.
     function drawHead(rows) {
       const off = takenBack({ advance_deduction: rows.reduce((sum, r) => sum + (r.advance_deduction || 0), 0),
-        other_deduction: rows.reduce((sum, r) => sum + (r.other_deduction || 0), 0) }, cur);
+        other_deduction: rows.reduce((sum, r) => sum + (r.other_deduction || 0), 0),
+        other_allowance: rows.reduce((sum, r) => sum + (r.other_allowance || 0), 0) }, cur);
       clear(headBox).append(...[
         h('div', { class: 'att-head' }, h('h3', {}, data.worker.name), h('span', { class: 'att-head-date' }, sub)),
         rows.length ? h('p', { class: 'wk-legend' }, `Currently due: ${money(rows.reduce((sum, r) => sum + r.outstanding, 0), cur)}${off.length ? ` (after ${off.join(' \u00b7 ')})` : ''}`) : null,
@@ -666,9 +690,10 @@
 
     if (isAdmin && myRows.length) {
       advanceSection(advanceBox, data.worker, id, refreshHead);
-      deductionSection(deductionBox, data.worker, id, refreshHead);
+      adjustmentSection(ADJUSTMENTS.deduction, deductionBox, data.worker, id, refreshHead);
+      adjustmentSection(ADJUSTMENTS.allowance, allowanceBox, data.worker, id, refreshHead);
     }
-    clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, advanceBox, deductionBox, sectionBox));
+    clear(view).append(h('div', { class: 'project-detail' }, tabs('payments'), headBox, advanceBox, deductionBox, allowanceBox, sectionBox));
   }
 
   /* ---------- one daily-wage/contractor person's pay-period cycles, current and previous ---------- */
@@ -857,7 +882,7 @@
 
     const cols = [
       ['wage', 'Daily wage'], ['days_in_period', 'Days in period'], ['present', 'Present days'], ['absent', 'Absent days'], ['holidays', 'Paid holidays'],
-      ['earned', 'Wages earned'], ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
+      ['earned', 'Wages earned'], ['other_allowance', 'Other allowance'], ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
       ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['other_deduction', 'Other deduction'], ['net', 'Net payable'], ['paid', 'Paid'], ['due', 'Balance due'],
     ];
     const note = data.in_progress
@@ -877,7 +902,7 @@
         ? sheetTable(data, cols, 'net', isAdmin ? { head: 'Salary slip', cell: (r) => slipCell('daily', data, r, () => go(data.period, workerId)) } : null)
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this period.' : 'No daily-wage employee with a wage set for this period.'),
       h('p', { class: 'hint' }, 'Paid every 15 days for the days worked only - Sundays are paid like any other day if they worked, and not otherwise - plus any holiday you picked them for. '
-        + 'Net payable is wages earned less the advance taken back and any other deduction in this period; Balance due is what is left after what was paid for it.')));
+        + 'Net payable is wages earned plus any other allowance, less the advance taken back and any other deduction in this period; Balance due is what is left after what was paid for it.')));
   }
 
   async function showSheet(month, workerId) {
@@ -904,7 +929,7 @@
     const cols = [
       ['salary', 'Salary'], ['days_in_month', 'Total days of month'], ['per_day', 'Salary per day'], ['present', 'Present days'],
       ['absent', 'Absent days'], ['sick_leave', 'Sick leave'], ['casual_leave', 'Casual leave'],
-      ['sick_balance', 'Sick leave balance'], ['casual_balance', 'Casual leave balance'], ['holidays', 'Holidays'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'],
+      ['sick_balance', 'Sick leave balance'], ['casual_balance', 'Casual leave balance'], ['holidays', 'Holidays'], ['deduction', 'Deduction'], ['net', 'Month net salary'], ['allowance', 'House rent / petrol'], ['other_allowance', 'Other allowance'],
       ['old_advance', 'Old adv bal'], ['advance_taken', 'Advance taken'], ['advance_total', 'Total adv due'],
       ['advance_deduction', 'Advance deduction'], ['advance_balance', 'Advance balance'], ['other_deduction', 'Other deduction'], ['salary_due', 'Salary due'],
       ['gross', 'Gross salary'], ['paid', 'Paid'],
@@ -928,7 +953,7 @@
         : h('p', { class: 'empty-state' }, workerId ? 'Nothing for this employee in this month.' : 'No salaried employee with a salary set for this month.'),
       h('p', { class: 'hint' }, 'Salary per day is the salary divided by the days in the month. Sundays, declared holidays and approved paid leave are '
         + 'paid days; unpaid leave counts as absent. Leave balances are at the end of the month. '
-        + 'Deduction is what absences took off the salary; Gross salary is the month net salary plus house rent / petrol, less the advance deduction and any other deduction.')));
+        + 'Deduction is what absences took off the salary; Gross salary is the month net salary plus house rent / petrol and any other allowance, less the advance deduction and any other deduction.')));
   }
 
   function route() {

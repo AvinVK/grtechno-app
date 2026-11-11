@@ -67,6 +67,11 @@ def next_slot(slot: date) -> date:
     return slot.replace(day=16) if slot.day == 1 else add_months(slot, 1)
 
 
+def prev_slot(slot: date) -> date:
+    """The pay period before the one starting on `slot`."""
+    return slot.replace(day=1) if slot.day == 16 else add_months(slot, -1).replace(day=16)
+
+
 def add_slots(slot: date, n: int) -> date:
     for _ in range(n):
         slot = next_slot(slot)
