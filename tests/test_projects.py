@@ -1323,6 +1323,38 @@ def test_a_commission_is_paid_in_parts_and_each_part_is_a_debit_on_its_account(a
     assert [(r["kind"], r["amount"], r["party"]) for r in bb if r["reason"] == "Commission"] == [("debit", 20000.0, "Chetan Chandrapur")]
 
 
+def test_a_commission_can_be_added_with_its_first_part_paid_from_an_account(app, client, admin_client):
+    """kohal, 2026-11-11: "add the account selection field back" - Add commission takes the amount paid now and the account."""
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+    res = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "amount": "50000", "entry_date": "2026-11-05",
+                                                                     "paid_now": "20000", "payment_account": "YES BANK"})
+    assert res.status_code == 201
+    e = res.get_json()["expenses"][0]
+    assert (e["paid"], e["remaining"]) == (20000.0, 30000.0)
+    assert [(p["amount"], p["payment_account"], p["paid_date"]) for p in e["payments"]] == [(20000.0, "YES BANK", "2026-11-05")]
+    bank = admin_client.get("/api/accounts/detail", query_string={"name": "YES BANK"}).get_json()["entries"]
+    assert [(r["kind"], r["amount"]) for r in bank if r["reason"] == "Commission"] == [("debit", 20000.0)]
+    assert _pay(admin_client, pid, e["id"], "30000", account="CASH").status_code == 201          # the rest still goes through Pay a part
+
+
+def test_without_a_paid_now_amount_nothing_is_paid_and_a_bad_one_saves_nothing(app, client, admin_client):
+    pid = project_with_amount(client, admin_client, 200000)
+    with app.app_context():
+        wid = commission_worker()
+    plain = admin_client.post(f"/api/projects/{pid}/expenses", json={"worker_id": wid, "amount": "10000", "paid_now": "", "payment_account": ""})
+    assert plain.status_code == 201 and plain.get_json()["expenses"][0]["paid"] == 0
+    base = {"worker_id": wid, "amount": "10000"}
+    for extra, field in (({"paid_now": "5000"}, "payment_account"), ({"paid_now": "5000", "payment_account": "Piggy bank"}, "payment_account"),
+                         ({"paid_now": "0", "payment_account": "CASH"}, "paid_now"), ({"paid_now": "abc", "payment_account": "CASH"}, "paid_now"),
+                         ({"paid_now": "10001", "payment_account": "CASH"}, "paid_now"), ({"payment_account": "CASH"}, "paid_now"),
+                         ({"paid_now": "100", "payment_account": "CASH", "entry_date": "2999-01-01"}, "entry_date")):
+        res = admin_client.post(f"/api/projects/{pid}/expenses", json={**base, **extra})
+        assert res.status_code == 422 and field in res.get_json()["fields"], extra
+    assert len(admin_client.get(f"/api/projects/{pid}").get_json()["expenses"]) == 1               # only the plain one was saved
+
+
 def test_a_part_cannot_be_more_than_whats_still_owed(app, client, admin_client):
     pid = project_with_amount(client, admin_client, 200000)
     with app.app_context():
