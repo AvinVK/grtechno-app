@@ -898,10 +898,12 @@ class FoodingAccount(db.Model):
     There is no scheduled job in this app to apply the daily 200 (PythonAnywhere's free plan has no cron -
     see app/deploy.py's own docstring) - instead, deducted_total/anchor_date are kept current by settle()
     below, called before every read or change, which simply catches the account up to today. allotted_total
-    only ever grows (a top-up adds to it, kohal's own answer, rather than replacing it); deducted_total
-    never pushes remaining below zero - once the balance is out, no more comes off until a top-up, even if
-    many calendar days pass unseen in between (settle() always re-anchors to "today" it was last called,
-    so those zero-balance days are never retroactively owed once topped up)."""
+    only ever grows (a top-up adds to it, kohal's own answer, rather than replacing it). The food keeps coming
+    off once the balance is out, so remaining goes below zero (kohal, 2026-11-11: "let the fooding balance go
+    negative and once the amount is credited to the employee, it should auto adjust the amount") - the next
+    amount credited is simply netted against it, because remaining is always allotted_total - deducted_total.
+    Only an account that has been funded at least once is charged; one made by pausing or resuming an
+    employee nobody has allotted anything to stays at zero."""
 
     __tablename__ = "fooding_accounts"
 
@@ -932,26 +934,22 @@ class FoodingAccount(db.Model):
 
     def settle(self, today: date = None) -> None:
         """Bring deducted_total/anchor_date up to date for every day since anchor_date, at DAILY_AMOUNT a
-        day - a no-op while paused, or once remaining is already zero. Always moves anchor_date to today
-        regardless, so a later top-up starts deducting fresh from then, not from whatever day the balance
-        happened to run out."""
+        day - a no-op while paused, or for an account nobody has funded yet. The balance is allowed to go below zero (see the
+        class docstring), so every day is charged in full."""
         today = today or date.today()
-        if not self.is_paused and today > self.anchor_date:
-            # One FoodingDeduction per day, so the register can list each day's food (kohal, 2026-11-02) - the same
-            # total as before: DAILY_AMOUNT a day, never more than what is left.
-            left = self.remaining
+        if not self.is_paused and today > self.anchor_date and self.allotted_total > 0:
+            # One FoodingDeduction per day, so the register can list each day's food (kohal, 2026-11-02).
             day = self.anchor_date
-            while day < today and left > 0:
+            while day < today:
                 day += timedelta(days=1)
-                take = min(self.DAILY_AMOUNT, left)
-                self.deductions.append(FoodingDeduction(day=day, amount=take))
-                self.deducted_total += take
-                left -= take
+                self.deductions.append(FoodingDeduction(day=day, amount=self.DAILY_AMOUNT))
+                self.deducted_total += self.DAILY_AMOUNT
         self.anchor_date = today
 
     @property
     def remaining(self) -> Decimal:
-        return max(Decimal("0.00"), self.allotted_total - self.deducted_total)
+        """What is left - negative once the food has been charged past what was credited."""
+        return self.allotted_total - self.deducted_total
 
     def to_dict(self) -> dict:
         return {
@@ -1922,6 +1920,11 @@ class Worker(db.Model):
     slips = db.relationship("SalarySlip", back_populates="worker", cascade="all, delete-orphan")
     # Holidays this person was picked for (see HolidayWorker) - daily-wage / contractor staff only; a salaried employee gets every holiday.
     holiday_links = db.relationship("HolidayWorker", back_populates="worker", cascade="all, delete-orphan")
+    # Allowances the admin has added to this person's pay (see PayAllowance).
+    pay_allowances = db.relationship(
+        "PayAllowance", back_populates="worker", cascade="all, delete-orphan",
+        order_by="PayAllowance.period_start, PayAllowance.id",
+    )
     # Deductions the admin has put against this person's pay (see PayDeduction).
     pay_deductions = db.relationship(
         "PayDeduction", back_populates="worker", cascade="all, delete-orphan",
@@ -2077,6 +2080,26 @@ class SalaryAdvance(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     worker = db.relationship("Worker", back_populates="advances")
+    created_by = db.relationship("User", foreign_keys=[created_by_code])
+
+
+class PayAllowance(db.Model):
+    """An amount the admin adds to one person's pay (kohal, 2026-11-11: "add allowance as well ... a note ... to specify which allowance it
+    is"): travel, mobile, a bonus - `note` says which. The mirror of PayDeduction: one pay period only (`period_start` is the first of the
+    month for a salaried employee, the 1st or 16th for a daily-wage / contractor one), no money moves, so it is not in Accounts, and the
+    admin can remove one given by mistake. See app/allowances.py."""
+
+    __tablename__ = "pay_allowances"
+
+    id = db.Column(db.Integer, primary_key=True)
+    worker_id = db.Column(db.Integer, db.ForeignKey("workers.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(14, 2), nullable=False)
+    period_start = db.Column(db.Date, nullable=False)
+    note = db.Column(db.String(300), nullable=False, default="", server_default="")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    worker = db.relationship("Worker", back_populates="pay_allowances")
     created_by = db.relationship("User", foreign_keys=[created_by_code])
 
 

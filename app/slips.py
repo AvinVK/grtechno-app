@@ -21,7 +21,7 @@ from .extensions import db
 from .models import SalarySlip, Worker, settings_for_client, utcnow
 from .modules import check_module
 from .payroll import PAYROLL_START, payment_sheet, payment_sheet_daily
-from .pdf import Page, build_pdf
+from .pdf import Page, build_pdf, string_width
 from .timeutil import to_local, today_local
 from .validation import api_errors
 
@@ -43,13 +43,18 @@ def _row(label, value, kind="money", strong=False):
     return {"label": label, "value": value, "type": kind, "strong": strong}
 
 
+def _with_note(label: str, note) -> str:
+    return f"{label} ({note})" if note else label
+
+
 def slip_view(snap: dict, released_on=None) -> dict:
     """The slip as sections of label / value rows - what the app draws and the PDF prints - from a stored (or live) snapshot."""
     r, daily = snap["row"], snap["kind"] == "daily"
     if daily:
         attendance = [_row("Days in period", r["days_in_period"], "num"), _row("Present days", r["present"], "num"),
                       _row("Paid holidays", r["holidays"], "num"), _row("Absent days", r["absent"], "num")]
-        earnings = [_row("Daily wage", r["wage"]), _row("Wages earned", r["earned"], strong=True)]
+        earnings = [_row("Daily wage", r["wage"]), _row("Wages earned", r["earned"], strong=True),
+                    _row(_with_note("Other allowance", r.get("other_allowance_note")), r.get("other_allowance", 0))]
         net_label, net, paid, due = "Net payable", r["net"], r["paid"], r["due"]
     else:
         attendance = [_row("Total days of month", r["days_in_month"], "num"), _row("Present days (paid days)", r["present"], "num"),
@@ -58,10 +63,11 @@ def slip_view(snap: dict, released_on=None) -> dict:
                       _row("Sick leave balance", r["sick_balance"], "num"), _row("Casual leave balance", r["casual_balance"], "num")]
         earnings = [_row("Monthly salary", r["salary"]), _row("Salary per day", r["per_day"]),
                     _row("Deduction for absences", r["deduction"]), _row("Month net salary", r["net"], strong=True),
-                    _row("House rent / petrol", r["allowance"])]
+                    _row("House rent / petrol", r["allowance"]),
+                    _row(_with_note("Other allowance", r.get("other_allowance_note")), r.get("other_allowance", 0))]
         net_label, net, paid, due = "Net pay", r["gross"], r["paid"], r["salary_due"]
     sections = [{"title": "Attendance", "rows": attendance}, {"title": "Earnings", "rows": earnings},
-                {"title": "Deductions", "rows": [_row("Advance deduction", r["advance_deduction"]), _row("Other deduction", r["other_deduction"])]}]
+                {"title": "Deductions", "rows": [_row("Advance deduction", r["advance_deduction"]), _row(_with_note("Other deduction", r.get("other_deduction_note")), r["other_deduction"])]}]
     if any(r[k] for k in ("old_advance", "advance_taken", "advance_total", "advance_balance")):
         sections.append({"title": "Advance account", "rows": [
             _row("Old advance balance", r["old_advance"]), _row("Advance taken", r["advance_taken"]),
@@ -99,6 +105,15 @@ def _day(iso: str) -> str:
     return date.fromisoformat(iso).strftime("%d %b %Y")
 
 
+def _clip(text: str, width: float, size: float, bold: bool) -> str:
+    """The text shortened with "..." to fit `width` points, so a long note never runs into the amount beside it."""
+    if string_width(text, size, bold) <= width:
+        return text
+    while text and string_width(text + "...", size, bold) > width:
+        text = text[:-1]
+    return text + "..."
+
+
 def slip_pdf(view: dict, footer: str) -> bytes:
     """One A4 page: a coloured title band, who and which period, the sections, the net pay in a box, a small footer line."""
     page = Page()
@@ -118,8 +133,10 @@ def slip_pdf(view: dict, footer: str) -> bytes:
         page.text(left + 8, y, section["title"], size=10, bold=True, color=(0.3, 0.27, 0.22))
         y -= 21
         for row in section["rows"]:
-            page.text(left + 8, y, row["label"], size=10, bold=row["strong"])
-            page.text_right(right - 8, y, _show(row), size=10, bold=row["strong"])
+            value = _show(row)
+            page.text(left + 8, y, _clip(row["label"], right - left - 16 - string_width(value, 10, row["strong"]) - 14, 10, row["strong"]),
+                      size=10, bold=row["strong"])
+            page.text_right(right - 8, y, value, size=10, bold=row["strong"])
             page.line(left, y - 5, right, y - 5, width=0.4)
             y -= 17
         y -= 9

@@ -1590,6 +1590,8 @@ body.has-bottom-nav.has-att-bar { padding-bottom: calc(230px + env(safe-area-ins
 .wk-dot.none { border: 1.5px solid var(--line-strong); }
 .wk-dot.off { background: var(--line-strong); }
 .wk-dot.holiday { border: 2px solid var(--ok); }
+/* A fooding balance below zero (kohal, 2026-11-11). */
+.stat-value.is-negative, .fn-stat-value.is-negative, .hint.is-negative { color: var(--signal); }
 .wk-dot.live { background: var(--amber); }
 .att-bar > i.low { background: var(--signal); }
 button.people-row { width: 100%; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }

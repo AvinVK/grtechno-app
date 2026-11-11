@@ -48,6 +48,7 @@ def create_app(config_object=Config):
     from .payroll import bp as payroll_bp
     from .advances import bp as advances_bp
     from .deductions import bp as deductions_bp
+    from .allowances import bp as allowances_bp
     from .leaves import bp as leaves_bp
     from .holidays import bp as holidays_bp
     from .slips import bp as slips_bp
@@ -88,6 +89,7 @@ def create_app(config_object=Config):
     app.register_blueprint(payroll_bp)
     app.register_blueprint(advances_bp)
     app.register_blueprint(deductions_bp)
+    app.register_blueprint(allowances_bp)
     app.register_blueprint(leaves_bp)
     app.register_blueprint(holidays_bp)
     app.register_blueprint(slips_bp)

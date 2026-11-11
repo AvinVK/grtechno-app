@@ -44,13 +44,14 @@
           h('span', { class: 'stat-value is-text' }, money(f.allotted_total, cur))),
         h('div', { class: 'stat' },
           h('span', { class: 'stat-label' }, 'Remaining'),
-          h('span', { class: 'stat-value is-text' }, money(f.remaining, cur))),
+          h('span', { class: `stat-value is-text${f.remaining < 0 ? ' is-negative' : ''}` }, money(f.remaining, cur))),
         h('div', { class: 'stat' },
           h('span', { class: 'stat-label' }, 'Daily deduction'),
           h('span', { class: 'stat-value is-text' }, f.is_paused ? 'Paused' : `${money(f.daily_amount, cur)}/day`))),
       h('p', { class: 'hint' }, f.is_paused
         ? 'The admin or accountant has paused your fooding deduction - nothing is coming off your balance right now.'
-        : `₹${f.daily_amount} comes off your fooding balance automatically, every day, until the admin or accountant pauses it or your balance runs out.`),
+        : `₹${f.daily_amount} comes off your fooding balance automatically, every day, until the admin or accountant pauses it.`),
+      f.remaining < 0 ? h('p', { class: 'hint is-negative' }, 'Your balance is below zero. The next amount credited to you is adjusted against it automatically.') : null,
       h('div', { class: 'form-actions' },
         h('button', { class: 'btn primary', type: 'button', onclick: () => openExpenseSheet(data.payment_modes, cur) }, '+ Add expense')),
       h('section', { class: 'p-section' },
@@ -169,7 +170,7 @@
       h('div', { class: 'approval-main' },
         h('strong', {}, w.worker_name),
         h('span', { class: 'hint' }, sub)),
-      h('span', { class: 'fn-stat-value' }, money(w.remaining, cur))));
+      h('span', { class: `fn-stat-value${w.remaining < 0 ? ' is-negative' : ''}` }, money(w.remaining, cur))));
   }
 
   /* One person's own page, opened from the list the way an employee opens from the attendance register
@@ -227,8 +228,9 @@
           h('span', { class: 'stat-value is-text' }, money(f.allotted_total, cur))),
         h('div', { class: 'stat' },
           h('span', { class: 'stat-label' }, 'Remaining'),
-          h('span', { class: 'stat-value is-text' }, money(f.remaining, cur)),
+          h('span', { class: `stat-value is-text${f.remaining < 0 ? ' is-negative' : ''}` }, money(f.remaining, cur)),
           h('span', { class: 'stat-note' }, `Daily food deducted: ${money(reg.auto_deducted, cur)}`))),
+      f.remaining < 0 ? h('p', { class: 'hint is-negative' }, 'Below zero: the next amount credited is adjusted against it automatically.') : null,
       h('section', { class: 'p-section' },
         h('h3', {}, 'Register'),
         entries.length || reg.auto_deducted > 0

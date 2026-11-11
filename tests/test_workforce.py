@@ -112,8 +112,11 @@ def test_last_week_dots_never_mark_days_past_the_data_as_absent(admin_client, ap
     with app.app_context():
         make("Sunny", role="welder", present=(2, 4))    # the latest data anyone has is 2 days ago
     week = by_name(admin_client.get("/api/workforce").get_json()["welder"])["Sunny"]["week"]
-    # Today first now (kohal, 2026-10-16) - this is the old oldest-to-newest list, reversed.
-    assert [d["status"] for d in week] == ["none", "none", "present", "absent", "present", "absent", "absent"]
+    # Today first now (kohal, 2026-10-16) - this is the old oldest-to-newest list, reversed. A Sunday is the weekly day off, never absent
+    # (2026-11-08), so a missed day that falls on one reads "off" - which day that is depends on the weekday the test runs on.
+    def missed(back):
+        return "off" if (date.today() - timedelta(days=back)).weekday() == 6 else "absent"
+    assert [d["status"] for d in week] == ["none", "none", "present", missed(3), "present", missed(5), missed(6)]
     assert week[0]["date"] == date.today().isoformat()
 
 

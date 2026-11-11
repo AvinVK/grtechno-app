@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from openpyxl import load_workbook
 
-from app.advances import add_months, add_slots, next_slot, slot_start_of
+from app.advances import add_months, add_slots, prev_slot, slot_start_of
 from app.extensions import db
 from app.models import PayDeduction, Worker, WorkerAttendance
 from app.timeutil import today_local
@@ -78,11 +78,19 @@ def test_the_list_shows_each_deduction_and_the_periods_it_can_be_put_against(app
     _give(admin_client, salaried, "100", _month(0))
     data = admin_client.get(f"/api/payroll/deductions?worker_id={salaried}").get_json()
     assert data["unit"] == "month" and data["current_period"] == _month(0) and data["periods"][0]["value"] == _month(0)
-    assert len(data["periods"]) == 12 and [d["amount"] for d in data["deductions"]] == [100.0]
+    assert len(data["periods"]) == 12 and [d["amount"] for d in data["deductions"]] == [100.0]       # salaried: this month and the next 11
+    # kohal, 2026-11-11: daily wages offer last month's pay periods and this month's so far - never a future one
     slot = slot_start_of(today_local())
     data = admin_client.get(f"/api/payroll/deductions?worker_id={daily}").get_json()
-    assert data["unit"] == "fortnight" and data["current_period"] == slot.isoformat()
-    assert [p["value"] for p in data["periods"][:3]] == [add_slots(slot, i).isoformat() for i in range(3)] and len(data["periods"]) == 24
+    offered = [p["value"] for p in data["periods"]]
+    first = max(add_months(today_local().replace(day=1), -1), date(2026, 10, 1))
+    expected, s = [], slot
+    while s >= first:
+        expected.append(s.isoformat())
+        s = prev_slot(s)
+    assert data["unit"] == "fortnight" and offered == expected and offered[0] == slot.isoformat()
+    assert all(p <= slot.isoformat() for p in offered)
+    assert data["current_period"] == (offered[1] if len(offered) > 1 else offered[0])               # starts on the latest ended period
 
 
 def test_what_cannot_be_given_is_refused_and_nothing_is_saved(app, admin_client):
@@ -97,7 +105,7 @@ def test_what_cannot_be_given_is_refused_and_nothing_is_saved(app, admin_client)
                       ({"period": _month(-1)}, "period"), ({"period": _month(12)}, "period"), ({"period": "soon"}, "period")):
         r = _give(admin_client, wid, **kw)
         assert r.status_code == 422 and field in r.get_json()["fields"], kw
-    for period in ("2026-11-05", "2020-01-01", add_slots(slot_start_of(today_local()), 24).isoformat()):
+    for period in ("2026-11-05", "2020-01-01", add_slots(slot_start_of(today_local()), 1).isoformat(), add_slots(slot_start_of(today_local()), 24).isoformat()):
         assert "period" in _give(admin_client, daily, period=period).get_json()["fields"], period
     assert _give(admin_client, 99999).status_code == 404
     with app.app_context():

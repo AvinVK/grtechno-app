@@ -168,32 +168,58 @@ def test_resuming_picks_up_the_daily_deduction_again(app, accounts_client):
     assert row["remaining"] == 600.0   # 2 days * 200 off 1000
 
 
-def test_remaining_never_goes_below_zero(app, accounts_client):
+def test_the_balance_goes_below_zero_and_the_next_credit_adjusts_it(app, accounts_client):
+    """kohal, 2026-11-11: "let the fooding balance go negative and once the amount is credited to the employee, it should auto adjust"."""
     wid = daily_wage_worker()
     allot(accounts_client, wid, {"amount": "250", "payment_mode": "CASH"})
     with app.app_context():
         account = db.session.get(Worker, wid).fooding_account
-        account.anchor_date = date.today() - timedelta(days=10)   # 10 * 200 = 2000, way more than the 250 allotted
+        account.anchor_date = date.today() - timedelta(days=10)   # 10 * 200 = 2000 of food against the 250 allotted
         db.session.commit()
 
     data = accounts_client.get("/api/fooding").get_json()
     row = next(w for w in data["workers"] if w["worker_id"] == wid)
-    assert row["remaining"] == 0.0 and row["deducted_total"] == 250.0   # capped, not negative or over-deducted
+    assert row["remaining"] == -1750.0 and row["deducted_total"] == 2000.0           # owed, not capped at what was there
+    res = allot(accounts_client, wid, {"amount": "1500", "payment_mode": "CASH"})
+    assert res.get_json()["fooding"]["remaining"] == -250.0                             # the credit is netted against what was owed
+    res = allot(accounts_client, wid, {"amount": "500", "payment_mode": "CASH"})
+    assert res.get_json()["fooding"]["remaining"] == 250.0
 
 
-def test_topping_up_after_running_dry_does_not_retroactively_owe_the_zero_days(app, accounts_client):
-    """settle() always re-anchors to today, so the gap while the balance sat at zero is never counted
-    again once it's topped up - see FoodingAccount.settle's own docstring."""
+def test_the_days_at_zero_are_owed_once_it_is_topped_up(app, accounts_client):
     wid = daily_wage_worker()
     allot(accounts_client, wid, {"amount": "200", "payment_mode": "CASH"})
     with app.app_context():
         account = db.session.get(Worker, wid).fooding_account
         account.anchor_date = date.today() - timedelta(days=10)
         db.session.commit()
-    accounts_client.get("/api/fooding")   # settles it to 0 remaining, re-anchors to today
-
+    accounts_client.get("/api/fooding")   # settles it: 2000 of food against 200, so 1800 below zero, and re-anchors to today
     res = allot(accounts_client, wid, {"amount": "100", "payment_mode": "CASH"})
-    assert res.get_json()["fooding"]["remaining"] == 100.0   # not silently clobbered by the stale gap
+    assert res.get_json()["fooding"]["remaining"] == -1700.0
+
+
+def test_an_account_nobody_has_funded_is_never_charged(app, accounts_client):
+    wid = daily_wage_worker()
+    accounts_client.post(f"/api/fooding/{wid}/pause")
+    accounts_client.post(f"/api/fooding/{wid}/resume")           # creates the account without any money in it
+    with app.app_context():
+        account = db.session.get(Worker, wid).fooding_account
+        account.anchor_date = date.today() - timedelta(days=5)
+        db.session.commit()
+    row = next(w for w in accounts_client.get("/api/fooding").get_json()["workers"] if w["worker_id"] == wid)
+    assert row["remaining"] == 0.0 and row["deducted_total"] == 0.0
+
+
+def test_nothing_can_be_spent_while_the_balance_is_below_zero(app, accounts_client):
+    who, wid = daily_wage_user(app)
+    allot(accounts_client, wid, {"amount": "100", "payment_mode": "CASH"})
+    with app.app_context():
+        account = db.session.get(Worker, wid).fooding_account
+        account.anchor_date = date.today() - timedelta(days=2)    # 400 of food against 100: 300 below zero
+        db.session.commit()
+    res = who.post("/api/fooding/me/expenses", json={"amount": "50", "purpose": "Travel"})
+    assert res.status_code == 422 and "nothing left" in res.get_json()["fields"]["amount"]
+    assert who.get("/api/fooding/me").get_json()["fooding"]["remaining"] == -300.0
 
 
 # ---------- the daily-wage worker's own view ----------
@@ -564,14 +590,16 @@ def test_each_days_food_is_recorded_and_listed_with_its_date(app, accounts_clien
     assert reg["auto_deducted"] == 600.0
 
 
-def test_the_last_day_is_a_part_day_when_the_balance_runs_out(app, accounts_client, admin_client):
+def test_every_day_is_charged_in_full_even_once_the_balance_runs_out(app, accounts_client, admin_client):
+    """kohal, 2026-11-11: the balance may go below zero, so the day the money runs out is not a part day and the days after it still count."""
     wid = daily_wage_worker()
     allot(accounts_client, wid, {"amount": "500", "payment_mode": "CASH"})
     with app.app_context():
         db.session.get(Worker, wid).fooding_account.anchor_date = date.today() - timedelta(days=5)
         db.session.commit()
-    days = admin_client.get(f"/api/fooding/{wid}").get_json()["daily_food"]
-    assert sorted(d["amount"] for d in days) == [100.0, 200.0, 200.0]       # 500 = 200 + 200 + 100, nothing after
+    reg = admin_client.get(f"/api/fooding/{wid}").get_json()
+    assert sorted(d["amount"] for d in reg["daily_food"]) == [200.0] * 5            # 5 days of food against 500: 500 left becomes -500
+    assert reg["fooding"]["remaining"] == -500.0
 
 
 def test_days_taken_before_each_day_was_stored_are_rebuilt_and_marked_estimated(app, accounts_client, admin_client):

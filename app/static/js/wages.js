@@ -26,7 +26,8 @@
         c.holidays ? [h('dt', {}, 'Paid holidays'), h('dd', {}, c.holidays)] : null,
         h('dt', {}, 'Days absent'), h('dd', {}, c.absent),
         c.advance_deduction ? [h('dt', {}, 'Advance taken back'), h('dd', {}, `\u2212${money(c.advance_deduction, cur)}`)] : null,
-        c.other_deduction ? [h('dt', {}, 'Deductions'), h('dd', {}, `\u2212${money(c.other_deduction, cur)}`)] : null));
+        c.other_deduction ? [h('dt', {}, 'Deductions'), h('dd', {}, `\u2212${money(c.other_deduction, cur)}`)] : null,
+        c.other_allowance ? [h('dt', {}, 'Allowances'), h('dd', {}, `+${money(c.other_allowance, cur)}`)] : null));
   }
 
   function dayRow(d, cur) {
@@ -66,6 +67,7 @@
           `${money(c.earned, cur)} so far · ${plural(c.present_days, 'day', 'days')} present${c.holidays ? ` · ${plural(c.holidays, 'paid holiday', 'paid holidays')}` : ''} · ${plural(c.absent, 'day', 'days')} absent`),
         c.advance_deduction ? h('p', { class: 'hint' }, `${money(c.advance_deduction, cur)} of an advance salary is taken back from this cycle.`) : null,
         c.other_deduction ? h('p', { class: 'hint' }, `${money(c.other_deduction, cur)} of deductions is taken off this cycle.`) : null,
+        c.other_allowance ? h('p', { class: 'hint' }, `${money(c.other_allowance, cur)} of allowances is added to this cycle.`) : null,
         data.days.length
           ? h('ul', { class: 'att-week-card' }, data.days.map((d) => dayRow(d, cur)))
           : h('p', { class: 'empty-state' }, 'No attendance data yet this cycle.'))
