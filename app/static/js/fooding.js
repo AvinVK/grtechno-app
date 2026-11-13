@@ -70,6 +70,17 @@
       h('span', { class: `row-value ${e.kind === 'allot' ? 'acct-credit' : 'acct-debit'}` }, (e.kind === 'allot' ? '+' : '−') + money(e.amount, cur)));
   }
 
+  // The starting balance closes the register: the first thing the account held, which everything above builds on (set from the
+  // employee's edit form - kohal, 2026-11-13).
+  function openingRow(f, cur) {
+    if (!f.opening_date) return null;
+    return h('li', { class: 'p-row' },
+      h('span', { class: 'p-main' },
+        h('span', { class: 'row-title' }, 'Starting balance'),
+        h('span', { class: 'row-sub' }, `As on ${fmtDate(f.opening_date)}`)),
+      h('span', { class: 'row-value acct-credit' }, money(f.opening_amount, cur)));
+  }
+
   // The automatic daily food deduction, as one row that opens into each day's amount (kohal, 2026-11-02: "when i
   // click on that 1800, it should open everyday expense of 200 with date"). Days from before each day was stored
   // are rebuilt from the allotment dates, so those carry an "estimated" note.
@@ -233,8 +244,8 @@
       f.remaining < 0 ? h('p', { class: 'hint is-negative' }, 'Below zero: the next amount credited is adjusted against it automatically.') : null,
       h('section', { class: 'p-section' },
         h('h3', {}, 'Register'),
-        entries.length || reg.auto_deducted > 0
-          ? h('ul', { class: 'card-group' }, [dailyFoodRow(reg, cur), ...entries.map(entryRow(cur, { forManager: true }))].filter(Boolean))
+        entries.length || reg.auto_deducted > 0 || f.opening_date
+          ? h('ul', { class: 'card-group' }, [dailyFoodRow(reg, cur), ...entries.map(entryRow(cur, { forManager: true })), openingRow(f, cur)].filter(Boolean))
           : h('p', { class: 'hint' }, 'Nothing credited or spent yet.')),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Add to balance'),
