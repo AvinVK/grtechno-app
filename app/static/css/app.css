@@ -684,6 +684,11 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 .form-grid .wide { grid-column: 1 / -1; }
+/* Fooding starting date and balance side by side, with one hint under them (kohal, 2026-11-13) - two columns on a phone too. */
+.fooding-start { display: grid; gap: 4px; }
+.fooding-start[hidden] { display: none; }
+.fooding-start .hint { margin: 0; }                  /* the form sits in a .confirm-card, whose paragraphs get an 18px bottom margin */
+.fooding-start-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 
 .date-range { display: flex; gap: 12px; margin-top: 12px; }
 .date-range label { display: grid; gap: 4px; font-size: 14px; font-weight: 600; }

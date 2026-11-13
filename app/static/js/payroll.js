@@ -557,14 +557,14 @@
   const ADJUSTMENTS = {
     deduction: {
       endpoint: '/api/payroll/deductions', list: 'deductions', noteKey: 'reason', heading: 'Deductions', give: 'Give deduction',
-      amountLabel: 'Deduction amount', noteLabel: 'Note', notePlaceholder: 'e.g. Damaged equipment', done: 'Deduction given', applied: 'Taken off',
+      amountLabel: 'Deduction amount', noteLabel: 'Note', notePlaceholder: 'e.g. Damaged equipment', done: 'Deduction given', applied: 'Taken off', appliedTo: 'Taken off',
       whenSalaried: 'Take it off month', whenDaily: 'Take it off pay period', removeTitle: 'Remove deduction', removeToast: 'Deduction removed',
       removeNote: 'It will stop coming off their pay.',
       empty: (unit) => `No deduction. A deduction comes off their pay for one ${unit}, together with any advance being taken back.`,
     },
     allowance: {
       endpoint: '/api/payroll/allowances', list: 'allowances', noteKey: 'note', heading: 'Allowances', give: 'Give allowance',
-      amountLabel: 'Allowance amount', noteLabel: 'Which allowance', notePlaceholder: 'e.g. Travel allowance', done: 'Allowance given', applied: 'Added',
+      amountLabel: 'Allowance amount', noteLabel: 'Which allowance', notePlaceholder: 'e.g. Travel allowance', done: 'Allowance given', applied: 'Added', appliedTo: 'Added to',
       whenSalaried: 'Add it to month', whenDaily: 'Add it to pay period', removeTitle: 'Remove allowance', removeToast: 'Allowance removed',
       removeNote: 'It will stop being added to their pay.',
       empty: (unit) => `No allowance. An allowance is added to their pay for one ${unit} - the note says which allowance it is.`,
@@ -623,6 +623,9 @@
         h('span', { class: 'att-day-hours' }, d.applied ? cfg.applied : 'Upcoming')),
       h('span', { class: 'att-day-sub' },
         h('span', { class: 'att-day-sub-line' }, d[cfg.noteKey]),
+        // A daily-wage one belongs to one 2-week pay period, which may be last month's - say so, since "Currently due" only covers this
+        // month's (kohal, 2026-11-13).
+        /^\d{4}-\d{2}-\d{2}$/.test(d.period) ? h('span', { class: 'att-day-sub-line' }, `${cfg.appliedTo} ${d.period_label} pay`) : null,
         h('span', { class: 'att-day-sub-line' }, [d.created_by_name ? `By ${d.created_by_name}` : null, removeBtn].filter(Boolean))));
   }
 

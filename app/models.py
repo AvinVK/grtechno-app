@@ -903,7 +903,12 @@ class FoodingAccount(db.Model):
     negative and once the amount is credited to the employee, it should auto adjust the amount") - the next
     amount credited is simply netted against it, because remaining is always allotted_total - deducted_total.
     Only an account that has been funded at least once is charged; one made by pausing or resuming an
-    employee nobody has allotted anything to stays at zero."""
+    employee nobody has allotted anything to stays at zero.
+
+    A starting balance and date (kohal, 2026-11-13: "fooding starting date and starting balance which is similar to
+    account starting date and balance") work like an account's opening balance (AccountOpening): the balance was
+    opening_amount at the start of opening_date, and only what happened on or after that day counts. Nothing earlier is
+    deleted - it is only left out (see app/fooding.py set_opening). Setting one also means food is charged from that day."""
 
     __tablename__ = "fooding_accounts"
 
@@ -918,6 +923,8 @@ class FoodingAccount(db.Model):
     deducted_total = db.Column(db.Numeric(14, 2), nullable=False, default=0, server_default="0")
     anchor_date = db.Column(db.Date, nullable=False, default=date.today)   # deducted_total is accurate as of this day
     is_paused = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    opening_amount = db.Column(db.Numeric(14, 2), nullable=True)           # the balance at the start of opening_date
+    opening_date = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
 
@@ -937,7 +944,7 @@ class FoodingAccount(db.Model):
         day - a no-op while paused, or for an account nobody has funded yet. The balance is allowed to go below zero (see the
         class docstring), so every day is charged in full."""
         today = today or date.today()
-        if not self.is_paused and today > self.anchor_date and self.allotted_total > 0:
+        if not self.is_paused and today > self.anchor_date and self.funded:
             # One FoodingDeduction per day, so the register can list each day's food (kohal, 2026-11-02).
             day = self.anchor_date
             while day < today:
@@ -945,6 +952,15 @@ class FoodingAccount(db.Model):
                 self.deductions.append(FoodingDeduction(day=day, amount=self.DAILY_AMOUNT))
                 self.deducted_total += self.DAILY_AMOUNT
         self.anchor_date = today
+
+    @property
+    def funded(self) -> bool:
+        """Whether food is being charged: money has been credited, or a starting balance and date were set."""
+        return self.opening_date is not None or self.allotted_total > 0
+
+    def counts(self, day: date) -> bool:
+        """Whether something dated `day` is part of the balance - everything is, unless a starting date says otherwise."""
+        return self.opening_date is None or day >= self.opening_date
 
     @property
     def remaining(self) -> Decimal:
@@ -957,6 +973,8 @@ class FoodingAccount(db.Model):
             "allotted_total": float(self.allotted_total), "deducted_total": float(self.deducted_total),
             "remaining": float(self.remaining), "is_paused": self.is_paused,
             "daily_amount": float(self.DAILY_AMOUNT),
+            "opening_amount": float(self.opening_amount) if self.opening_amount is not None else None,
+            "opening_date": self.opening_date.isoformat() if self.opening_date else None,
         }
 
 
@@ -1986,6 +2004,7 @@ class Worker(db.Model):
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
         }
         if detail:
+            acct = self.fooding_account
             data.update({
                 "age": self.age, "qualification": self.qualification, "experience": self.experience,
                 "skills": self.skills, "phone": self.phone, "upi_id": self.upi_id or "",
@@ -1994,6 +2013,8 @@ class Worker(db.Model):
                 "wage_amount": float(self.wage_amount) if self.wage_amount is not None else None,
                 "allowance_amount": float(self.allowance_amount) if self.allowance_amount is not None else None,
                 "fooding_opt_in": self.fooding_opt_in, "petrol_enabled": self.petrol_enabled,
+                "fooding_start_balance": float(acct.opening_amount) if acct is not None and acct.opening_amount is not None else None,
+                "fooding_start_date": acct.opening_date.isoformat() if acct is not None and acct.opening_date else None,
                 "pf_number": self.pf_number, "esic_number": self.esic_number, "reference": self.reference,
                 "paid_amount": float(self.paid_amount),
                 "payments": [p.to_dict() for p in self.payments],

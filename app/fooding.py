@@ -31,7 +31,7 @@ from flask import Blueprint, abort, g, jsonify, render_template, request
 from .constants import PAYMENT_ACCOUNTS
 from .auth import can_manage_fooding
 from .extensions import db
-from .models import FoodingAccount, FoodingEntry, Worker, settings_for_client, utcnow
+from .models import FoodingAccount, FoodingDeduction, FoodingEntry, Worker, settings_for_client, utcnow
 from .timeutil import today_local
 from .validation import api_errors
 
@@ -96,7 +96,7 @@ def raise_auto_topup(account):
     for someone who has been funded before (a brand new account is not "running low"), and not while paused (nothing
     is being deducted). It has no person behind it (created_by_code is None) - see _decide_request for who may decide
     it. Nothing runs on a schedule here, so it appears the next time the account is read."""
-    if account.is_paused or account.allotted_total <= 0 or account.remaining >= FoodingAccount.DAILY_AMOUNT:
+    if account.is_paused or not account.funded or account.remaining >= FoodingAccount.DAILY_AMOUNT:
         return
     if any(e.kind == "allot" and e.status == "pending" for e in account.entries):
         return
@@ -107,8 +107,33 @@ def raise_auto_topup(account):
 
 def _approved(entries):
     """What actually happened to the balance - an allotment still waiting for approval (or turned down) is not
-    part of anyone's register."""
-    return [e for e in entries if e.status == "approved"]
+    part of anyone's register. Anything from before the account's starting date is left out too (see set_opening)."""
+    return [e for e in entries if e.status == "approved" and e.account.counts(e.entry_date)]
+
+
+def set_opening(worker, amount: Decimal, as_of: date):
+    """Give this person's fooding a starting balance and date (kohal, 2026-11-13) - the balance was `amount` at the start of
+    `as_of`, and the app counts everything from that day on: money credited and spent on or after it, and the daily food from
+    that day to today. Like an account's opening balance nothing is deleted - earlier entries and days stay on record and are
+    only left out of the balance and the register. The totals are worked out again from what is on record, so saving again
+    (another amount or day) gives the same answer as saving it first time. Days with no daily-food row between `as_of` and the
+    first one on record are filled in, since they were never stored; later gaps are left alone, they are paused days.
+    Caller commits."""
+    account = account_for(worker, create=True)
+    account.opening_amount, account.opening_date = amount, as_of
+    if not account.is_paused:
+        recorded = {d.day for d in account.deductions}
+        first = min((d for d in recorded if d >= as_of), default=account.anchor_date + timedelta(days=1))
+        day = as_of
+        while day < first and day <= account.anchor_date:
+            if day not in recorded:
+                account.deductions.append(FoodingDeduction(day=day, amount=FoodingAccount.DAILY_AMOUNT))
+            day += timedelta(days=1)
+    counted = [e for e in account.entries if e.status == "approved" and e.entry_date >= as_of]
+    account.allotted_total = amount + sum((e.amount for e in counted if e.kind == "allot"), Decimal("0"))
+    account.deducted_total = (sum((e.amount for e in counted if e.kind == "expense"), Decimal("0"))
+                              + sum((d.amount for d in account.deductions if d.day >= as_of), Decimal("0")))
+    return account
 
 
 def _empty_dict(worker):
@@ -117,6 +142,7 @@ def _empty_dict(worker):
     return {
         "worker_id": worker.id, "worker_name": worker.name, "allotted_total": 0.0, "deducted_total": 0.0,
         "remaining": 0.0, "is_paused": False, "daily_amount": float(FoodingAccount.DAILY_AMOUNT),
+        "opening_amount": None, "opening_date": None,
     }
 
 
@@ -215,12 +241,13 @@ def _daily_food(account, auto):
     Days taken since FoodingDeduction existed are exact. Anything taken before that (`auto` less what is recorded)
     wasn't stored per day, so it is rebuilt: from the day after each allotment, DAILY_AMOUNT a day while there was
     money, until that earlier total is used up. Pauses weren't recorded either, so these are marked estimated."""
-    rows = [{"date": d.day.isoformat(), "amount": float(d.amount), "estimated": False} for d in account.deductions]
-    earlier = auto - sum((d.amount for d in account.deductions), Decimal("0"))
+    deductions = [d for d in account.deductions if account.counts(d.day)]
+    rows = [{"date": d.day.isoformat(), "amount": float(d.amount), "estimated": False} for d in deductions]
+    earlier = auto - sum((d.amount for d in deductions), Decimal("0"))
     if earlier > 0:
         allots = sorted(((e.decided_at.date() if e.decided_at else e.entry_date), e.amount)
                         for e in account.entries if e.kind == "allot" and e.status == "approved")
-        first_recorded = min((d.day for d in account.deductions), default=None)
+        first_recorded = min((d.day for d in deductions), default=None)
         end = (first_recorded or today_local() + timedelta(days=1)) - timedelta(days=1)
         balance, i = Decimal("0"), 0
         day = allots[0][0] if allots else end

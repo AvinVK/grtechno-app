@@ -410,7 +410,22 @@
     const foodingInput = h('input', { type: 'checkbox', checked: !!w.fooding_opt_in });
     const foodingSwitch = h('label', { class: 'switch' },
       foodingInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
-    employmentSel.addEventListener('change', () => { foodingInput.checked = employmentSel.value === 'daily_wages'; });
+    // Fooding starting balance and date (kohal, 2026-11-13: "similar to account starting date and balance") - what their
+    // fooding held at the start of a day; only shown while Fooding is on.
+    const foodingStartDate = dateField(w.fooding_start_date || '', { placeholder: 'Pick the day' });
+    const foodingStartBalance = h('input', {
+      type: 'number', min: '0', step: 'any', inputmode: 'decimal', placeholder: '0 if there was none',
+      value: w.fooding_start_balance != null ? String(w.fooding_start_balance) : '',
+    });
+    const foodingStart = h('div', { class: 'wide fooding-start' },
+      h('div', { class: 'fooding-start-fields' },
+        field('fooding_start_date', 'Starting date', foodingStartDate),
+        field('fooding_start_balance', 'Starting balance', foodingStartBalance)),
+      h('p', { class: 'hint' }, 'Their fooding balance at the start of that day. \u20B9200 a day comes off from then.'));
+    const updateFoodingStart = () => { foodingStart.hidden = !foodingInput.checked; };
+    foodingInput.addEventListener('change', updateFoodingStart);
+    employmentSel.addEventListener('change', () => { foodingInput.checked = employmentSel.value === 'daily_wages'; updateFoodingStart(); });
+    updateFoodingStart();
 
     // Petrol payment (kohal, 2026-10-27): on means an odometer photo and reading at every check-in and
     // check-out, paid by the kilometre once approved - see app/petrol.py.
@@ -447,6 +462,8 @@
             qualification: qualificationInput.value, experience: experienceInput.value, skills: skillsInput.value,
             phone: phoneInput.value, upi_id: upiInput.value, joining_date: joiningInput.value || null, employment_type: employmentSel.value,
             wage_amount: wageInput.value === '' ? null : wageInput.value, fooding_opt_in: foodingInput.checked,
+            fooding_start_date: foodingInput.checked ? foodingStartDate.value || null : null,
+            fooding_start_balance: foodingInput.checked && foodingStartBalance.value !== '' ? foodingStartBalance.value : null,
             allowance_amount: employmentSel.value === 'regular' && allowanceInput.value !== '' ? allowanceInput.value : null,
             petrol_enabled: petrolInput.checked,
             pf_number: pfInput.value, esic_number: esicInput.value, reference: referenceInput.value,
@@ -474,6 +491,7 @@
         wageField,
         allowanceField,
         h('div', { class: 'toggle-row wide' }, h('span', {}, 'Fooding?'), foodingSwitch),
+        foodingStart,
         h('div', { class: 'toggle-row wide' }, h('span', {}, 'Petrol payment?'), petrolSwitch),
         field('pf_number', 'PF number', pfInput),
         field('esic_number', 'ESIC number', esicInput),

@@ -210,3 +210,29 @@ def test_the_slip_shows_the_allowance_and_which_one_it_is(app, admin_client):
     assert rows["Other allowance (Travel)"] == 2000 and rows["Other deduction (Late)"] == 500
     pdf = employee.get(f"/api/salary-slips/{listed[0]['id']}.pdf").data
     assert b"Other allowance \\(Travel\\)" in pdf and b"Rs. 32,500" in pdf
+
+
+def test_an_adjustment_on_last_months_daily_period_shows_in_that_periods_sheet(app, admin_client):
+    """kohal, 2026-11-12: the daily-wage picker offers last month's periods - the payment sheet for that period must carry them."""
+    wid = _worker(app, "Gita", "daily_wages", "500")
+    current = slot_start_of(today_local())
+    older = prev_slot(prev_slot(current))                                                 # one of last month's periods
+    assert older.isoformat() in [p["value"] for p in admin_client.get(f"/api/payroll/allowances?worker_id={wid}").get_json()["periods"]]
+
+    def sheet_row(period):
+        rows = admin_client.get(f"/api/payroll/sheet/daily?period={period.isoformat()}").get_json()["rows"]
+        return next(r for r in rows if r["id"] == wid)
+
+    before = sheet_row(older)
+    assert _give(admin_client, wid, "300", older.isoformat(), note="Fuel").status_code == 201
+    assert admin_client.post("/api/payroll/deductions", json={"worker_id": wid, "amount": "100", "period": older.isoformat(), "reason": "Damage"}).status_code == 201
+    row = sheet_row(older)
+    assert (row["other_allowance"], row["other_deduction"]) == (300, 100)
+    assert (row["other_allowance_note"], row["other_deduction_note"]) == ("Fuel", "Damage")
+    assert row["net"] == round(before["net"] + 300 - 100, 2) and row["due"] == round(before["due"] + 200, 2)
+    other = sheet_row(current)
+    assert (other["other_allowance"], other["other_deduction"]) == (0, 0)                  # only that period
+    ws = load_workbook(io.BytesIO(admin_client.get(f"/api/payroll/sheet/daily.xlsx?period={older.isoformat()}").data)).active
+    header = [c.value for c in ws[2]]
+    mine = next(r for r in ws.iter_rows(min_row=3, values_only=True) if r[header.index("Name")] == "Gita")
+    assert mine[header.index("Other allowance")] == 300 and mine[header.index("Other deduction")] == 100

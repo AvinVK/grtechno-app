@@ -29,6 +29,7 @@ from .extensions import db
 from .holidays import HolidayBook
 from .models import Attendance, Role, User, Worker, WorkerAttendance, WorkerPayment, settings_for_client
 from .modules import can_write, check_module, has_module
+from .timeutil import today_local
 from .validation import Fields, parse_money
 
 UPI_ID = re.compile(r"^[A-Za-z0-9._\-]{2,64}@[A-Za-z][A-Za-z0-9]{1,30}$")
@@ -480,6 +481,35 @@ def _role_change_for_login(worker, data, errors):
     return user
 
 
+def _fooding_opening(worker, payload, will_have_fooding, errors):
+    """(amount, day) when the request carries a fooding starting balance and date that differ from what is saved, else None
+    (kohal, 2026-11-13: "in employment management form, fooding starting date and starting balance ... similar to account
+    starting date and balance"). Both are needed together, the day cannot be in the future, and fooding has to be on."""
+    raw_day, raw_amount = payload.get("fooding_start_date"), payload.get("fooding_start_balance")
+    if raw_day in (None, "") and raw_amount in (None, ""):
+        return None
+    f = Fields({"fooding_start_date": raw_day})
+    f.date("fooding_start_date")
+    day = f.data.get("fooding_start_date")
+    amount = parse_money(raw_amount, errors, "fooding_start_balance") if raw_amount not in (None, "") else None
+    if f.errors:
+        errors.update(f.errors)
+    elif day is None:
+        errors["fooding_start_date"] = "Pick the day this balance was true"
+    elif day > today_local():
+        errors["fooding_start_date"] = "That day hasn't happened yet"
+    if amount is None and "fooding_start_balance" not in errors:
+        errors["fooding_start_balance"] = "Enter the starting balance (0 if there was none)"
+    if not will_have_fooding and not errors:
+        errors["fooding_start_date"] = "Switch Fooding on to give it a starting balance"
+    if errors.get("fooding_start_date") or errors.get("fooding_start_balance"):
+        return None
+    account = worker.fooding_account
+    if account is not None and (account.opening_amount, account.opening_date) == (amount, day):
+        return None                                  # unchanged - saving the rest of the form must not recalculate anything
+    return amount, day
+
+
 @workforce_bp.patch("/<int:worker_id>")
 def edit_worker(worker_id):
     """Change a person's details, role, or their whole salary/wages log (sent as one list, same as a
@@ -493,10 +523,14 @@ def edit_worker(worker_id):
     if "payments" in payload:
         payments = _payments(payload["payments"], errors)
     login = _role_change_for_login(worker, data, errors)
+    opening = _fooding_opening(worker, payload, data.get("fooding_opt_in", worker.fooding_opt_in), errors)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     for field, value in data.items():
         setattr(worker, field, value)
+    if opening is not None:
+        from .fooding import set_opening                    # imported here: fooding.py imports auth, which imports this module
+        set_opening(worker, *opening)
     if login is not None:
         login.role_key = data["role_key"]
     if payments is not None:
