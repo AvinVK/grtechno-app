@@ -8,7 +8,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, field, selectField, searchField, dateField, money } = window.LD;
+  const { $, h, clear, api, field, selectField, searchField, dateField, money, closeOnBack } = window.LD;
   const view = $('#view');
   const picked = {};                     // report key -> { month, <filter key>: value }
 
@@ -34,6 +34,35 @@
     h('div', { class: 'p-section-head' }, h('h3', {}, title), total ? h('span', { class: 'p-code' }, total) : null),
     list.length ? h('ul', { class: 'card-group' }, list) : h('p', { class: 'hint' }, empty));
 
+  /* Stock in and stock out show one line per day - how many materials moved and what it cost - and "More" slides that day's materials up from the
+     bottom in a scrollable sheet (kohal, 2026-11-14: "only show quantity and cost of that day and when clicking on more, it should open a bar from
+     bottom which will be scrollable"). Quantities in different units (metres, pieces) can't be added up, so the line counts materials, not units. */
+  function daySheet(day, rows, cur) {
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const closeX = h('button', { class: 'icon-x', type: 'button', 'aria-label': 'Close' }, '×');
+    const finish = closeOnBack(() => overlay.remove());
+    closeX.onclick = () => finish();
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    overlay.append(h('div', { class: 'amount-sheet day-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': dayLabel(day.date) },
+      h('div', { class: 'day-sheet-head' },
+        h('div', {}, h('h2', {}, dayLabel(day.date)), h('p', { class: 'hint' }, `${money(day.total, cur)} · ${day.entries.length} ${day.entries.length === 1 ? 'entry' : 'entries'}`)),
+        closeX),
+      h('ul', { class: 'card-group day-sheet-list' }, rows)));
+    document.body.append(overlay);
+  }
+
+  const dayRow = (day, what, rows, cur) => {
+    const names = new Set(day.entries.map((e) => e.name)).size;
+    return h('li', { class: 'p-row day-row' },
+      h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, dayLabel(day.date)),
+        h('span', { class: 'row-sub' }, `${names} ${names === 1 ? 'material' : 'materials'} ${what}`)),
+      h('span', { class: 'row-value' }, money(day.total, cur)),
+      h('button', { class: 'btn small', type: 'button', onclick: () => daySheet(day, rows, cur) }, 'More'));
+  };
+  const dayList = (days, what, rowOf, cur, empty) => (days.length
+    ? h('ul', { class: 'card-group' }, days.map((day) => dayRow(day, what, day.entries.map(rowOf), cur)))
+    : h('p', { class: 'hint' }, empty));
+
   const PARTS = [['in', 'Stock in'], ['out', 'Stock out'], ['status', 'Inventory status']];
 
   function inventoryBlocks(part, d, cur) {
@@ -41,17 +70,17 @@
     if (part === 'in') {
       return [
         summary(money(r.total, cur), `stock in, GST ${money(r.gst, cur)} · ${r.count} ${r.count === 1 ? 'purchase' : 'purchases'}`),
-        ...r.days.map((day) => block(dayLabel(day.date), money(day.total, cur), day.entries.map((e) => row(e.name,
-          [`${withUnit(e.quantity, e.unit)} at ${money(e.rate, cur)}`, e.supplier || null, e.bill_no ? `Bill ${e.bill_no}` : null].filter(Boolean).join(' · '), money(e.total, cur))), ''))
-        , ...(r.days.length ? [] : [h('p', { class: 'hint' }, 'No stock came in between these dates.')]),
+        dayList(r.days, 'bought', (e) => row(e.name,
+          [`${withUnit(e.quantity, e.unit)} at ${money(e.rate, cur)}`, e.supplier || null, e.bill_no ? `Bill ${e.bill_no}` : null].filter(Boolean).join(' · '), money(e.total, cur)),
+          cur, 'No stock came in between these dates.'),
       ];
     }
     if (part === 'out') {
       return [
         summary(money(r.total, cur), `allocated to projects · ${r.count} ${r.count === 1 ? 'entry' : 'entries'}`),
-        ...r.days.map((day) => block(dayLabel(day.date), money(day.total, cur), day.entries.map((e) => row(e.name,
-          [e.project_code, e.project, `${e.kind === 'Returned' ? 'Returned ' : ''}${withUnit(Math.abs(e.quantity), e.unit)}`].filter(Boolean).join(' · '), money(e.amount, cur))), '')),
-        ...(r.days.length ? [] : [h('p', { class: 'hint' }, 'No material was allocated to a project between these dates.')]),
+        dayList(r.days, 'allocated', (e) => row(e.name,
+          [e.project_code, e.project, `${e.kind === 'Returned' ? 'Returned ' : ''}${withUnit(Math.abs(e.quantity), e.unit)}`].filter(Boolean).join(' · '), money(e.amount, cur)),
+          cur, 'No material was allocated to a project between these dates.'),
       ];
     }
     const short = r.short.map((s) => row(s.name, `${withUnit(s.in_stock, s.unit)} in stock · ${withUnit(s.requested, s.unit)} asked for${s.projects.length ? ` by ${s.projects.join(', ')}` : ''}`, `Short ${withUnit(s.short_by, s.unit)}`));
