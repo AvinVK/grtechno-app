@@ -483,6 +483,8 @@
 
     const isMaterial = () => categorySel.value === 'material';
     const materialField = field('material_pick', 'Material', materialPick, { wide: true });
+    // Live hint (kohal, 2026-11-14): a name typed in that looks like something already in stock.
+    materialField.append(LD.similarMaterialHint(materialPick, { onUse: (m) => materialPick.choose(m.name) }));
     const plainField = field('material_name', 'What did you buy', nameInput, { wide: true });
     // GST is for material purchases only (kohal, 2026-11-04) - Other expenses keep the plain cost.
     const costField = field('amount', 'Cost', amountInput);
@@ -514,6 +516,13 @@
         if (isMaterial() && materialPick.unresolved) pending.material_pick = 'Pick a material from the list, or tap + Add';
         if (isMaterial() && supplierPick.unresolved) pending.supplier_pick = 'Pick a supplier from the list, or tap + Add';
         if (Object.keys(pending).length) { (showFieldErrors(form, pending) || errorBox).focus?.(); return; }
+        // A new name that looks like something in stock - use that one, or go ahead with the new name.
+        if (isMaterial() && materialPick.value && !materialPick.item) {
+          const typed = materialPick.value;
+          const choice = await LD.checkSimilarMaterial(typed, { newLabel: `Log \u201c${typed}\u201d as a new material` });
+          if (!choice) return;
+          if (choice.use) materialPick.choose(choice.use.name);
+        }
         saveBtn.disabled = true;
         try {
           await api('/api/cash-purchases/me', {

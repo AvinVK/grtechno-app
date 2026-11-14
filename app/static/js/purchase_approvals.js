@@ -348,6 +348,8 @@
     materialPick.addEventListener('change', () => { const it = materialPick.item; if (it && it.unit) unitInput.value = it.unit; });
 
     const materialField = field('material_pick', 'Material', materialPick, { wide: true });
+    // Live hint (kohal, 2026-11-14): a name typed in that looks like something already in stock.
+    materialField.append(LD.similarMaterialHint(materialPick, { onUse: (m) => materialPick.choose(m.name) }));
     const plainField = field('material_name', 'What did you buy', nameInput, { wide: true });
     const headField = field('expense_head', 'Expense type', headSel, { wide: true });
     const supplierPickField = field('supplier_pick', 'Supplier', supplierPick, { wide: true });
@@ -379,6 +381,13 @@
         if (isMaterial() && materialPick.unresolved) pending.material_pick = 'Pick a material from the list, or tap + Add';
         if (isMaterial() && supplierPick.unresolved) pending.supplier_pick = 'Pick a supplier from the list, or tap + Add';
         if (Object.keys(pending).length) { (showFieldErrors(form, pending) || errorBox).focus?.(); return; }
+        // A new name that looks like something in stock - use that one, or go ahead with the new name.
+        if (isMaterial() && materialPick.value && !materialPick.item) {
+          const typed = materialPick.value;
+          const choice = await LD.checkSimilarMaterial(typed, { newLabel: `Add \u201c${typed}\u201d as a new material` });
+          if (!choice) return;
+          if (choice.use) materialPick.choose(choice.use.name);
+        }
         saveBtn.disabled = true;
         try {
           await api('/api/admin-purchases', {

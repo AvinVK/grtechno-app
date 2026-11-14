@@ -14,7 +14,9 @@
    the same grid as the real ones, not a grid of their own below - each is {href, icon, name, sum}. #}
 {% macro services(nav_modules, summaries={}, extra_tiles=[]) -%}
 <div class="me-tiles">
-  {% for m in nav_modules %}
+  {# No plain Inventory tile (kohal, 2026-11-14: "remove inventory and have only inventory report block in me tab") - the Inventory tab in the
+     bottom bar still opens it; the Inventory report tile comes in with the extra tiles below. #}
+  {% for m in nav_modules if m.key != 'inventory' %}
   <a class="me-tile" href="{{ '/client-analysis' if m.key == 'clients' else '/lead-analysis' if m.key == 'leads' else m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m) }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
   {% else %}
   {% if not extra_tiles %}<p class="sb-empty">No services are turned on yet.</p>{% endif %}
