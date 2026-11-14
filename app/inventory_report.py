@@ -8,22 +8,22 @@ One month at a time, rebuilt from the stock ledger (MaterialMovement, approved r
   - Stock value now: what is in stock today and what it is worth. A snapshot of today, not of the month's end, since the ledger keeps a running
     balance rather than a balance per month.
   - Low stock: materials that cannot cover the project requests waiting on them (Inventory's own restock list), and ones that have run out.
-Opened from the Inventory report tile on the Me tab; anyone with the Inventory module sees it."""
+It is the Inventory subtab of the Reports page (app/reports.py, app/static/js/reports.js - kohal, 2026-11-14: "have inventory report as a subtab in
+reports block in me tab"): the figures below are shown there, and its Excel download is built from sheets()."""
 
 import calendar
 from datetime import date
 from decimal import Decimal
 
-from flask import Blueprint, Response, jsonify, render_template, request
+from flask import Blueprint, jsonify, redirect, request
 
 from .extensions import db
 from .inventory import _restock_rows
 from .models import Material, MaterialMovement, settings_for_client
 from .modules import check_module
-from .reports import XLSX_TYPE, _month_label, _month_or_default
+from .reports import _month_label, _month_or_default
 from .timeutil import today_local
 from .validation import api_errors
-from .xlsx import build_workbook
 
 bp = Blueprint("inventory_report", __name__)
 api_errors(bp)
@@ -115,7 +115,7 @@ def build_report(year: int, month: int) -> dict:
 
 @bp.get("/inventory-report")
 def page():
-    return render_template("inventory_report.html")
+    return redirect("/reports#inventory")                  # it used to be a page of its own - old bookmarks still land on it
 
 
 @bp.get("/api/inventory/report")
@@ -125,9 +125,8 @@ def report():
     return jsonify(**build_report(year, month), months=months, current=months[0]["value"], currency=settings_for_client()["currency"])
 
 
-@bp.get("/api/inventory/report.xlsx")
-def report_xlsx():
-    year, month = _month_or_default(request.args.get("month"))
+def sheets(year: int, month: int) -> list:
+    """The month's report as workbook sheets (see app/xlsx.py) - what the Reports page downloads."""
     r = build_report(year, month)
     cur = settings_for_client()["currency"]
 
@@ -137,7 +136,7 @@ def report_xlsx():
     summary = [["Inventory report", None], ["Month", r["label"]], ["Generated", today_local()], [None, None],
                [f"Stock in, incl. GST ({cur})", r["stock_in"]["total"]], [f"Allocated to projects, after returns ({cur})", r["allocated"]["total"]],
                [f"Stock value now ({cur})", r["stock"]["total"]]]
-    sheets = [
+    sheets_ = [
         {"name": "Summary", "rows": summary, "bold_rows": {0}},
         sheet("Stock in", ["Material", "Code", "Unit", "Quantity", f"Cost before GST ({cur})", f"GST ({cur})", f"Total cost ({cur})", "Purchases"],
               [[x["name"], x["code"], x["unit"], x["quantity"], x["amount"], x["gst"], x["total"], x["entries"]] for x in r["stock_in"]["rows"]]),
@@ -149,5 +148,4 @@ def report_xlsx():
               [[x["name"], x["code"], x["unit"], "Short for pending requests", x["in_stock"], x["requested"], x["short_by"], ", ".join(x["projects"])] for x in r["low"]["short"]]
               + [[x["name"], x["code"], x["unit"], "Out of stock", 0, None, None, ""] for x in r["low"]["out"]]),
     ]
-    return Response(build_workbook(sheets), mimetype=XLSX_TYPE, headers={
-        "Content-Disposition": f'attachment; filename="inventory-report-{year}-{month:02d}.xlsx"', "Cache-Control": "no-store"})
+    return sheets_

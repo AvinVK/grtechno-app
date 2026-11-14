@@ -432,6 +432,11 @@ def projects_report(year, month, status="all"):
     ]
 
 
+def _inventory_sheets(year, month):
+    from .inventory_report import sheets              # imported here: inventory_report imports this module's helpers
+    return sheets(year, month)
+
+
 REPORTS = {
     "leads": {"title": "Leads", "about": "New leads, site surveys, quotes, negotiations, wins and losses, and every stage move.",
               "build": leads_report},
@@ -439,6 +444,8 @@ REPORTS = {
                 "build": payroll_report},
     "projects": {"title": "Projects", "about": "For each project: material used, attendance and daily wages, other expenses and commission, with totals to date.",
                  "build": projects_report, "filters": [{"key": "status", "label": "Project status", "options": PROJECT_STATUS_OPTIONS}]},
+    "inventory": {"title": "Inventory", "about": "Stock bought and stock allocated to projects in the month, what is in stock now and what is running low.",
+                  "build": _inventory_sheets},
 }
 
 

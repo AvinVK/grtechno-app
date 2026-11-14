@@ -119,7 +119,7 @@ def test_only_the_admin_can_see_reports(client, accounts_client, admin_client):
         assert who.get("/api/reports/leads").status_code == 403
     assert admin_client.get("/reports").status_code == 200
     data = admin_client.get("/api/reports").get_json()
-    assert [r["key"] for r in data["reports"]] == ["leads", "payroll", "projects"] and len(data["months"]) == 24 and data["current"] == data["months"][0]["value"]
+    assert [r["key"] for r in data["reports"]] == ["leads", "payroll", "projects", "inventory"] and len(data["months"]) == 24 and data["current"] == data["months"][0]["value"]
 
 
 def test_the_admin_has_reports_under_manage_on_the_me_tab(admin_client, client):

@@ -121,7 +121,7 @@ def test_the_excel_has_a_sheet_for_each_part(app, client, admin_client):
         _move(cement, "in", "10", "50", date(2026, 11, 3), gst="18")
         _move(cement, "out", "4", "50", date(2026, 11, 5), project_id=pid, requested=True)
         db.session.commit()
-    res = admin_client.get("/api/inventory/report.xlsx?month=2026-11")
+    res = admin_client.get("/api/reports/inventory?month=2026-11")
     assert res.status_code == 200 and "inventory-report-2026-11.xlsx" in res.headers["Content-Disposition"]
     wb = load_workbook(io.BytesIO(res.data))
     assert wb.sheetnames == ["Summary", "Stock in", "Allocated to projects", "Stock now", "Low stock"]
@@ -130,19 +130,22 @@ def test_the_excel_has_a_sheet_for_each_part(app, client, admin_client):
     allocated = [[c.value for c in r] for r in wb["Allocated to projects"].iter_rows(min_row=2)]
     assert [(r[2], r[4], r[5]) for r in allocated] == [("Cement", 4, 200)]
     assert [[c.value for c in r][5] for r in wb["Stock now"].iter_rows(min_row=2)] == [1000]
-    assert admin_client.get("/api/inventory/report.xlsx?month=bad").status_code == 422
+    assert admin_client.get("/api/reports/inventory?month=bad").status_code == 422
 
 
-def test_only_people_with_the_inventory_module_see_the_report_and_its_tile(client, admin_client, accounts_client):
-    assert admin_client.get("/inventory-report").status_code == 200
-    assert b"Inventory report" in admin_client.get("/me").data
-    for url in ("/inventory-report", "/api/inventory/report", "/api/inventory/report.xlsx"):
-        assert client.get(url).status_code in (403, 404), url
-    assert b"/inventory-report" not in client.get("/me").data
-
-
-def test_the_me_tab_has_the_report_tile_and_no_plain_inventory_tile(admin_client):
+def test_inventory_is_a_subtab_of_the_reports_page_and_nothing_else_is_left_behind(client, admin_client):
+    """kohal, 2026-11-14: "have inventory report as a subtab in reports block in me tab"."""
+    assert [r["key"] for r in admin_client.get("/api/reports").get_json()["reports"]] == ["leads", "payroll", "projects", "inventory"]
+    res = admin_client.get("/inventory-report")
+    assert res.status_code == 302 and res.headers["Location"].endswith("/reports#inventory")      # an old bookmark still lands on it
     page = admin_client.get("/me").data
-    assert b'class="me-tile" href="/inventory-report"' in page
-    assert b'class="me-tile" href="/inventory"' not in page
-    assert b'href="/inventory"' in page                                     # the bottom bar's Inventory tab still opens it
+    assert b"/inventory-report" not in page and b'class="me-tile" href="/inventory"' not in page    # no tile of its own, and no plain Inventory tile
+    assert b'href="/inventory"' in page                                                            # the bottom bar's Inventory tab still opens it
+    assert b"Reports" in page
+
+
+def test_only_people_who_can_see_reports_and_inventory_get_the_figures(client, admin_client, accounts_client):
+    assert admin_client.get("/api/inventory/report").status_code == 200
+    for url in ("/api/inventory/report", "/api/reports/inventory", "/api/reports"):
+        assert client.get(url).status_code in (403, 404), url
+    assert accounts_client.get("/api/reports/inventory").status_code == 403                     # Reports is the admin's alone
