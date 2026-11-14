@@ -432,9 +432,14 @@ def projects_report(year, month, status="all"):
     ]
 
 
-def _inventory_sheets(year, month):
+def _inventory_sheets(args):
     from .inventory_report import sheets              # imported here: inventory_report imports this module's helpers
-    return sheets(year, month)
+    return sheets(args)
+
+
+def _inventory_filename(args):
+    from .inventory_report import filename
+    return filename(args)
 
 
 REPORTS = {
@@ -444,8 +449,9 @@ REPORTS = {
                 "build": payroll_report},
     "projects": {"title": "Projects", "about": "For each project: material used, attendance and daily wages, other expenses and commission, with totals to date.",
                  "build": projects_report, "filters": [{"key": "status", "label": "Project status", "options": PROJECT_STATUS_OPTIONS}]},
-    "inventory": {"title": "Inventory", "about": "Stock bought and stock allocated to projects in the month, what is in stock now and what is running low.",
-                  "build": _inventory_sheets},
+    # Picked by a date range (and a material), not a month - three reports in one workbook (kohal, 2026-11-14); see app/inventory_report.py.
+    "inventory": {"title": "Inventory", "about": "Stock in and stock out (allocated to projects) day by day between two dates, and the inventory status on any day.",
+                  "range": True, "build": _inventory_sheets, "filename": _inventory_filename},
 }
 
 
@@ -462,7 +468,7 @@ def list_reports():
     for _ in range(24):                                         # this month and the 23 before it
         months.append({"value": f"{y}-{m:02d}", "label": _month_label(y, m)})
         y, m = (y, m - 1) if m > 1 else (y - 1, 12)
-    return jsonify(reports=[{"key": k, "title": r["title"], "about": r["about"], "filters": r.get("filters", [])} for k, r in REPORTS.items()],
+    return jsonify(reports=[{"key": k, "title": r["title"], "about": r["about"], "filters": r.get("filters", []), "range": r.get("range", False)} for k, r in REPORTS.items()],
                    months=months, current=months[0]["value"])
 
 
@@ -471,6 +477,9 @@ def download(name):
     report = REPORTS.get(name)
     if report is None:
         abort(404)
+    if report.get("range"):                                     # picked by dates, not a month (the Inventory report)
+        return Response(build_workbook(report["build"](request.args)), mimetype=XLSX_TYPE, headers={
+            "Content-Disposition": f'attachment; filename="{report["filename"](request.args)}"', "Cache-Control": "no-store"})
     year, month = _month_or_default(request.args.get("month"))
     chosen = {}
     for f in report.get("filters", []):                         # each filter is optional (first option) but never a guess
