@@ -698,6 +698,11 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .inventory-filters { display: grid; gap: 10px; }
 .inv-row { align-items: flex-end; }                       /* the Download Excel button sits beside the last filter, on its baseline */
 .inv-row .btn { flex: none; }
+.day-row .btn { flex: none; margin-left: 10px; }
+.amount-sheet.day-sheet { grid-template-rows: auto minmax(0, 1fr); max-height: 80vh; overflow: hidden; }
+.day-sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.day-sheet-head .hint { margin: 2px 0 0; }
+.day-sheet-list { overflow-y: auto; min-height: 0; overscroll-behavior: contain; margin: 0; }
 .inv-summary { font-size: 14px; color: var(--muted); }
 .inv-summary strong { font-size: 22px; color: var(--ink); }
 .similar-hint[hidden] { display: none; }
