@@ -637,6 +637,7 @@
         e.preventDefault();
         detailsErr.hidden = true;
         editor.showErrors({});
+        if (!(await editor.resolveSimilar())) return;                  // an item that looks like one in stock - asked about before it is saved
         saveBtn.disabled = true;
         try {
           await api(`/api/adhoc/projects/${P.id}/items`, { method: 'PUT', body: { items: editor.getItems(), ...editor.getCharges() } });
@@ -1972,9 +1973,20 @@
         showFieldErrors(form, {});
         saveBtn.disabled = true;
         try {
+          // A name typed in that is not on the list but looks like something that is (kohal, 2026-11-14) - use that one, or go ahead as new.
+          let materialId = materialSel.value;
+          const typed = materialSel.querySelector('input').value.trim();
+          if (!materialId && typed) {
+            const similar = await LD.findSimilarMaterials(typed);
+            if (similar.length) {
+              const choice = await LD.similarMaterialDialog(typed, similar, { newLabel: `Request \u201c${typed}\u201d as a new item` });
+              if (!choice) { saveBtn.disabled = false; return; }
+              if (choice.use) materialId = String(choice.use.id);
+            }
+          }
           const res = await api(`/api/projects/${projectId}/material-requests`, {
             method: 'POST', body: {
-              material_id: materialSel.value, material_name: materialSel.querySelector('input').value,
+              material_id: materialId, material_name: materialId ? '' : typed,
               quantity: qtyInput.value, note: noteInput.value,
             },
           });
@@ -1989,8 +2001,12 @@
         }
       } },
       errorBox,
-      field('material_id', 'Material', materialSel, { wide: true,
-        hint: "Not listed? Type the name anyway - it'll be added and flagged for restock." }),
+      (() => {
+        const f = field('material_id', 'Material', materialSel, { wide: true,
+          hint: "Not listed? Type the name anyway - it'll be added and flagged for restock." });
+        f.append(LD.similarMaterialHint(materialSel, { isPicked: () => !!materialSel.value, onUse: (m) => { materialSel.value = String(m.id); } }));
+        return f;
+      })(),
       field('quantity', 'Quantity', qtyInput),
       field('note', 'Note', noteInput, { wide: true }),
       h('div', { class: 'confirm-actions' },

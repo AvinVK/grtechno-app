@@ -135,6 +135,8 @@ def _extra_tiles():
     def with_suppliers(rows):
         if has_module(g.user, "inventory"):
             rows.append({"href": "/suppliers", "icon": "suppliers", "name": "Suppliers", "sum": None})
+            # Monthly stock in, stock allocated to projects, stock value and what is running low (kohal, 2026-11-14) - app/inventory_report.py.
+            rows.append({"href": "/inventory-report", "icon": "reports", "name": "Inventory report", "sum": None})
         return rows
 
     if manager:

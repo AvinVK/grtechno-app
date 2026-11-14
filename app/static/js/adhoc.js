@@ -82,6 +82,11 @@ window.ADHOC = (() => {
         remark.value = v.remark || '';
         c.remark = box('Remark', remark, false);
       }
+      // Live hint under the item's name (kohal, 2026-11-14): something like it is already in inventory.
+      const nameControl = c.fe_type.control;
+      c.fe_type.node.append(LD.similarMaterialHint(nameControl, kind === 'supply'
+        ? { isPicked: () => !!nameControl.value, onUse: (m) => { nameControl.value = String(m.id); } }
+        : { isPicked: () => false, onUse: (m) => { nameControl.value = m.name; } }));
       const title = h('strong', {}, 'Item');
       const remove = h('button', { class: 'btn small', type: 'button' }, 'Remove');
       const sum = h('p', { class: 'adhoc-total' });
@@ -123,6 +128,21 @@ window.ADHOC = (() => {
           h('h3', {}, 'Other charges'),
           h('div', { class: 'form-grid', onchange: recompute, oninput: recompute }, chargeBoxes.installation_charge.node, chargeBoxes.transport_charge.node)),
         h('div', { class: 'adhoc-add' }, total)),
+      // Before saving: an item typed in that is not in inventory but looks like something that is - use that one, or keep what was typed. False when
+      // the person backs out.
+      async resolveSimilar() {
+        for (const r of rows) {
+          if (r.locked) continue;
+          const ctl = r.c.fe_type.control;
+          const picked = kind === 'supply' ? stock.find((s) => String(s.id) === String(ctl.value)) : null;
+          const typed = (picked ? picked.name : (kind === 'supply' ? ctl.querySelector('input').value : ctl.value)).trim();
+          if (picked || typed.length < 3 || stock.some((s) => s.name.trim().toLowerCase() === typed.toLowerCase())) continue;
+          const choice = await LD.checkSimilarMaterial(typed, { newLabel: `Keep \u201c${typed}\u201d as typed` });
+          if (!choice) return false;
+          if (choice.use) ctl.value = kind === 'supply' ? String(choice.use.id) : choice.use.name;
+        }
+        return true;
+      },
       getItems: () => rows.map((r) => {
         const out = {};
         Object.entries(r.c).forEach(([key, b]) => { out[key] = b.control.value; });
@@ -262,6 +282,7 @@ window.ADHOC = (() => {
         errorBox.hidden = true;
         showFieldErrors(form, {});
         editor?.showErrors({});
+        if (editor && !(await editor.resolveSimilar())) return;        // an item that looks like one in stock - asked about before it is saved
         saveBtn.disabled = true;
         const body = { service: state.service, items: editor ? editor.getItems() : [], ...(editor ? editor.getCharges() : {}) };
         if (state.who === 'existing') body.client_id = existingSel.value;

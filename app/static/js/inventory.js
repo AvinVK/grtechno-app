@@ -607,6 +607,16 @@
         errorBox.hidden = true;
         showFieldErrors(form, {});
         saveBtn.disabled = true;
+        // Adding a material that looks like one already in stock (kohal, 2026-11-14) - open that one, or go ahead with the new name.
+        if (isAdd) {
+          const typed = controls.name.value.trim();
+          const similar = await LD.findSimilarMaterials(typed);
+          if (similar.length) {
+            const choice = await LD.similarMaterialDialog(typed, similar, { newLabel: `Add \u201c${typed}\u201d as a new material` });
+            if (!choice) { saveBtn.disabled = false; return; }
+            if (choice.use) { setTimeout(() => { window.location.hash = `#m${choice.use.id}`; }, 250); return; }      // after the box has closed
+          }
+        }
         if (showSupply && supplierSel.newSupplierName) {
           try {
             const created = await api('/api/inventory/suppliers', { method: 'POST', body: { name: supplierSel.newSupplierName } });
@@ -649,7 +659,12 @@
       } },
       errorBox,
       h('div', { class: 'form-grid' },
-        field('name', 'Material name', controls.name, { wide: true }),
+        (() => {
+          const f = field('name', 'Material name', controls.name, { wide: true });
+          // Live, while the name is typed (kohal, 2026-11-14) - only when adding; opens the material that is already there.
+          if (isAdd) f.append(LD.similarMaterialHint(controls.name, { isPicked: () => false, onUse: (m) => { window.location.hash = `#m${m.id}`; } }));
+          return f;
+        })(),
         field('unit', 'Unit', controls.unit),
         field('frequency', 'Frequency used in material', controls.frequency),
         field('used_in', 'Used in', controls.used_in, { wide: true }),

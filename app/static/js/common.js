@@ -138,6 +138,79 @@ window.LD = (() => {
     });
   }
 
+  /* Similar materials (kohal, 2026-11-14: "Nipple 25mm and 25mm nipple is same" - warn before a duplicate is created, spelling and spacing
+     included). findSimilarMaterials asks the server (app/material_match.py) which materials in stock look like a typed name; similarMaterialDialog
+     shows them and resolves { use: material } to take an existing one, { add: true } to go ahead with the new name, or null when dismissed. */
+  async function findSimilarMaterials(name, excludeId = null) {
+    const typed = (name || '').trim();
+    if (typed.length < 3) return [];
+    try {
+      const res = await api(`/api/materials/similar?name=${encodeURIComponent(typed)}${excludeId ? `&exclude_id=${excludeId}` : ''}`);
+      return res.matches || [];
+    } catch (err) { return []; }           // never get in the way of saving because the check could not run
+  }
+
+  // The same check as one call, for a form that is saving: resolves { add: true } when nothing similar exists, otherwise what the person chose in
+  // the box ({ use: material }, { add: true }) - or null when they backed out.
+  async function checkSimilarMaterial(typed, { newLabel, excludeId = null }) {
+    const found = await findSimilarMaterials(typed, excludeId);
+    if (!found.length) return { add: true };
+    return similarMaterialDialog(typed, found, { newLabel });
+  }
+
+  // The live version (kohal, 2026-11-14: "live hint should be implemented"): a line under a name box that appears as the name is typed, naming what is
+  // already in stock that looks like it, each a button that calls onUse(material). `isPicked` says an existing item has already been chosen, so there is
+  // nothing to warn about. Returns the element - put it inside the field.
+  function similarMaterialHint(control, { onUse, isPicked = () => !!control.item, excludeId = null }) {
+    const input = control.tagName === 'INPUT' ? control : control.querySelector('input');
+    const box = h('div', { class: 'similar-hint', role: 'status', hidden: true });
+    let timer = null;
+    let ticket = 0;
+    const hide = () => { box.hidden = true; clear(box); };
+    const check = async () => {
+      const mine = ++ticket;
+      const typed = input.value.trim();
+      if (typed.length < 3 || isPicked()) { hide(); return; }
+      const found = (await findSimilarMaterials(typed, excludeId)).filter((m) => m.name.trim().toLowerCase() !== typed.toLowerCase());
+      if (mine !== ticket) return;                                         // the name changed while this was out
+      clear(box);
+      if (!found.length) { box.hidden = true; return; }
+      box.append(h('span', {}, 'Already in stock: '),
+        ...found.map((m) => h('button', { type: 'button', class: 'link-btn', onclick: () => { hide(); onUse(m); } }, `${m.name} (${m.code})`)));
+      box.hidden = false;
+    };
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(check, 350); });
+    input.addEventListener('change', () => { clearTimeout(timer); check(); });
+    return box;
+  }
+
+  function similarMaterialDialog(typed, matches, { newLabel }) {
+    return new Promise((resolve) => {
+      const previous = document.activeElement;
+      const lockedBefore = document.body.classList.contains('locked');
+      const finish = closeOnBack((result) => {
+        overlay.remove();
+        if (!lockedBefore) document.body.classList.remove('locked');
+        if (previous && previous.isConnected) previous.focus();
+        resolve(result ?? null);
+      });
+      const stock = (m) => `${Number(m.stock_qty).toLocaleString('en-IN', { maximumFractionDigits: 2 })}${m.unit ? ` ${m.unit}` : ''} in stock`;
+      const picks = matches.map((m) => h('button', { class: 'btn similar-pick', type: 'button', onclick: () => finish({ use: m }) },
+        h('strong', {}, m.name), h('span', { class: 'hint' }, `${m.code} \u00b7 ${stock(m)}`)));
+      const newBtn = h('button', { class: 'btn', type: 'button', onclick: () => finish({ add: true }) }, newLabel);
+      const cancelBtn = h('button', { class: 'btn', type: 'button', onclick: () => finish(null) }, 'Cancel');
+      const card = h('div', { class: 'confirm-card', role: 'alertdialog', 'aria-modal': 'true' },
+        h('h2', {}, 'Similar material found'),
+        h('p', {}, `${matches.length === 1 ? 'A similar material already exists' : 'Similar materials already exist'} - you typed \u201c${typed}\u201d. Use ${matches.length === 1 ? 'it' : 'one of these'} instead of creating another?`),
+        h('div', { class: 'similar-list' }, picks),
+        h('div', { class: 'confirm-actions similar-actions' }, newBtn, cancelBtn));
+      const overlay = h('div', { class: 'confirm-overlay', onclick: (e) => { if (e.target === overlay) finish(null); } }, card);
+      document.body.classList.add('locked');
+      document.body.append(overlay);
+      picks[0].focus();
+    });
+  }
+
   /* An in-app list to choose one of several options, instead of the phone's own native <select> popup -
      which drops the app's own look and is awkward to scroll through on some phones. Resolves the chosen
      value, or undefined if closed without choosing. `items` is [{value, label}, ...]. */
@@ -409,6 +482,15 @@ window.LD = (() => {
     });
     Object.defineProperty(wrap, 'unresolved', { get: () => !state && input.value.trim() !== '', configurable: true });
     Object.defineProperty(wrap, 'item', { get: () => item, configurable: true });
+    // Pick one of the listed items from code, as if it had been tapped.
+    wrap.choose = (v) => {
+      const it = list.find((i) => String(i.value) === String(v));
+      if (!it) return;
+      state = 'picked';
+      item = it;
+      input.value = it.label;
+      settle();
+    };
     wrap.focus = () => input.focus();
     return wrap;
   }
@@ -741,6 +823,7 @@ window.LD = (() => {
   return {
     PAY_APPS, payLink, openPayApp, payAppPicker,
     $, h, clear, api, toast, confirm: confirmBox, plural, money, fmtShort, field, showFieldErrors, pincodeLookup,
+    findSimilarMaterials, similarMaterialDialog, checkSimilarMaterial, similarMaterialHint,
     pickList, selectField, searchField, searchAddField, categoryPicker, rolePicker, pickDate, dateField, pickTime, timeField, closeOnBack,
   };
 })();

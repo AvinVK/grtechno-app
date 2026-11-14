@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Inventory report - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Inventory report{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/inventory_report.js') }}" defer></script>
+{% endblock %}
