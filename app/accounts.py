@@ -116,6 +116,10 @@ def _all_rows(account):
 
     for c in CommissionPayment.query.filter_by(payment_account=account).all():
         e = c.expense
+        if e.kind == "expense":                         # a plain expense on a project another team runs (kohal, 2026-11-14)
+            rows.append(_row("debit", c.paid_date, c.amount, "Project expense", e.person_name,
+                             f"{e.project.code} · {e.project.title} · {e.note}", requested_by=c.created_by.name if c.created_by else None))
+            continue
         rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.given_to, f"{e.project.code} · {e.project.title}",
                          requested_by=c.created_by.name if c.created_by else None))
 
