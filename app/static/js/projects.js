@@ -1142,15 +1142,18 @@
 
     // kohal, 2026-10-21: "in expense tab of project, there should be total material cost, total daily
     // wages cost should be shown" - same quick-glance summary the Payment tab opens with.
+    const hasTally = P.managed_by_others || (data.expenses || []).some((e) => e.kind === 'expense');
     const expOverview = h('div', { class: 'pay-overview' },
       h('dl', { class: 'pay-overview-grid' },
         h('dt', {}, 'Total material cost'), h('dd', {}, money(data.total_material_cost, cur)),
-        h('dt', {}, 'Total daily wages'), h('dd', {}, money(data.total_wage_expense, cur))));
+        h('dt', {}, 'Total daily wages'), h('dd', {}, money(data.total_wage_expense, cur)),
+        hasTally ? h('dt', {}, 'Total expenses') : null, hasTally ? h('dd', {}, money(data.total_tally_expense, cur)) : null));
 
     clear(view).append(h('div', { class: 'project-detail' },
       ...projectHead(P, c),
       projectTabs(P.id, 'expense', data.dashboard.can_see_progress),
       expOverview,
+      hasTally ? tallySection(data, reload) : null,
       h('section', { class: 'p-section' },
         h('div', { class: 'p-section-head' },
           h('h3', {}, 'Daily wages'),
@@ -1177,7 +1180,7 @@
   function commissionSection(data, reload) {
     const P = data.project;
     const cur = data.currency;
-    const rows = data.expenses || [];
+    const rows = (data.expenses || []).filter((e) => e.kind === 'commission');
     const workers = data.commission_workers || [];
 
     // A commission is the total agreed, paid out in parts (kohal, 2026-11-08: "commission can be paid in parts to one person"):
@@ -1209,7 +1212,99 @@
       rows.length
         ? h('ul', { class: 'card-group' }, rows.map(expenseRow))
         : h('p', { class: 'hint' }, 'No commission recorded yet.'),
-      rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_expense, cur)}`) : null);
+      rows.length ? h('p', { class: 'pay-summary' }, `Total commission: ${money(data.total_commission, cur)}`) : null);
+  }
+
+  /* ---------- Expenses on a project another team runs (kohal, 2026-11-14: "a flag in more details which ... will give a tab of
+     'add expense' in expenses tab ... he wants to keep a tally of expenses"): what it was for, who it was paid to, how much, the day,
+     and - when picked - the account it came from, which makes it a debit there in Accounts. app/projects.py add_tally_expense. */
+
+  function tallySection(data, reload) {
+    const P = data.project;
+    const cur = data.currency;
+    const rows = (data.expenses || []).filter((e) => e.kind === 'expense');
+    const accounts = data.payment_accounts || [];
+
+    function tallyRow(e) {
+      const part = (e.payments || [])[0];
+      return h('li', { class: 'p-row' },
+        h('span', { class: 'p-main' },
+          h('span', { class: 'row-title' }, e.note),
+          h('span', { class: 'row-sub' }, [e.person_name ? `Paid to ${e.person_name}` : null, fmtDate(e.entry_date), part ? `from ${part.payment_account}` : 'Not from an account'].filter(Boolean).join(' · ')),
+          h('span', { class: 'bill-links' },
+            h('button', { type: 'button', class: 'link-btn', onclick: () => openTallySheet(P.id, e, accounts, reload) }, 'Edit'),
+            h('button', { type: 'button', class: 'link-btn', onclick: () => deleteTally(P.id, e, reload, cur) }, 'Delete'))),
+        h('span', { class: 'row-value' }, money(e.amount, cur)));
+    }
+
+    return h('section', { class: 'p-section' },
+      h('div', { class: 'p-section-head' },
+        h('h3', {}, 'Expenses'),
+        P.managed_by_others ? h('button', { class: 'btn small', type: 'button', onclick: () => openTallySheet(P.id, null, accounts, reload) }, '+ Add expense') : null),
+      rows.length
+        ? h('ul', { class: 'card-group' }, rows.map(tallyRow))
+        : h('p', { class: 'hint' }, 'No expenses added yet.'),
+      rows.length ? h('p', { class: 'pay-summary' }, `Total expenses: ${money(data.total_tally_expense, cur)}`) : null);
+  }
+
+  function openTallySheet(projectId, expense, accounts, reload) {
+    const isNew = !expense;
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const noteInput = h('input', { type: 'text', maxlength: 300, autocomplete: 'off', placeholder: 'e.g. Tiles for the site office', value: expense ? expense.note : '' });
+    const paidTo = h('input', { type: 'text', maxlength: 120, autocomplete: 'off', placeholder: 'Optional', value: expense ? expense.person_name : '' });
+    const amountInput = h('input', { type: 'number', min: '1', step: 'any', inputmode: 'decimal', value: expense ? expense.amount : '' });
+    const dateInput = dateField(expense ? expense.entry_date : todayIsoLocal(), { placeholder: 'Date', clearable: false });
+    const part = expense && (expense.payments || [])[0];
+    const accountSel = selectField([{ value: '', label: 'Not from an account' }, ...accounts.map((a) => ({ value: a, label: a }))],
+      part ? part.payment_account : '', { title: 'Paid from', placeholder: 'Not from an account' });
+
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add expense' : 'Save');
+    const form = h('form', { novalidate: true },
+      field('note', 'What was it for', noteInput),
+      field('amount', 'Amount', amountInput),
+      field('person_name', 'Paid to', paidTo),
+      field('entry_date', 'Date', dateInput),
+      field('payment_account', 'Paid from', accountSel, { hint: 'Pick an account and it comes off that account in Accounts. Leave it if you only want it on this tally.' }),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    cancelBtn.onclick = () => finish();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      const body = { note: noteInput.value, person_name: paidTo.value, amount: amountInput.value, entry_date: dateInput.value, payment_account: accountSel.value };
+      try {
+        if (isNew) await api(`/api/projects/${projectId}/tally-expenses`, { method: 'POST', body });
+        else await api(`/api/projects/${projectId}/tally-expenses/${expense.id}`, { method: 'PATCH', body });
+        finish();
+        toast(isNew ? 'Expense added' : 'Expense updated');
+        await reload();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': isNew ? 'Add expense' : 'Edit expense' },
+      h('h2', {}, isNew ? 'Add expense' : 'Edit expense'), form));
+    document.body.append(overlay);
+    noteInput.focus();
+  }
+
+  async function deleteTally(projectId, expense, reload, cur) {
+    const part = (expense.payments || [])[0];
+    const ok = await confirm(`Remove the ${money(expense.amount, cur)} expense "${expense.note}"?${part ? ` The money goes back to ${part.payment_account} in Accounts.` : ''}`,
+      { ok: 'Delete', danger: true, title: 'Delete expense' });
+    if (!ok) return;
+    try {
+      await api(`/api/projects/${projectId}/tally-expenses/${expense.id}`, { method: 'DELETE' });
+      toast('Expense removed');
+      await reload();
+    } catch (err) { toast(err.message, true); }
   }
 
   function openExpenseSheet(projectId, expense, workers, reload, cur, accounts = []) {
@@ -1349,6 +1444,13 @@
         P.manager_code || '', { title: 'Manager', placeholder: 'Not assigned' })
       : null;
 
+    // A project another team runs and the admin only pays for (kohal, 2026-11-14): material requests and returns go off, and the Expense tab
+    // takes plain expenses. Admin only, and not for an adhoc order, which is built on requesting material.
+    const othersInput = h('input', { type: 'checkbox', checked: !!P.managed_by_others });
+    const othersSwitch = h('label', { class: 'switch' },
+      othersInput, h('span', { class: 'switch-track', 'aria-hidden': 'true' }), h('span', { class: 'switch-thumb', 'aria-hidden': 'true' }));
+    const canSetOthers = data.dashboard.can_close && !P.is_adhoc;
+
     const finish = h('p', { class: 'hint', 'aria-live': 'polite' });
     function recalcFinish() {
       if (startDate.value && days.value !== '') {
@@ -1371,6 +1473,7 @@
           start_date: startDate.value, completion_days: days.value,
         };
         if (managerSel) body.manager_code = managerSel.value;
+        if (canSetOthers) body.managed_by_others = othersInput.checked;
         try {
           await api(`/api/projects/${P.id}`, { method: 'PATCH', body });
           toast('Project details saved');
@@ -1389,7 +1492,9 @@
         h('div', { class: 'form-grid' },
           field('site_name', 'Site name', siteName, { wide: true }),
           field('status', 'Status', statusSel),
-          managerSel ? field('manager_code', 'Project manager', managerSel) : null)),
+          managerSel ? field('manager_code', 'Project manager', managerSel) : null),
+        canSetOthers ? h('div', { class: 'toggle-row' }, h('span', {}, 'Run by another team?'), othersSwitch) : null,
+        canSetOthers ? h('p', { class: 'hint' }, 'Switch on for a project another team looks after and you only pay for. Material requests and returns are turned off, and the Expense tab lets you add expenses to keep a tally.') : null),
       h('section', { class: 'p-section' },
         h('h3', {}, 'Work order'),
         h('div', { class: 'form-grid' },
@@ -1822,7 +1927,8 @@
             ? h('button', { class: 'btn small', type: 'button', onclick: () => openReturnMaterial(projectId, returnable, reload) }, '+ Return material')
             : null,
           h('button', { class: 'btn small', type: 'button', onclick: () => openRequestMaterial(projectId, data.materials, reload, data.adhoc_items || []) }, '+ Request material'))),
-      data.can_request === false ? h('p', { class: 'hint' }, 'Only a project manager, the accountant or the admin can request material for an adhoc project.') : null,
+      data.managed_by_others ? h('p', { class: 'hint' }, 'This project is run by another team, so material requests and returns are off. Add what you pay for under the Expense tab.')
+        : data.can_request === false ? h('p', { class: 'hint' }, 'Only a project manager, the accountant or the admin can request material for an adhoc project.') : null,
       pending.length
         ? h('ul', { class: 'card-group' }, rows)
         : h('p', { class: 'hint' }, 'No pending requests.'));

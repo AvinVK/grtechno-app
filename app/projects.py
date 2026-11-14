@@ -418,6 +418,8 @@ def _detail(project):
         "total_material_cost": total_material_cost,
         "expenses": expenses,
         "total_expense": total_expense,
+        "total_commission": float(sum((e.amount for e in project.expenses if e.kind == "commission"), start=Decimal("0"))),
+        "total_tally_expense": float(sum((e.amount for e in project.expenses if e.kind == "expense"), start=Decimal("0"))),
         "wage_expenses": wage_expenses,
         "total_wage_expense": total_wage_expense,
         "stages": project.stage_rows,
@@ -494,6 +496,19 @@ def update_project(project_id):
                 errors["manager_code"] = "Choose a project manager from the list"
             else:
                 data["manager_code"] = code
+
+    # A project another team runs (kohal, 2026-11-14) - the admin's switch. An adhoc order is built on requesting material, so it cannot be one.
+    if "managed_by_others" in payload:
+        raw = payload["managed_by_others"]
+        if not isinstance(raw, bool):
+            errors["managed_by_others"] = "Choose on or off"
+        elif raw != project.managed_by_others:
+            if not g.user.is_admin:
+                abort(403, "Only the admin can change this.")
+            if raw and project.client.is_adhoc:
+                errors["managed_by_others"] = "An adhoc order is built on requesting material, so it can't be switched to expenses only"
+            else:
+                data["managed_by_others"] = raw
 
     payments = None
     if "payments" in payload:
@@ -923,7 +938,8 @@ def material_requests(project_id):
         returnable_materials=returnable,
         # Whether the signed-in person may ask for (or return) material on this project, and - for an adhoc
         # project - what its order lists, so the request form can offer those items to pick from.
-        can_request=_can_request_adhoc_material(g.user) if project.client.is_adhoc else True,
+        can_request=False if project.managed_by_others else (_can_request_adhoc_material(g.user) if project.client.is_adhoc else True),
+        managed_by_others=project.managed_by_others,
         adhoc_items=[i.to_dict() for i in project.adhoc_items] if project.client.is_adhoc else [],
     )
 
@@ -938,6 +954,8 @@ def request_material(project_id):
     themselves; see app/inventory.py's approve_material_request, which also refuses the requester their own
     approval if they try it directly."""
     project = _project_or_404(project_id)
+    if project.managed_by_others:
+        abort(409, "This project is run by another team - material can't be requested or returned here. Add its costs under Expense.")
     if project.client.is_adhoc and not _can_request_adhoc_material(g.user):
         abort(403, "Only a project manager, the accountant or the admin can request material for an adhoc project.")
     payload = request.get_json(silent=True) if request.is_json else None
@@ -1120,7 +1138,7 @@ def add_expense(project_id):
 @bp.patch("/api/projects/<int:project_id>/expenses/<int:expense_id>")
 def update_expense(project_id, expense_id):
     project = _project_or_404(project_id)
-    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id, kind="commission").first()
     if expense is None:
         abort(404)
     payload = request.get_json(silent=True) if request.is_json else None
@@ -1144,7 +1162,7 @@ def update_expense(project_id, expense_id):
 @bp.delete("/api/projects/<int:project_id>/expenses/<int:expense_id>")
 def delete_expense(project_id, expense_id):
     project = _project_or_404(project_id)
-    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id, kind="commission").first()
     if expense is None:
         abort(404)
     if expense.payments:
@@ -1160,7 +1178,7 @@ def delete_expense(project_id, expense_id):
 @bp.post("/api/projects/<int:project_id>/expenses/<int:expense_id>/payments")
 def add_commission_payment(project_id, expense_id):
     project = _project_or_404(project_id)
-    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id).first()
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id, kind="commission").first()
     if expense is None:
         abort(404)
     payload = request.get_json(silent=True) if request.is_json else None
@@ -1195,9 +1213,104 @@ def add_commission_payment(project_id, expense_id):
 def delete_commission_payment(project_id, expense_id, payment_id):
     project = _project_or_404(project_id)
     payment = (CommissionPayment.query.join(ProjectExpense)
-               .filter(CommissionPayment.id == payment_id, ProjectExpense.id == expense_id, ProjectExpense.project_id == project.id).first())
+               .filter(CommissionPayment.id == payment_id, ProjectExpense.id == expense_id, ProjectExpense.project_id == project.id,
+                       ProjectExpense.kind == "commission").first())
     if payment is None:
         abort(404)
     db.session.delete(payment)
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+# ---------- expenses on a project another team runs (kohal, 2026-11-14) ----------
+#
+# "projects which are maintained by other team but admin pays for this and he wants to keep a tally of expenses" - with the project's
+# managed_by_others switch on, its Expense tab takes plain expenses: what it was for, who it was paid to (optional), how much, the day,
+# and - when picked - the account it was paid from, which makes it a debit there in Accounts (one CommissionPayment, see ProjectExpense).
+
+def _tally_fields(payload):
+    """(amount, account, data, errors) for a plain expense - what it was for, who it went to, how much, when, and the account it came from."""
+    f = Fields(payload)
+    f.text("note", 300, required=True, label="what the expense was for")
+    f.text("person_name", 120)
+    f.date("entry_date")
+    errors = f.errors
+    if "note" not in payload:
+        errors["note"] = "Enter what the expense was for"
+    amount = None
+    if payload.get("amount") in (None, ""):
+        errors.setdefault("amount", "Enter the amount")
+    else:
+        amount = parse_money(payload.get("amount"), errors, "amount")
+        if amount is not None and amount <= 0:
+            errors["amount"] = "Enter an amount greater than 0"
+            amount = None
+    account = payload.get("payment_account") or None
+    if account is not None and account not in PAYMENT_ACCOUNTS:
+        errors["payment_account"] = "Choose the account it was paid from"
+    if not f.data.get("entry_date") and "entry_date" not in errors:
+        f.data["entry_date"] = today_local()
+    if account and f.data.get("entry_date") and f.data["entry_date"] > today_local():
+        errors["entry_date"] = "It can't be paid on a day that hasn't happened yet"
+    return amount, account, f.data, errors
+
+
+def _tally_or_404(project, expense_id):
+    expense = ProjectExpense.query.filter_by(id=expense_id, project_id=project.id, kind="expense").first()
+    if expense is None:
+        abort(404)
+    return expense
+
+
+def _json_object():
+    payload = request.get_json(silent=True) if request.is_json else None
+    if not isinstance(payload, dict):
+        abort(415, "Send a JSON object")
+    return payload
+
+
+@bp.post("/api/projects/<int:project_id>/tally-expenses")
+def add_tally_expense(project_id):
+    project = _project_or_404(project_id)
+    if not project.managed_by_others:
+        abort(409, "Switch on \"Run by another team\" in the project's More details first.")
+    amount, account, data, errors = _tally_fields(_json_object())
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    expense = ProjectExpense(project=project, kind="expense", person_name=data.get("person_name", ""), percent=Decimal("0"),
+                             basis_amount=Decimal("0"), amount=amount, entry_date=data["entry_date"], note=data["note"], created_by_code=g.user.code)
+    db.session.add(expense)
+    if account:
+        db.session.add(CommissionPayment(expense=expense, amount=amount, paid_date=data["entry_date"], payment_account=account,
+                                         created_by_code=g.user.code))
+    db.session.commit()
+    return jsonify(_detail(project)), 201
+
+
+@bp.patch("/api/projects/<int:project_id>/tally-expenses/<int:expense_id>")
+def update_tally_expense(project_id, expense_id):
+    project = _project_or_404(project_id)
+    expense = _tally_or_404(project, expense_id)
+    amount, account, data, errors = _tally_fields(_json_object())
+    if errors:
+        return jsonify(error="Check the highlighted fields", fields=errors), 422
+    expense.amount, expense.entry_date, expense.note = amount, data["entry_date"], data["note"]
+    expense.person_name = data.get("person_name", "")
+    payment = expense.payments[0] if expense.payments else None
+    if account and payment is not None:
+        payment.amount, payment.paid_date, payment.payment_account = amount, data["entry_date"], account
+    elif account:
+        db.session.add(CommissionPayment(expense=expense, amount=amount, paid_date=data["entry_date"], payment_account=account,
+                                         created_by_code=g.user.code))
+    elif payment is not None:
+        db.session.delete(payment)
+    db.session.commit()
+    return jsonify(_detail(project))
+
+
+@bp.delete("/api/projects/<int:project_id>/tally-expenses/<int:expense_id>")
+def delete_tally_expense(project_id, expense_id):
+    project = _project_or_404(project_id)
+    db.session.delete(_tally_or_404(project, expense_id))          # its one payment goes with it, so the account is credited back
     db.session.commit()
     return jsonify(_detail(project))

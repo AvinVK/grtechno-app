@@ -397,7 +397,7 @@ def projects_report(year, month, status="all"):
     for e in other:
         other_by_project[e.project_id] += float(e.amount)
     expense_rows = sorted(wage_rows + [[by_id[e.project_id].code, by_id[e.project_id].title, e.entry_date, e.kind.replace("_", " ").title(),
-                                         e.worker.name if e.worker else "", e.note, float(e.amount)] for e in other], key=lambda r: (r[0], str(r[2] or "")))
+                                         e.worker.name if e.worker else e.person_name, e.note, float(e.amount)] for e in other], key=lambda r: (r[0], str(r[2] or "")))
 
     # One line per project: what it is worth and has received, what went into it this month, and the cost to date.
     summary_rows = []

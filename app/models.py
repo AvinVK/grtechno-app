@@ -401,6 +401,10 @@ class Project(db.Model):
     manager_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     owner_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True, index=True)
     completed_at = db.Column(db.DateTime, nullable=True)          # set when it is closed (status completed)
+    # A project another team runs and the admin only pays for (kohal, 2026-11-14: "projects which are maintained by other team but admin
+    # pays for this and he wants to keep a tally of expenses") - material requests and returns are off, and its Expense tab takes
+    # plain expenses (ProjectExpense kind "expense").
+    managed_by_others = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
 
@@ -519,7 +523,7 @@ class Project(db.Model):
                 "work_order_no": self.work_order_no,
                 "work_order_date": self.work_order_date.isoformat() if self.work_order_date else None,
                 "start_date": self.start_date.isoformat() if self.start_date else None,
-                "completion_days": self.completion_days,
+                "completion_days": self.completion_days, "managed_by_others": self.managed_by_others,
                 "payment_terms": self.payment_terms, "special_terms": self.special_terms,
                 "payments": [p.to_dict() for p in self.payments],
                 "documents": {d.doc_type: d.to_dict() for d in self.documents},
@@ -612,7 +616,11 @@ class ProjectExpense(db.Model):
     Since 2026-11-08 the commission is typed in as a rupee amount (kohal: "for Commission, have amount instead of percentage
     field") and paid in parts (CommissionPayment, "commission can be paid in parts to one person"); percent and basis_amount
     are then only a record of what share of the project's amount it came to at the time (0 when the project had no amount).
-    Older entries were typed as a percent of the negotiated amount, snapshotted the same way."""
+    Older entries were typed as a percent of the negotiated amount, snapshotted the same way.
+
+    kind "expense" (kohal, 2026-11-14) is a plain expense on a project another team runs (Project.managed_by_others): `note` says what it
+    was for, `person_name` who it was paid to (optional), percent and basis_amount are 0, and it is paid in full the day it is entered -
+    from an account when one is picked, as a single CommissionPayment, so it shows as a debit in Accounts."""
 
     __tablename__ = "project_expenses"
 
