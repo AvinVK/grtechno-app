@@ -693,6 +693,8 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .similar-pick { display: grid; gap: 2px; text-align: left; justify-items: start; height: auto; padding: 10px 14px; }
 .similar-actions { flex-direction: column; align-items: stretch; }
 .similar-hint { color: var(--muted); font-size: 14px; }
+/* The Inventory subtab's figures on the Reports page (kohal, 2026-11-14): its cards and sections spaced like a project's tabs are. */
+.inventory-report { display: grid; gap: 14px; margin-top: 18px; }
 .similar-hint[hidden] { display: none; }
 .similar-hint .link-btn { margin-right: 10px; }                  /* the form sits in a .confirm-card, whose paragraphs get an 18px bottom margin */
 .fooding-start-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
