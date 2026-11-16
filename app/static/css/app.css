@@ -718,6 +718,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .plan-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .plan-actions .btn { width: 100%; min-height: 44px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .plan-kind { padding: 0; }
+.plan-categories { margin-top: 2px; }
 .plan-contact-btn { justify-self: start; margin-top: -4px; }
 .plan-filters { display: grid; gap: 8px; margin: 12px 0 0; }
 .card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; row-gap: 0; padding: 0; background: var(--panel); }

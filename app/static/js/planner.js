@@ -115,7 +115,7 @@
       relabel(fDate, call ? 'Date of call' : 'Date of meeting');
       relabel(fTime, call ? 'Time of call' : 'Time of meeting');
     };
-    const kind = kindPicker(MEETING_KINDS, m.kind || 'client_meeting', apply);
+    const kind = kindPicker(MEETING_KINDS, m.kind || defaults.kind || 'client_meeting', apply);
     apply(kind.value);
 
     // What was said and what comes next belong to a meeting that has been held (kohal, 2026-11-16: "the scheduled part should be only once the meeting is
@@ -173,6 +173,7 @@
         else await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body });
         finish();
         toast(isNew ? 'Added' : 'Saved');
+        if (defaults.after) defaults.after(body.kind);
         done();
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
@@ -191,7 +192,7 @@
     const date = dateField(t.task_date || defaults.date, { placeholder: 'Day', clearable: false });
     const when = timeField(t.task_time || '', { placeholder: 'Optional' });
     const apply = (kind) => { title.placeholder = kind === 'site_visit' ? 'e.g. Butibori cold storage - check hydrant line' : 'e.g. Prepare the AMC quotation'; };
-    const kind = kindPicker(TASK_KINDS, t.kind || 'site_visit', apply);
+    const kind = kindPicker(TASK_KINDS, t.kind || defaults.kind || 'site_visit', apply);
     apply(kind.value);
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -227,6 +228,7 @@
         else await api(`/api/planner/tasks/${t.id}`, { method: 'PATCH', body });
         finish();
         toast(isNew ? 'Added' : 'Saved');
+        if (defaults.after) defaults.after(body.kind);
         done();
       } catch (err) {
         if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
@@ -403,6 +405,11 @@
 
   /* ---------- The plan: today at the top, then each coming day ---------- */
 
+  /* Four categories, four sub-tabs (kohal, 2026-11-16: "have 4 subtabs in plan so that the admin can see the meetings, call to make, site visit and work to
+     do") plus All, the whole day's mix. Dragging inside one category moves only its tiles - the other categories keep their places. */
+  const PLAN_FILTERS = [['all', 'All'], ['client_meeting', 'Meetings'], ['call', 'Calls'], ['site_visit', 'Site visits'], ['work', 'Work']];
+  let planFilter = 'all';                                   // remembered while the page is open
+
   async function showPlan() {
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let d;
@@ -416,39 +423,57 @@
     };
     const ahead = (iso) => Math.round((new Date(`${iso}T00:00:00`) - new Date(`${d.today}T00:00:00`)) / 86400000);
     const heading = (iso) => (iso === d.today ? `Today · ${dayName(iso)}` : ahead(iso) === 1 ? `Tomorrow · ${dayName(iso)}` : dayName(iso));
+    const shows = (row) => planFilter === 'all' || row.kind === planFilter;
+    const filterLabel = PLAN_FILTERS.find(([key]) => key === planFilter)[1];
+    const sheetDefaults = (kinds) => ({ date: d.today, kind: kinds.includes(planFilter) ? planFilter : undefined, after: (saved) => { if (planFilter !== 'all') planFilter = saved; } });
 
     // One list of tiles per day, each dragged on its own - the order is kept per day.
-    const daySection = (day) => {
+    const daySection = (day, { always = false } = {}) => {
       const meetings = new Map(day.meetings.map((m) => [m.id, m]));
       const tasks = new Map(day.tasks.map((t) => [t.id, t]));
-      const grip = day.order.length > 1;
-      const tiles = day.order.map(([kind, id]) => (kind === 'meeting' ? meetingRow(meetings.get(id), reload, { grip }) : taskRow(tasks.get(id), reload, { grip })));
-      const list = tiles.length ? h('ul', { class: 'card-group plan-list' }, tiles) : h('p', { class: 'hint' }, 'Nothing planned for today. Add a meeting, a call, a site visit or some work.');
+      const rowOf = ([kind, id]) => (kind === 'meeting' ? meetings.get(id) : tasks.get(id));
+      const shown = day.order.filter((entry) => shows(rowOf(entry)));            // this category's tiles, in the day's order
+      if (!shown.length && !always) return null;                               // a later day with nothing in this category is left out
+      const grip = shown.length > 1;
+      const tiles = shown.map((entry) => (entry[0] === 'meeting' ? meetingRow(rowOf(entry), reload, { grip }) : taskRow(rowOf(entry), reload, { grip })));
+      const list = tiles.length ? h('ul', { class: 'card-group plan-list' }, tiles)
+        : h('p', { class: 'hint' }, planFilter === 'all' ? 'Nothing planned for today. Add a meeting, a call, a site visit or some work.' : `No ${filterLabel.toLowerCase()} planned for today.`);
       if (grip) {
         makeSortable(list, async (keys) => {
+          // Only this category's tiles were moved: they take the places the category already had in the day, so the others stay exactly where they were.
+          const slots = day.order.map(([kind, id]) => `${kind}:${id}`);
+          const moved = new Set(keys);
+          let next = 0;
+          const full = slots.map((slot) => (moved.has(slot) ? keys[next++] : slot));
           try {
-            await api('/api/planner/order', { method: 'POST', body: { date: day.date, items: keys.map((k) => { const [kind, id] = k.split(':'); return [kind, Number(id)]; }) } });
+            await api('/api/planner/order', { method: 'POST', body: { date: day.date, items: full.map((k) => { const [kind, id] = k.split(':'); return [kind, Number(id)]; }) } });
           } catch (err) { toast(err.message); reload(); }
         });
       }
-      const left = [[day.meetings.filter((m) => m.status === 'planned').length, 'meeting', 'meetings'], [day.tasks.filter((t) => !t.done).length, 'task', 'tasks']]
+      const [oneM, manyM] = planFilter === 'call' ? ['call', 'calls'] : ['meeting', 'meetings'];
+      const left = [[shown.filter((e) => e[0] === 'meeting' && meetings.get(e[1]).status === 'planned').length, oneM, manyM],
+        [shown.filter((e) => e[0] === 'task' && !tasks.get(e[1]).done).length, 'task', 'tasks']]
         .filter(([n]) => n).map(([n, one, many]) => plural(n, one, many)).join(' · ');
       return h('section', { class: 'p-section' }, h('div', { class: 'p-section-head' }, h('h3', {}, heading(day.date)), left ? h('span', { class: 'plan-count' }, left) : null), list);
     };
 
-    const earlier = d.earlier.map((e) => (e.type === 'meeting' ? meetingRow(e, reload, { showDay: true }) : taskRow(e, reload, { showDay: true })));
+    const earlier = d.earlier.filter(shows).map((e) => (e.type === 'meeting' ? meetingRow(e, reload, { showDay: true }) : taskRow(e, reload, { showDay: true })));
     const [now, later] = [d.days[0], d.days.slice(1)];
+    const chips = h('div', { class: 'stage-filter plan-categories', role: 'group', 'aria-label': 'Show' },
+      PLAN_FILTERS.map(([key, label]) => h('button', { class: 'filter-chip', type: 'button', 'aria-pressed': String(planFilter === key), onclick: () => { planFilter = key; reload(); } }, label)));
     clear(view).append(h('div', {},
       tabs('plan'),
+      chips,
       h('div', { class: 'project-detail plan-page' },
         h('div', { class: 'plan-actions' },
-          h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting'),
-          h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: d.today }, reload) }, '+ Task')),
+          h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, sheetDefaults(['call', 'client_meeting']), reload) }, '+ Meeting'),
+          h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, sheetDefaults(['site_visit', 'work']), reload) }, '+ Task')),
         h('p', { class: 'plan-legend' }, h('span', { class: 'plan-key is-open' }, 'Upcoming, not held yet'), h('span', { class: 'plan-key is-held' }, 'Held or done')),
-        d.days.some((x) => x.order.length > 1) ? h('p', { class: 'plan-hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
-        daySection(now),
+        d.days.some((x) => x.order.filter((entry) => shows(entry[0] === 'meeting' ? x.meetings.find((m) => m.id === entry[1]) : x.tasks.find((t) => t.id === entry[1]))).length > 1)
+          ? h('p', { class: 'plan-hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
+        daySection(now, { always: true }),
         earlier.length ? group('Earlier, still open', 'These days have passed - mark each held or done, or open it to write the remark and plan the next step.', earlier) : null,
-        later.map(daySection))));
+        later.map((day) => daySection(day)))));
   }
 
   /* ---------- Held: meetings and calls that took place ---------- */
