@@ -1,8 +1,8 @@
 /* The admin's meeting planner and scheduler (kohal, 2026-11-16: "a meeting planner and scheduler (auto and manual scheduler) for admin to plan the day and
-   meetings for future"). Two subtabs: Day (one day's meetings and tasks in time order, with "Auto-arrange" to give the ones without a time a free slot)
+   meetings for future"). Subtabs: Day (one day's meetings and tasks as tiles the admin drags into the order he wants)
    and Upcoming (what is coming, what still waits for its remark), and Held (meetings and calls that took place, newest first, searchable). Four categories (kohal, 2026-11-16: "client meeting, site visit, call to make, work to
    do"): a Client meeting and a Call to make are meetings (they carry the client's details), a Site visit and Work to do are tasks. A "next schedule
-   plan" with a date becomes a follow-up meeting on its own (see app/planner.py). Every row looks the same - time, what, a tag, and a tick at the end
+   plan" with a date becomes a follow-up meeting on its own (see app/planner.py). Every tile looks the same - what, a tag, and a tick at the end
    (held / done). Admin only. */
 (() => {
   'use strict';
@@ -81,7 +81,7 @@
     const purpose = text(m.purpose, { maxlength: 300, placeholder: 'What it is about' });
     const place = text(m.place, { maxlength: 200, placeholder: 'Where it will be held' });
     const date = dateField(m.meeting_date || defaults.date, { placeholder: 'Date', clearable: false });
-    const when = timeField(m.meeting_time || '', { placeholder: 'Auto' });
+    const when = timeField(m.meeting_time || '', { placeholder: 'Optional' });
     const length = selectField(DURATIONS, m.duration_min || 60, { title: 'How long', placeholder: 'How long' });
     const status = selectField(STATUS, m.status || 'planned', { title: 'Status', placeholder: 'Status' });
     const remark = h('textarea', { rows: 3, maxlength: 4000, placeholder: 'How it went, what was decided' }, m.remark || '');
@@ -130,7 +130,7 @@
       isNew ? null : field('status', 'Status', status),
       isNew ? null : field('remark', 'Remark or feedback', remark),
       field('next_plan', 'Next schedule plan', nextPlan),
-      field('next_date', 'Next one on', nextDate, { hint: 'With a date, the next meeting is added to that day by itself. Leave the time empty and Auto-arrange finds a free slot.' }),
+      field('next_date', 'Next one on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
     const finish = openSheet(isNew ? 'Add meeting or call' : (kind.value === 'call' ? 'Call' : 'Meeting'), form);
@@ -166,7 +166,7 @@
     const t = task || {};
     const title = h('input', { type: 'text', autocomplete: 'off', maxlength: 300, value: t.title || '' });
     const date = dateField(t.task_date || defaults.date, { placeholder: 'Day', clearable: false });
-    const when = timeField(t.task_time || '', { placeholder: 'Auto' });
+    const when = timeField(t.task_time || '', { placeholder: 'Optional' });
     const length = selectField(DURATIONS, t.duration_min || 30, { title: 'How long', placeholder: 'How long' });
     const apply = (kind) => { title.placeholder = kind === 'site_visit' ? 'e.g. Butibori cold storage - check hydrant line' : 'e.g. Prepare the AMC quotation'; };
     const kind = kindPicker(TASK_KINDS, t.kind || 'site_visit', apply);
@@ -209,13 +209,15 @@
     if (isNew) title.focus();
   }
 
-  /* ---------- rows: time | what | tag + flags | tick ---------- */
+  /* ---------- tiles: grip | what | tag and flags | tick ---------- */
 
-  function planRow({ time, length, dayText, title, sub, kind, flags, finished, tick, onOpen }) {
-    return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}` },
+  const whenLine = (dayText, time, length) => [dayText, time ? `${clock(time)} · ${span(length)}` : null].filter(Boolean).join(' · ');
+
+  function planRow({ key, lines, title, kind, flags, finished, tick, grip, onOpen }) {
+    return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}${grip ? ' has-grip' : ''}`, 'data-key': key },
+      grip ? h('span', { class: 'plan-grip', role: 'img', 'aria-label': 'Drag to move up or down' }) : null,
       h('button', { type: 'button', class: 'plan-hit', onclick: onOpen },
-        h('span', { class: `plan-time${time ? '' : ' is-empty'}` }, dayText || (time ? clock(time) : 'No time'), h('small', {}, dayText ? (time ? clock(time) : 'No time') : span(length))),
-        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...[].concat(sub || []).filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line))),
+        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...lines.filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line))),
         h('span', { class: 'plan-chips' }, h('span', { class: 'chip chip-role' }, TAG[kind]), ...flags)),
       tick);
   }
@@ -228,30 +230,30 @@
     return box;
   }
 
-  function meetingRow(m, reload, { showDay = false, held = false } = {}) {
+  function meetingRow(m, reload, { showDay = false, held = false, grip = false } = {}) {
     const tick = tickBox(m.status === 'done', m.status === 'cancelled', `Mark the ${TAG[m.kind].toLowerCase()} with ${m.client_name} as held`, async (on) => {
       await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: on ? 'done' : 'planned' } });
       reload();
     });
     return planRow({
-      time: m.meeting_time, length: m.duration_min, dayText: showDay ? dayLabel(m.meeting_date) : null,
-      title: m.client_name,
-      sub: [[m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
+      key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, tick,
+      lines: [whenLine(showDay ? dayLabel(m.meeting_date) : '', m.meeting_time, m.duration_min),
+        [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
         held && m.remark ? `Remark: ${m.remark}` : null,
         held && m.next_plan ? `Next: ${m.next_plan}${m.next_date ? ` (${dayLabel(m.next_date)})` : ''}` : null],
-      kind: m.kind, finished: held ? false : m.status !== 'planned', tick,
+      finished: held ? false : m.status !== 'planned',
       flags: [m.status === 'cancelled' ? h('span', { class: 'chip chip-off' }, 'Cancelled') : null, m.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => meetingSheet(m, { date: m.meeting_date }, reload),
     });
   }
 
-  function taskRow(t, reload) {
+  function taskRow(t, reload, { grip = false } = {}) {
     const tick = tickBox(t.done, false, `Mark ${t.title} done`, async (on) => {
       await api(`/api/planner/tasks/${t.id}`, { method: 'PATCH', body: { done: on } });
       reload();
     });
     return planRow({
-      time: t.task_time, length: t.duration_min, title: t.title, sub: null, kind: t.kind, finished: t.done, tick,
+      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, tick, lines: [whenLine('', t.task_time, t.duration_min)], finished: t.done,
       flags: [t.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => taskSheet(t, { date: t.task_date }, reload),
     });
@@ -261,6 +263,69 @@
     h('div', { class: 'p-section-head' }, h('h3', {}, title)),
     hint ? h('p', { class: 'hint' }, hint) : null,
     h('ul', { class: 'card-group' }, rows));
+
+  /* Drag a tile by its grip to move it up or down (kohal, 2026-11-16). Pointer events, so a finger and a mouse both work; the grip has touch-action: none
+     so the page does not scroll under the finger. The tile follows the pointer; the tiles it passes step out of its way by swapping places in the list
+     (the dragged one itself is never taken out of the page). The page scrolls by itself near the top and bottom edge. `onChange` gets the new order of
+     the data-keys once the tile is let go - only if the order really changed. */
+  function makeSortable(list, onChange) {
+    list.addEventListener('pointerdown', (e) => {
+      const grip = e.target.closest('.plan-grip');
+      if (!grip || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      e.preventDefault();
+      const item = grip.closest('li');
+      const keys = () => [...list.children].map((li) => li.dataset.key).join();
+      const before = keys();
+      let startY = e.clientY;
+      let lastY = e.clientY;
+      item.classList.add('is-dragging');
+      list.classList.add('is-sorting');
+
+      const place = () => {
+        item.style.transform = `translateY(${lastY - startY}px)`;
+        for (let i = 0; i < 3; i += 1) {                               // a quick drag can pass more than one tile between two moves
+          const r = item.getBoundingClientRect();
+          const centre = r.top + r.height / 2;
+          const prev = item.previousElementSibling;
+          const next = item.nextElementSibling;
+          if (prev && centre < prev.getBoundingClientRect().top + prev.offsetHeight / 2) {
+            const moved = prev.offsetHeight;
+            list.insertBefore(prev, item.nextSibling);
+            startY -= moved;
+          } else if (next && centre > next.getBoundingClientRect().top + next.offsetHeight / 2) {
+            const moved = next.offsetHeight;
+            list.insertBefore(next, item);
+            startY += moved;
+          } else break;
+          item.style.transform = `translateY(${lastY - startY}px)`;
+        }
+      };
+      const move = (ev) => { lastY = ev.clientY; place(); };
+      const scroller = setInterval(() => {
+        const top = 150;
+        const bottom = window.innerHeight - 160;
+        const speed = lastY < top ? -Math.ceil((top - lastY) / 8) : lastY > bottom ? Math.ceil((lastY - bottom) / 8) : 0;
+        if (!speed) return;
+        const was = window.scrollY;
+        window.scrollBy(0, speed);
+        const by = window.scrollY - was;
+        if (by) { startY -= by; place(); }                          // the page moved under a finger that did not
+      }, 16);
+      const end = () => {
+        clearInterval(scroller);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        item.classList.remove('is-dragging');
+        list.classList.remove('is-sorting');
+        item.style.transform = '';
+        if (keys() !== before) onChange([...list.children].map((li) => li.dataset.key));
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+    });
+  }
 
   /* ---------- Day ---------- */
 
@@ -273,40 +338,31 @@
     pickDate.addEventListener('change', () => { if (pickDate.value) showDay(pickDate.value); });
     const step = (by, text) => h('button', { class: 'btn', type: 'button', 'aria-label': text, onclick: () => showDay(shiftDay(day, by)) }, by < 0 ? '‹' : '›');
 
+    const meetings = new Map(d.meetings.map((m) => [m.id, m]));
+    const tasks = new Map(d.tasks.map((t) => [t.id, t]));
+    const grip = d.order.length > 1;
+    const tiles = d.order.map(([kind, id]) => (kind === 'meeting' ? meetingRow(meetings.get(id), reload, { grip }) : taskRow(tasks.get(id), reload, { grip })));
+    const list = h('ul', { class: 'card-group plan-list' }, tiles);
+    if (grip) {
+      makeSortable(list, async (keys) => {
+        try {
+          await api('/api/planner/order', { method: 'POST', body: { date: day, items: keys.map((k) => { const [kind, id] = k.split(':'); return [kind, Number(id)]; }) } });
+        } catch (err) { toast(err.message); reload(); }
+      });
+    }
+
     const open = d.meetings.filter((m) => m.status === 'planned').length;
     const openTasks = d.tasks.filter((t) => !t.done).length;
-    const waiting = [...d.meetings.filter((m) => !m.meeting_time && m.status === 'planned'), ...d.tasks.filter((t) => !t.task_time && !t.done)];
-    const timed = [
-      ...d.meetings.filter((m) => m.meeting_time).map((m) => ({ at: m.meeting_time, row: meetingRow(m, reload) })),
-      ...d.tasks.filter((t) => t.task_time).map((t) => ({ at: t.task_time, row: taskRow(t, reload) })),
-    ].sort((a, b) => a.at.localeCompare(b.at)).map((x) => x.row);
-    const untimed = [
-      ...d.meetings.filter((m) => !m.meeting_time).map((m) => meetingRow(m, reload)),
-      ...d.tasks.filter((t) => !t.task_time).map((t) => taskRow(t, reload)),
-    ];
-
-    const arrangeBtn = h('button', { class: 'btn primary', type: 'button', disabled: waiting.length ? null : '' }, 'Auto-arrange');
-    arrangeBtn.onclick = async () => {
-      arrangeBtn.disabled = true;
-      try {
-        const r = await api('/api/planner/arrange', { method: 'POST', body: { date: day } });
-        toast(r.left ? `${plural(r.placed, 'item', 'items')} placed, ${r.left} did not fit between ${clock(d.window.start)} and ${clock(d.window.end)}` : `${plural(r.placed, 'item', 'items')} placed`);
-        reload();
-      } catch (err) { toast(err.message); arrangeBtn.disabled = false; }
-    };
-
     clear(view).append(h('div', {},
       tabs('day'),
-      h('div', { class: 'project-detail' },
+      h('div', { class: 'project-detail plan-page' },
         h('div', { class: 'plan-nav' }, step(-1, 'Previous day'), pickDate, step(1, 'Next day')),
-        h('p', { class: 'inv-summary' }, h('strong', {}, String(open)), ` ${open === 1 ? 'meeting or call' : 'meetings and calls'} planned · ${plural(openTasks, 'task', 'tasks')} to do`),
+        h('p', { class: 'inv-summary' }, h('strong', {}, String(open)), ` ${open === 1 ? 'meeting or call' : 'meetings and calls'} · ${plural(openTasks, 'task', 'tasks')} to do`),
         h('div', { class: 'plan-actions' },
           h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: day }, reload) }, '+ Meeting'),
-          h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: day }, reload) }, '+ Task'),
-          arrangeBtn),
-        timed.length ? group('Schedule', null, timed) : null,
-        untimed.length ? group('Not timed yet', 'Pick a time yourself, or tap Auto-arrange to give these the first free slots.', untimed) : null,
-        d.meetings.length || d.tasks.length ? null : h('p', { class: 'hint' }, 'Nothing planned for this day yet. Add a meeting, a call, a site visit or some work.'))));
+          h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: day }, reload) }, '+ Task')),
+        grip ? h('p', { class: 'hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
+        tiles.length ? list : h('p', { class: 'hint' }, 'Nothing planned for this day yet. Add a meeting, a call, a site visit or some work.'))));
   }
 
   /* ---------- Upcoming ---------- */
@@ -318,21 +374,10 @@
     const reload = showUpcoming;
     const byDay = new Map();
     d.meetings.forEach((m) => { if (!byDay.has(m.meeting_date)) byDay.set(m.meeting_date, []); byDay.get(m.meeting_date).push(m); });
-    const unplaced = d.meetings.filter((m) => !m.meeting_time).length;
-    const arrangeBtn = h('button', { class: 'btn primary', type: 'button', disabled: unplaced ? null : '' }, 'Auto-arrange all');
-    arrangeBtn.onclick = async () => {
-      arrangeBtn.disabled = true;
-      try {
-        const r = await api('/api/planner/arrange', { method: 'POST', body: { upcoming: true } });
-        toast(r.left ? `${plural(r.placed, 'item', 'items')} placed, ${r.left} did not fit in their day` : `${plural(r.placed, 'item', 'items')} placed`);
-        reload();
-      } catch (err) { toast(err.message); arrangeBtn.disabled = false; }
-    };
     clear(view).append(h('div', {},
       tabs('upcoming'),
-      h('div', { class: 'project-detail' },
-        h('div', { class: 'plan-actions two' },
-          h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting'), arrangeBtn),
+      h('div', { class: 'project-detail plan-page' },
+        h('div', { class: 'plan-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting')),
         d.needs_remark.length ? group('Waiting for your remark', 'These dates have passed - open one to say how it went, and plan the next step.',
           d.needs_remark.map((m) => meetingRow(m, reload, { showDay: true }))) : null,
         byDay.size ? [...byDay].map(([day, list]) => group(day === d.today ? `Today · ${dayLabel(day)}` : dayLabel(day), null, list.map((m) => meetingRow(m, reload)))) :

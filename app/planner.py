@@ -1,12 +1,10 @@
 """The admin's meeting planner and scheduler (kohal, 2026-11-16: "a meeting planner and scheduler (auto and manual scheduler) for admin to plan the
-day and meetings for future. this should be in me tab").
+day and meetings for future. this should be in me tab"; then: "just have a tile system which can be dragged and moved up or down").
 
-Admin only. A day is a list of meetings (the fields of his meeting sheet - date, client name, address, contact no, purpose, place, date and time of
-the meeting, remark or feedback, next schedule plan) and simple to-do tasks. Two ways to give them a time:
-  - manually: pick the time on the meeting or task;
-  - automatically ("it should schedule based on the plan already entered by the admin"): the auto scheduler places whatever has no time yet into the
-    first free slot of its day, around the times already set by hand - it never moves a time the admin chose. A meeting saved with a "next plan" and a
-    next date also creates the follow-up meeting by itself, and the follow-up is fitted into that day the same way.
+Admin only. A day is a list of tiles - meetings and calls (with the fields of his meeting sheet: date, client name, address, contact no, purpose, place,
+date and time of the meeting, remark or feedback, next schedule plan) and simple to-do tasks - in the order he drags them into (`position`, one order
+shared by the day's meetings and tasks). A time is optional and only a label; it never reorders anything. A meeting saved with a "next plan" and a next
+date creates the follow-up meeting by itself, added to the end of that day.
 Nothing here is ever deleted: a meeting is cancelled, not removed (a task can be removed - it is only a to-do)."""
 
 from datetime import date, datetime, time, timedelta
@@ -16,8 +14,8 @@ from sqlalchemy import or_
 
 from .auth import visible_clients
 from .extensions import db
-from .models import PlannerMeeting, PlannerTask, utcnow
-from .timeutil import to_local, today_local
+from .models import PlannerMeeting, PlannerTask
+from .timeutil import today_local
 from .validation import Fields, api_errors
 
 bp = Blueprint("planner", __name__)
@@ -26,13 +24,9 @@ api_errors(bp)
 STATUSES = ("planned", "done", "cancelled")
 MEETING_KINDS = ("client_meeting", "call")      # "Client meeting" and "Call to make" are meetings ...
 TASK_KINDS = ("site_visit", "work")             # ... "Site visit" and "Work to do" are tasks (kohal, 2026-11-16)
-DAY_START = 9 * 60            # the auto scheduler fills 9:00 am ...
-DAY_END = 19 * 60             # ... to 7:00 pm
-GAP = 15                      # minutes kept free between two things it places
-STEP = 5                      # times are picked in 5-minute steps (the app's time picker)
 MEETING_MINUTES = 60
 TASK_MINUTES = 30
-UPCOMING_DAYS = 60            # how far ahead the Upcoming list and "auto-arrange all" look
+UPCOMING_DAYS = 60            # how far ahead the Upcoming list looks
 HISTORY_LIMIT = 200           # meetings shown at once on the Held tab - narrow it with the dates or a client's name for more
 
 
@@ -46,14 +40,6 @@ def _admin_only():
 
 def _mins(t: time) -> int:
     return t.hour * 60 + t.minute
-
-
-def _clock(m: int) -> time:
-    return time(m // 60, m % 60)
-
-
-def _label(m: int) -> str:
-    return _clock(m).strftime("%H:%M")
 
 
 def _day_or_today(raw) -> date:
@@ -73,7 +59,7 @@ def _json_object():
 
 
 def _time_field(payload, name, errors, out):
-    """An optional "HH:MM" - empty means "not placed yet"."""
+    """An optional "HH:MM" - empty means no time."""
     if name not in payload:
         return
     raw = payload[name]
@@ -86,76 +72,37 @@ def _time_field(payload, name, errors, out):
         errors[name] = "Pick a valid time"
 
 
-def _now_minutes() -> int:
-    local = to_local(utcnow())
-    return local.hour * 60 + local.minute
+def _next_position(day) -> int:
+    """The place after the last tile of `day` - tasks and meetings share one order."""
+    top = -1
+    for model, column in ((PlannerMeeting, PlannerMeeting.meeting_date), (PlannerTask, PlannerTask.task_date)):
+        value = db.session.query(db.func.max(model.position)).filter(column == day).scalar()
+        if value is not None:
+            top = max(top, value)
+    return top + 1
 
 
-# ---------- the auto scheduler ----------
-
-def _busy(day, skip=None):
-    """(start, end) minutes of everything with a time on `day` - cancelled meetings no longer take up the slot."""
-    spans = []
-    for m in PlannerMeeting.query.filter(PlannerMeeting.meeting_date == day, PlannerMeeting.status != "cancelled", PlannerMeeting.meeting_time.isnot(None)):
-        spans.append((_mins(m.meeting_time), _mins(m.meeting_time) + m.duration_min))
-    for t in PlannerTask.query.filter(PlannerTask.task_date == day, PlannerTask.task_time.isnot(None)):
-        spans.append((_mins(t.task_time), _mins(t.task_time) + t.duration_min))
-    return spans
-
-
-def _first_free(spans, length, earliest):
-    """The first minute at or after `earliest` where `length` minutes fit between the spans (a GAP kept around each), or None before the day ends."""
-    start = max(DAY_START, earliest)
-    start += -start % STEP
-    for s, e in sorted(spans):
-        if start + length <= s - GAP:
-            break
-        start = max(start, e + GAP)
-        start += -start % STEP
-    return start if start + length <= DAY_END else None
-
-
-def arrange(day):
-    """Give a time to every planned meeting and open task on `day` that has none, earliest free slot first (meetings before tasks, in the order they
-    were entered). Times the admin set himself are only worked around. Today, nothing is placed in the past. Returns (placed, left_over) counts."""
-    meetings = (PlannerMeeting.query.filter(PlannerMeeting.meeting_date == day, PlannerMeeting.status == "planned", PlannerMeeting.meeting_time.is_(None))
-                .order_by(PlannerMeeting.id).all())
-    tasks = PlannerTask.query.filter(PlannerTask.task_date == day, PlannerTask.done.is_(False), PlannerTask.task_time.is_(None)).order_by(PlannerTask.id).all()
-    spans = _busy(day)
-    earliest = _now_minutes() if day == today_local() else 0
-    placed = left = 0
-    for item in [*meetings, *tasks]:
-        slot = _first_free(spans, item.duration_min, earliest)
-        if slot is None:
-            left += 1
-            continue
-        if isinstance(item, PlannerMeeting):
-            item.meeting_time = _clock(slot)
-        else:
-            item.task_time = _clock(slot)
-        spans.append((slot, slot + item.duration_min))
-        placed += 1
-    return placed, left
+def _tiles(day):
+    """The day's meetings and tasks in tile order: by position, then meetings before tasks, then oldest first (rows from before positions all sit at 0)."""
+    meetings = PlannerMeeting.query.filter_by(meeting_date=day).all()
+    tasks = PlannerTask.query.filter_by(task_date=day).all()
+    return sorted([("meeting", m) for m in meetings] + [("task", t) for t in tasks], key=lambda x: (x[1].position, x[0] != "meeting", x[1].id))
 
 
 # ---------- reading a day ----------
 
 def _day_payload(day):
-    meetings = (PlannerMeeting.query.filter_by(meeting_date=day)
-                .order_by(PlannerMeeting.meeting_time.is_(None), PlannerMeeting.meeting_time, PlannerMeeting.id).all())
-    tasks = PlannerTask.query.filter_by(task_date=day).order_by(PlannerTask.task_time.is_(None), PlannerTask.task_time, PlannerTask.id).all()
+    tiles = _tiles(day)
     spans = []                                                   # every timed thing that still stands: (start, end, key)
-    for m in meetings:
-        if m.meeting_time is not None and m.status != "cancelled":
-            spans.append((_mins(m.meeting_time), _mins(m.meeting_time) + m.duration_min, ("m", m.id)))
-    for t in tasks:
-        if t.task_time is not None:
-            spans.append((_mins(t.task_time), _mins(t.task_time) + t.duration_min, ("t", t.id)))
+    for kind, row in tiles:
+        at = row.meeting_time if kind == "meeting" else row.task_time
+        if at is not None and not (kind == "meeting" and row.status == "cancelled"):
+            spans.append((_mins(at), _mins(at) + row.duration_min, (kind, row.id)))
     clashing = {key for s, e, key in spans for s2, e2, key2 in spans if key != key2 and s < e2 and s2 < e}
-    out_m = [{**m.to_dict(), "clash": ("m", m.id) in clashing} for m in meetings]
-    out_t = [{**t.to_dict(), "clash": ("t", t.id) in clashing} for t in tasks]
-    return {"date": day.isoformat(), "meetings": out_m, "tasks": out_t, "today": today_local().isoformat(),
-            "window": {"start": _label(DAY_START), "end": _label(DAY_END)}}
+    return {"date": day.isoformat(), "today": today_local().isoformat(),
+            "order": [[kind, row.id] for kind, row in tiles],
+            "meetings": [{**row.to_dict(), "clash": ("meeting", row.id) in clashing} for kind, row in tiles if kind == "meeting"],
+            "tasks": [{**row.to_dict(), "clash": ("task", row.id) in clashing} for kind, row in tiles if kind == "task"]}
 
 
 @bp.get("/planner")
@@ -174,7 +121,7 @@ def upcoming():
     today = today_local()
     ahead = (PlannerMeeting.query.filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_date >= today,
                                          PlannerMeeting.meeting_date <= today + timedelta(days=UPCOMING_DAYS))
-             .order_by(PlannerMeeting.meeting_date, PlannerMeeting.meeting_time.is_(None), PlannerMeeting.meeting_time, PlannerMeeting.id).all())
+             .order_by(PlannerMeeting.meeting_date, PlannerMeeting.position, PlannerMeeting.id).all())
     waiting = (PlannerMeeting.query.filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_date < today)
                .order_by(PlannerMeeting.meeting_date.desc(), PlannerMeeting.id).limit(50).all())
     return jsonify(today=today.isoformat(), meetings=[m.to_dict() for m in ahead], needs_remark=[m.to_dict() for m in waiting])
@@ -262,7 +209,7 @@ def _meeting_or_404(meeting_id):
 
 
 def _sync_follow_up(m):
-    """The "next schedule plan" with a date becomes a meeting of its own on that day, and is fitted into a free slot there. Cleared again, the
+    """The "next schedule plan" with a date becomes a meeting of its own, added to the end of that day. Cleared again, the
     follow-up is cancelled while it is still only planned. A follow-up already held (or cancelled by hand) is left alone."""
     child = PlannerMeeting.query.filter_by(follow_up_of_id=m.id).order_by(PlannerMeeting.id.desc()).first()
     if m.next_date is None:
@@ -273,16 +220,13 @@ def _sync_follow_up(m):
     if child is None:
         child = PlannerMeeting(kind=m.kind, logged_on=today_local(), client_id=m.client_id, client_name=m.client_name, address=m.address, contact_no=m.contact_no,
                                purpose=purpose, place=m.place, meeting_date=m.next_date, duration_min=m.duration_min, follow_up_of_id=m.id,
-                               created_by_code=g.user.code)
+                               position=_next_position(m.next_date), created_by_code=g.user.code)
         db.session.add(child)
     elif child.status == "planned":
         if child.meeting_date != m.next_date:
-            child.meeting_date, child.meeting_time = m.next_date, None
+            child.position = _next_position(m.next_date)
+            child.meeting_date = m.next_date
         child.purpose = purpose
-    else:
-        return
-    db.session.flush()
-    arrange(child.meeting_date)
 
 
 @bp.post("/api/planner/meetings")
@@ -292,7 +236,7 @@ def add_meeting():
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     data.setdefault("duration_min", MEETING_MINUTES)
-    m = PlannerMeeting(logged_on=today_local(), created_by_code=g.user.code, **data)
+    m = PlannerMeeting(logged_on=today_local(), position=_next_position(data["meeting_date"]), created_by_code=g.user.code, **data)
     db.session.add(m)
     db.session.flush()
     _sync_follow_up(m)
@@ -307,11 +251,10 @@ def update_meeting(meeting_id):
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     plan_before = (m.next_date, m.next_plan)
-    day_before = m.meeting_date
+    if data.get("meeting_date") not in (None, m.meeting_date):
+        m.position = _next_position(data["meeting_date"])               # a moved meeting goes to the end of its new day
     for key, value in data.items():
         setattr(m, key, value)
-    if m.meeting_date != day_before and "meeting_time" not in data:
-        m.meeting_time = None                         # a moved meeting has to find its own slot on the new day
     db.session.flush()
     if (m.next_date, m.next_plan) != plan_before:
         _sync_follow_up(m)
@@ -356,7 +299,7 @@ def add_task():
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
     data.setdefault("duration_min", TASK_MINUTES)
-    t = PlannerTask(created_by_code=g.user.code, **data)
+    t = PlannerTask(position=_next_position(data["task_date"]), created_by_code=g.user.code, **data)
     db.session.add(t)
     db.session.commit()
     return jsonify(task=t.to_dict()), 201
@@ -368,11 +311,10 @@ def update_task(task_id):
     data, errors = _task_fields(_json_object(), creating=False)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    day_before = t.task_date
+    if data.get("task_date") not in (None, t.task_date):
+        t.position = _next_position(data["task_date"])
     for key, value in data.items():
         setattr(t, key, value)
-    if t.task_date != day_before and "task_time" not in data:
-        t.task_time = None
     db.session.commit()
     return jsonify(task=t.to_dict())
 
@@ -384,28 +326,32 @@ def delete_task(task_id):
     return "", 204
 
 
-# ---------- the auto scheduler's button ----------
+# ---------- dragging tiles ----------
 
-@bp.post("/api/planner/arrange")
-def arrange_route():
-    """{"date": "YYYY-MM-DD"} arranges that day; {"upcoming": true} every day from today with something still waiting for a time."""
+@bp.post("/api/planner/order")
+def set_order():
+    """{"date": "YYYY-MM-DD", "items": [["meeting", 3], ["task", 7], ...]} - the day's tiles in the order they were dragged into. Anything of that day
+    left out of the list (added in the meantime) keeps its place after the listed ones."""
     payload = _json_object()
-    if payload.get("upcoming"):
-        today = today_local()
-        days = set()
-        for (d,) in db.session.query(PlannerMeeting.meeting_date).filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_time.is_(None),
-                                                                        PlannerMeeting.meeting_date >= today,
-                                                                        PlannerMeeting.meeting_date <= today + timedelta(days=UPCOMING_DAYS)):
-            days.add(d)
-        for (d,) in db.session.query(PlannerTask.task_date).filter(PlannerTask.done.is_(False), PlannerTask.task_time.is_(None),
-                                                                   PlannerTask.task_date >= today, PlannerTask.task_date <= today + timedelta(days=UPCOMING_DAYS)):
-            days.add(d)
-        placed = left = 0
-        for d in sorted(days):
-            p, l = arrange(d)
-            placed, left = placed + p, left + l
-        db.session.commit()
-        return jsonify(placed=placed, left=left)
-    placed, left = arrange(_day_or_today(payload.get("date")))
+    day = _day_or_today(payload.get("date"))
+    items = payload.get("items")
+    if not isinstance(items, list):
+        abort(422, "Send the tiles in their new order")
+    models = {"meeting": PlannerMeeting, "task": PlannerTask}
+    ordered, seen = [], set()
+    for entry in items:
+        if not (isinstance(entry, list) and len(entry) == 2 and entry[0] in models and isinstance(entry[1], int) and not isinstance(entry[1], bool)):
+            abort(422, "Each tile is a kind and an id")
+        row = db.session.get(models[entry[0]], entry[1])
+        row_day = None if row is None else (row.meeting_date if entry[0] == "meeting" else row.task_date)
+        if row is None or row_day != day:
+            abort(422, "That tile is not on this day")
+        if (entry[0], entry[1]) in seen:
+            abort(422, "A tile is listed twice")
+        seen.add((entry[0], entry[1]))
+        ordered.append(row)
+    ordered += [row for kind, row in _tiles(day) if (kind, row.id) not in seen]
+    for position, row in enumerate(ordered):
+        row.position = position
     db.session.commit()
-    return jsonify(placed=placed, left=left, **_day_payload(_day_or_today(payload.get("date"))))
+    return jsonify(_day_payload(day))

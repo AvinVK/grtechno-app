@@ -1889,6 +1889,8 @@ class PlannerMeeting(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     # client_meeting | call (kohal, 2026-11-16: "client meeting, site visit, call to make, work to do" - the first two are meetings, the last two tasks)
     kind = db.Column(db.String(20), nullable=False, default="client_meeting", server_default="client_meeting")
+    # Where its tile sits in the day (kohal, 2026-11-16: "a tile system which can be dragged and moved up or down") - one order shared with the day's tasks.
+    position = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     logged_on = db.Column(db.Date, nullable=False)                                   # the sheet's "Date" - the day it was entered
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     client_name = db.Column(db.String(160), nullable=False)
@@ -1912,7 +1914,7 @@ class PlannerMeeting(db.Model):
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "kind": self.kind, "logged_on": self.logged_on.isoformat(), "client_id": self.client_id, "client_name": self.client_name,
+            "id": self.id, "kind": self.kind, "position": self.position, "logged_on": self.logged_on.isoformat(), "client_id": self.client_id, "client_name": self.client_name,
             "address": self.address, "contact_no": self.contact_no, "purpose": self.purpose, "place": self.place,
             "meeting_date": self.meeting_date.isoformat(), "meeting_time": self.meeting_time.strftime("%H:%M") if self.meeting_time else None,
             "duration_min": self.duration_min, "status": self.status, "remark": self.remark,
@@ -1929,6 +1931,7 @@ class PlannerTask(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     task_date = db.Column(db.Date, nullable=False, index=True)
     kind = db.Column(db.String(20), nullable=False, default="site_visit", server_default="site_visit")      # site_visit | work
+    position = db.Column(db.Integer, nullable=False, default=0, server_default="0")                         # see PlannerMeeting.position
     title = db.Column(db.String(300), nullable=False)
     task_time = db.Column(db.Time, nullable=True)
     duration_min = db.Column(db.Integer, nullable=False, default=30, server_default="30")
@@ -1937,7 +1940,7 @@ class PlannerTask(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "kind": self.kind, "task_date": self.task_date.isoformat(), "title": self.title,
+        return {"id": self.id, "kind": self.kind, "position": self.position, "task_date": self.task_date.isoformat(), "title": self.title,
                 "task_time": self.task_time.strftime("%H:%M") if self.task_time else None, "duration_min": self.duration_min, "done": self.done}
 
 

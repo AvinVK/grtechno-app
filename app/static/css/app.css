@@ -706,26 +706,29 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .inv-summary { font-size: 14px; color: var(--muted); }
 .inv-summary strong { font-size: 22px; color: var(--ink); }
 
-/* The meeting planner (kohal, 2026-11-16): a day navigator, three equal action buttons, and rows that all share one layout -
-   time | who and what | tag and flags | tick - for a meeting, a call, a site visit and a piece of work alike. */
-.plan-nav { display: grid; grid-template-columns: 52px 1fr 52px; gap: 8px; margin-bottom: 12px; }
+/* The meeting planner (kohal, 2026-11-16): a day navigator, two equal action buttons, and tiles that all share one layout - grip | who and what |
+   tag and flags | tick - for a meeting, a call, a site visit and a piece of work alike. The tiles of a day are dragged by the grip. */
+.plan-page { gap: 10px; }
+.plan-page > p { margin: 0; }
+.plan-nav { display: grid; grid-template-columns: 52px 1fr 52px; gap: 8px; }
 .plan-nav .btn { min-height: 48px; padding: 0; font-size: 22px; line-height: 1; }
 .plan-nav .field-picker { min-width: 0; text-align: center; }
-.plan-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 16px; }
-.plan-actions.two { grid-template-columns: repeat(2, 1fr); }
+.plan-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .plan-actions .btn { width: 100%; min-height: 46px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .plan-kind { padding: 0; }
 .plan-filters { display: grid; gap: 6px; margin: 12px 0 14px; }
-.card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 14px 0 0; }
-.plan-hit { min-width: 0; display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 12px 8px 12px 14px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
-.plan-time { display: flex; flex-direction: column; gap: 2px; font-weight: 600; font-size: 14px; line-height: 1.25; }
-.plan-time small { font-weight: 400; font-size: 12px; color: var(--muted); }
-.plan-time.is-empty { color: var(--muted); font-weight: 500; }
+.card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 14px 0 0; background: var(--panel); }
+.card-group .p-row.plan-row.has-grip { grid-template-columns: auto minmax(0, 1fr) auto; }
+.plan-hit { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 12px 8px 12px 14px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .plan-hit .p-main { gap: 2px; }
 .plan-chips { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 64px; }
 .plan-chips .chip { margin: 0; white-space: nowrap; }
 .plan-check { width: 22px; height: 22px; margin: 0; }
 .plan-row.is-finished .plan-hit { opacity: 0.55; }
+.plan-grip { align-self: stretch; width: 36px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; user-select: none; }
+.plan-grip::before { content: ''; width: 16px; height: 24px; background: radial-gradient(circle, var(--muted) 1.6px, transparent 1.9px) 0 0 / 8px 8px; }
+.plan-list.is-sorting { user-select: none; }
+.plan-row.is-dragging { position: relative; z-index: 5; border-radius: var(--r-control); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22); }
 .similar-hint[hidden] { display: none; }
 .similar-hint .link-btn { margin-right: 10px; }                  /* the form sits in a .confirm-card, whose paragraphs get an 18px bottom margin */
 .fooding-start-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }

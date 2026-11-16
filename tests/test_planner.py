@@ -1,5 +1,5 @@
-"""The admin's meeting planner and scheduler (kohal, 2026-11-16) - meetings with the fields of his meeting sheet, to-do tasks, the manual time, the
-auto scheduler that fills free slots around it, and the follow-up a "next schedule plan" creates by itself."""
+"""The admin's meeting planner (kohal, 2026-11-16) - meetings and calls with the fields of his meeting sheet, site visits and work to do, tiles he drags into
+the order he wants, the follow-up a "next schedule plan" creates by itself, and the list of what was held."""
 
 from datetime import date, timedelta
 
@@ -29,12 +29,17 @@ def _day_view(c, day=None):
     return c.get(f"/api/planner/day?date={day or _day()}").get_json()
 
 
+def _order(c, day=None):
+    """The day's tiles as [kind, id] in the order they are shown."""
+    return _day_view(c, day)["order"]
+
+
 def test_only_the_admin_can_use_the_planner(client, manager_client, admin_client, anon):
     for c in (client, manager_client):
         assert c.get("/planner").status_code == 403
         assert c.get("/api/planner/day").status_code == 403
         assert c.post("/api/planner/meetings", json={"client_name": "X", "purpose": "Y", "meeting_date": _day()}).status_code == 403
-        assert c.post("/api/planner/arrange", json={"date": _day()}).status_code == 403
+        assert c.post("/api/planner/order", json={"date": _day(), "items": []}).status_code == 403
     assert anon.get("/api/planner/day").status_code in (401, 302)
     assert admin_client.get("/planner").status_code == 200
 
@@ -106,79 +111,85 @@ def test_an_existing_client_can_fill_the_meeting_in(app, admin_client):
     assert r.status_code == 422 and "client_id" in r.get_json()["fields"]
 
 
-def test_manual_times_order_the_day_and_a_clash_is_flagged(admin_client):
-    late = _meeting(admin_client, client_name="Late one", meeting_time="15:00")
+def test_new_tiles_join_the_end_of_the_day_meetings_and_tasks_in_one_order(admin_client):
+    a = _meeting(admin_client, client_name="A")
+    t = _task(admin_client)
+    b = _meeting(admin_client, client_name="B", meeting_time="08:00")                                  # a time is a label - it does not move the tile up
+    assert _order(admin_client) == [["meeting", a["id"]], ["task", t["id"]], ["meeting", b["id"]]]
+    assert [m["position"] for m in _day_view(admin_client)["meetings"]] == [0, 2]
+    assert _order(admin_client, _day(11)) == []
+
+
+def test_dragging_tiles_saves_the_order_across_meetings_and_tasks(admin_client):
+    a, b = _meeting(admin_client, client_name="A"), _meeting(admin_client, client_name="B")
+    t = _task(admin_client)
+    want = [["task", t["id"]], ["meeting", b["id"]], ["meeting", a["id"]]]
+    r = admin_client.post("/api/planner/order", json={"date": _day(), "items": want})
+    assert r.status_code == 200 and r.get_json()["order"] == want
+    assert _order(admin_client) == want                                                               # and it is what the day shows next time
+    c = _meeting(admin_client, client_name="C")                                                       # a tile added afterwards goes last
+    assert _order(admin_client)[-1] == ["meeting", c["id"]]
+
+
+def test_a_tile_left_out_of_the_new_order_keeps_a_place_after_the_listed_ones(admin_client):
+    a, b, c = (_meeting(admin_client, client_name=n) for n in "ABC")
+    admin_client.post("/api/planner/order", json={"date": _day(), "items": [["meeting", c["id"]], ["meeting", a["id"]]]})
+    assert _order(admin_client) == [["meeting", c["id"]], ["meeting", a["id"]], ["meeting", b["id"]]]
+
+
+def test_the_order_must_name_real_tiles_of_that_day_once_each(admin_client):
+    a = _meeting(admin_client)
+    elsewhere = _meeting(admin_client, meeting_date=_day(11))
+    url = "/api/planner/order"
+    assert admin_client.post(url, json={"date": _day(), "items": "nope"}).status_code == 422
+    assert admin_client.post(url, json={"date": _day(), "items": [["meeting", elsewhere["id"]]]}).status_code == 422       # another day's tile
+    assert admin_client.post(url, json={"date": _day(), "items": [["meeting", 9999]]}).status_code == 422
+    assert admin_client.post(url, json={"date": _day(), "items": [["lunch", a["id"]]]}).status_code == 422
+    assert admin_client.post(url, json={"date": _day(), "items": [["meeting", str(a["id"])]]}).status_code == 422
+    assert admin_client.post(url, json={"date": _day(), "items": [["meeting", True]]}).status_code == 422
+    assert admin_client.post(url, json={"date": _day(), "items": [["meeting", a["id"]], ["meeting", a["id"]]]}).status_code == 422
+    assert admin_client.post(url, json={"date": "soon", "items": []}).status_code == 422
+    assert _order(admin_client, _day(11)) == [["meeting", elsewhere["id"]]]                          # nothing moved
+
+
+def test_a_clash_is_flagged_for_overlapping_times_but_a_cancelled_meeting_holds_no_slot(admin_client):
     first = _meeting(admin_client, client_name="First one", meeting_time="10:00", duration_min=60)
+    late = _meeting(admin_client, client_name="Late one", meeting_time="15:00")
     overlapping = _task(admin_client, task_time="10:30", duration_min=30)
     day = _day_view(admin_client)
-    assert [m["id"] for m in day["meetings"]] == [first["id"], late["id"]]
     assert {m["id"]: m["clash"] for m in day["meetings"]} == {first["id"]: True, late["id"]: False}
     assert day["tasks"][0]["id"] == overlapping["id"] and day["tasks"][0]["clash"] is True
-    admin_client.patch(f"/api/planner/meetings/{first['id']}", json={"status": "cancelled"})          # a cancelled meeting no longer holds its slot
-    assert not any(x["clash"] for x in _day_view(admin_client)["meetings"] + _day_view(admin_client)["tasks"])
+    admin_client.patch(f"/api/planner/meetings/{first['id']}", json={"status": "cancelled"})
+    after = _day_view(admin_client)
+    assert not any(x["clash"] for x in after["meetings"] + after["tasks"])
 
 
-def test_the_auto_scheduler_fills_free_slots_and_never_moves_a_time_set_by_hand(admin_client):
-    fixed = _meeting(admin_client, client_name="Fixed", meeting_time="09:00", duration_min=60)       # 9:00-10:00
-    a = _meeting(admin_client, client_name="A")                                                       # no time, an hour
-    b = _meeting(admin_client, client_name="B", duration_min=30)
-    t = _task(admin_client, duration_min=30)
-    r = admin_client.post("/api/planner/arrange", json={"date": _day()})
-    out = r.get_json()
-    assert (out["placed"], out["left"]) == (3, 0)
-    times = {m["client_name"]: m["meeting_time"] for m in out["meetings"]}
-    assert times["Fixed"] == "09:00"                                                                  # untouched
-    assert times["A"] == "10:15"                                                                      # right after Fixed plus the 15-minute gap
-    assert times["B"] == "11:30"                                                                      # after A (ends 11:15) plus the gap
-    assert out["tasks"][0]["task_time"] == "12:15"                                                    # tasks go after the meetings
-    assert not any(x["clash"] for x in out["meetings"] + out["tasks"])
-    again = admin_client.post("/api/planner/arrange", json={"date": _day()}).get_json()
-    assert (again["placed"], again["left"]) == (0, 0)                                                 # nothing left to place, nothing moves
-    assert {m["id"]: m["meeting_time"] for m in again["meetings"]}[fixed["id"]] == "09:00"
-    assert a["id"] and b["id"] and t["id"]
+def test_moving_a_tile_to_another_day_puts_it_last_there_and_keeps_its_time(admin_client):
+    other = _meeting(admin_client, client_name="Already there", meeting_date=_day(12))
+    m = _meeting(admin_client, meeting_time="14:00")
+    moved = admin_client.patch(f"/api/planner/meetings/{m['id']}", json={"meeting_date": _day(12)}).get_json()["meeting"]
+    assert moved["meeting_time"] == "14:00"
+    assert _order(admin_client, _day(12)) == [["meeting", other["id"]], ["meeting", m["id"]]]
+    assert _order(admin_client) == []
+    t = _task(admin_client, task_time="09:30")
+    moved_task = admin_client.patch(f"/api/planner/tasks/{t['id']}", json={"task_date": _day(12)}).get_json()["task"]
+    assert moved_task["task_time"] == "09:30"
+    assert _order(admin_client, _day(12))[-1] == ["task", t["id"]]
 
 
-def test_the_auto_scheduler_fits_around_a_meeting_in_the_middle_of_the_day(admin_client):
-    _meeting(admin_client, client_name="Midday", meeting_time="09:30", duration_min=60)            # leaves 9:00-9:15 only: too short for an hour
-    _meeting(admin_client, client_name="Placed")
-    out = admin_client.post("/api/planner/arrange", json={"date": _day()}).get_json()
-    assert {m["client_name"]: m["meeting_time"] for m in out["meetings"]}["Placed"] == "10:45"
-
-
-def test_what_does_not_fit_before_seven_in_the_evening_is_left_for_the_admin(admin_client):
-    _meeting(admin_client, client_name="Long", meeting_time="09:00", duration_min=180)
-    _meeting(admin_client, client_name="Long 2", meeting_time="12:15", duration_min=180)
-    _meeting(admin_client, client_name="Long 3", meeting_time="15:30", duration_min=180)             # ends 18:30
-    _meeting(admin_client, client_name="Won't fit", duration_min=60)
-    out = admin_client.post("/api/planner/arrange", json={"date": _day()}).get_json()
-    assert (out["placed"], out["left"]) == (0, 1)
-    assert {m["client_name"]: m["meeting_time"] for m in out["meetings"]}["Won't fit"] is None
-
-
-def test_arrange_all_upcoming_covers_every_day_with_something_waiting(admin_client):
-    _meeting(admin_client, client_name="Day 3", meeting_date=_day(3))
-    _meeting(admin_client, client_name="Day 5", meeting_date=_day(5))
-    _task(admin_client, task_date=_day(7))
-    out = admin_client.post("/api/planner/arrange", json={"upcoming": True}).get_json()
-    assert (out["placed"], out["left"]) == (3, 0)
-    assert _day_view(admin_client, _day(3))["meetings"][0]["meeting_time"] == "09:00"
-    assert _day_view(admin_client, _day(7))["tasks"][0]["task_time"] == "09:00"
-
-
-def test_a_next_plan_with_a_date_creates_the_follow_up_and_places_it(admin_client):
+def test_a_next_plan_with_a_date_creates_the_follow_up_at_the_end_of_that_day(admin_client):
+    existing = _meeting(admin_client, client_name="Same day", meeting_date=_day(9))
     first = _meeting(admin_client, meeting_date=_day(2), next_plan="Send the revised quote", next_date=_day(9))
     follow = [m for m in _day_view(admin_client, _day(9))["meetings"] if m["follow_up_of_id"] == first["id"]]
     assert len(follow) == 1
     f = follow[0]
     assert (f["client_name"], f["address"], f["purpose"], f["status"]) == ("Kalyani Warehousing", "Kamptee Road godown", "Send the revised quote", "planned")
-    assert f["meeting_time"] == "09:00"                                                               # auto-placed into the first free slot
-    other = _meeting(admin_client, client_name="Same day", meeting_date=_day(9), meeting_time="09:00")
+    assert _order(admin_client, _day(9)) == [["meeting", existing["id"]], ["meeting", f["id"]]]
     moved = admin_client.patch(f"/api/planner/meetings/{first['id']}", json={"next_date": _day(11)}).get_json()["meeting"]
     assert moved["next_date"] == _day(11)
     again = [m for m in _day_view(admin_client, _day(11))["meetings"] if m["follow_up_of_id"] == first["id"]]
-    assert len(again) == 1 and again[0]["id"] == f["id"] and again[0]["meeting_time"] == "09:00"      # the same meeting, moved to its new day and re-placed
-    assert all(m["id"] != f["id"] for m in _day_view(admin_client, _day(9))["meetings"])
-    assert other["id"]
+    assert len(again) == 1 and again[0]["id"] == f["id"]                                              # the same meeting, moved to its new day
+    assert _order(admin_client, _day(9)) == [["meeting", existing["id"]]]
 
 
 def test_saving_other_fields_does_not_disturb_a_follow_up_the_admin_adjusted(admin_client):
@@ -201,45 +212,29 @@ def test_clearing_the_next_date_cancels_a_follow_up_that_is_still_only_planned(a
     assert _day_view(admin_client, _day(12))["meetings"][0]["status"] == "done"                      # one that took place is never touched
 
 
-def test_moving_a_meeting_to_another_day_clears_its_time_so_it_finds_a_new_slot(admin_client):
-    m = _meeting(admin_client, meeting_time="14:00")
-    moved = admin_client.patch(f"/api/planner/meetings/{m['id']}", json={"meeting_date": _day(12)}).get_json()["meeting"]
-    assert moved["meeting_time"] is None
-    kept = admin_client.patch(f"/api/planner/meetings/{m['id']}", json={"meeting_date": _day(13), "meeting_time": "16:00"}).get_json()["meeting"]
-    assert kept["meeting_time"] == "16:00"
-
-
-def test_upcoming_lists_what_is_ahead_and_what_still_needs_a_remark(app, admin_client):
-    ahead = _meeting(admin_client, client_name="Ahead", meeting_date=_day(4))
-    _meeting(admin_client, client_name="Cancelled", meeting_date=_day(5))
-    admin_client.patch(f"/api/planner/meetings/{_day_view(admin_client, _day(5))['meetings'][0]['id']}", json={"status": "cancelled"})
+def test_upcoming_lists_what_is_ahead_in_tile_order_and_what_still_needs_a_remark(app, admin_client):
+    second = _meeting(admin_client, client_name="Second tile", meeting_date=_day(4))
+    first = _meeting(admin_client, client_name="First tile", meeting_date=_day(4))
+    admin_client.post("/api/planner/order", json={"date": _day(4), "items": [["meeting", first["id"]], ["meeting", second["id"]]]})
+    cancelled = _meeting(admin_client, client_name="Cancelled", meeting_date=_day(5))
+    admin_client.patch(f"/api/planner/meetings/{cancelled['id']}", json={"status": "cancelled"})
     past = _meeting(admin_client, client_name="Past", meeting_date=_day(-3))                           # logging a meeting that already happened is allowed
     r = admin_client.get("/api/planner/upcoming").get_json()
-    assert [m["id"] for m in r["meetings"]] == [ahead["id"]]
+    assert [m["id"] for m in r["meetings"]] == [first["id"], second["id"]]
     assert [m["id"] for m in r["needs_remark"]] == [past["id"]]
     admin_client.patch(f"/api/planner/meetings/{past['id']}", json={"status": "done", "remark": "Done"})
     assert admin_client.get("/api/planner/upcoming").get_json()["needs_remark"] == []
 
 
-def test_tasks_can_be_ticked_moved_and_removed(admin_client):
+def test_tasks_can_be_ticked_and_removed(admin_client):
     t = _task(admin_client)
     done = admin_client.patch(f"/api/planner/tasks/{t['id']}", json={"done": True}).get_json()["task"]
     assert done["done"] is True
     assert admin_client.patch(f"/api/planner/tasks/{t['id']}", json={"done": "yes"}).status_code == 422
     assert admin_client.post("/api/planner/tasks", json={"task_date": _day()}).status_code == 422
-    admin_client.patch(f"/api/planner/tasks/{t['id']}", json={"task_time": "10:00"})
-    moved = admin_client.patch(f"/api/planner/tasks/{t['id']}", json={"task_date": _day(12)}).get_json()["task"]
-    assert moved["task_time"] is None                                                                  # a moved task has to find a new slot too
     assert admin_client.delete(f"/api/planner/tasks/{t['id']}").status_code == 204
     assert admin_client.delete(f"/api/planner/tasks/{t['id']}").status_code == 404
-    assert _day_view(admin_client, _day(12))["tasks"] == []
-
-
-def test_a_finished_task_does_not_get_a_slot_from_the_auto_scheduler(admin_client):
-    t = _task(admin_client)
-    admin_client.patch(f"/api/planner/tasks/{t['id']}", json={"done": True})
-    out = admin_client.post("/api/planner/arrange", json={"date": _day()}).get_json()
-    assert out["placed"] == 0 and out["tasks"][0]["task_time"] is None
+    assert _day_view(admin_client)["tasks"] == []
 
 
 def test_the_contact_and_address_are_stored_encrypted(app, admin_client):
