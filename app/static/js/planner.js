@@ -372,7 +372,9 @@
     const mine = { from: '', to: '', q: '' };
     const from = dateField('', { placeholder: 'From', clearable: true });
     const to = dateField('', { placeholder: 'To', clearable: true });
-    const search = h('input', { type: 'search', autocomplete: 'off', placeholder: 'Search a client or purpose' });
+    const search = h('input', { type: 'search', autocomplete: 'off', placeholder: 'Search a client or purpose', 'aria-label': 'Search a client or purpose' });
+    from.setAttribute('aria-label', 'From date');
+    to.setAttribute('aria-label', 'To date');
     const list = h('div', {});
     let ticket = 0;
     const reload = () => draw();
@@ -402,8 +404,8 @@
       tabs('held'),
       h('div', { class: 'project-detail' },
         h('div', { class: 'plan-filters' },
-          h('div', { class: 'field-row' }, field('from', 'From', from), field('to', 'To', to)),
-          field('q', 'Client or purpose', search)),
+          h('div', { class: 'field-row' }, h('div', { class: 'field' }, from), h('div', { class: 'field' }, to)),
+          search),
         list)));
     draw();
   }
