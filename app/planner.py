@@ -269,6 +269,8 @@ def add_meeting():
 @bp.patch("/api/planner/meetings/<int:meeting_id>")
 def update_meeting(meeting_id):
     m = _meeting_or_404(meeting_id)
+    if m.status == "done":                  # once held, a meeting is final (kohal, 2026-11-16: "once mark held is done, then it should not be unmarked")
+        abort(422, "A meeting that has been held can't be changed or reopened")
     data, errors = _meeting_fields(_json_object(), creating=False)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422

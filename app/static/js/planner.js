@@ -135,7 +135,7 @@
     // "✓ Held" on its tile first.
     const readOnly = !isNew && m.status === 'done';
     const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
-      readOnly ? h('p', { class: 'hint' }, 'This meeting has been held, so it is view only. Tap "✓ Held" on its tile to reopen it.') : null,
+      readOnly ? h('p', { class: 'hint' }, 'This meeting has been held, so it can no longer be changed.') : null,
       isNew || !m.logged_on ? null : h('p', { class: 'hint' }, `Logged on ${dayLabel(m.logged_on)}${m.follow_up_of_id ? ' · a follow-up of an earlier meeting' : ''}`),
       kind.node,
       fPick,
@@ -300,12 +300,11 @@
   }
 
   function meetingRow(m, reload, { showDay = false, held = false, grip = false } = {}) {
-    const action = m.status === 'cancelled' ? null : doneButton(m.status === 'done', 'Mark held', 'Held', async (on) => {
-      if (on) { heldSheet(m, reload); return false; }                    // marking it held asks how it went and what comes next
-      await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: 'planned' } });
-      reload();
-      return true;
-    });
+    // Marking a meeting held asks how it went and what comes next - and is final (kohal, 2026-11-16: "once mark held is done, then it should not be
+    // unmarked"): a held meeting shows a plain "✓ Held" badge, nothing to tap.
+    const action = m.status === 'cancelled' ? null
+      : m.status === 'done' ? h('span', { class: 'plan-done is-on is-fixed' }, '✓ Held')
+        : doneButton(false, 'Mark held', 'Held', async () => { heldSheet(m, reload); return false; });
     // "Place call" (kohal, 2026-11-16): a plain tel: link, so the phone's own dialer opens with the number already filled in. Only for a call still to make.
     const digits = (m.contact_no || '').replace(/[^\d+]/g, '');
     const dial = m.kind === 'call' && m.status === 'planned' && /\d/.test(digits)
