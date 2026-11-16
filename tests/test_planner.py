@@ -50,6 +50,30 @@ def test_a_meeting_keeps_every_field_of_the_meeting_sheet(admin_client):
     assert r.get_json()["meeting"]["status"] == "done" and "revised quote" in r.get_json()["meeting"]["remark"]
 
 
+def test_a_meeting_is_a_client_meeting_or_a_call_and_a_task_a_site_visit_or_work(admin_client):
+    """The four categories (kohal, 2026-11-16): client meeting and call to make are meetings; site visit and work to do are tasks."""
+    assert _meeting(admin_client)["kind"] == "client_meeting" and _task(admin_client)["kind"] == "site_visit"       # what you get unless you pick
+    call = _meeting(admin_client, kind="call", client_name="Ring me back")
+    work = _task(admin_client, kind="work", title="Prepare the AMC quotation")
+    assert call["kind"] == "call" and work["kind"] == "work"
+    day = _day_view(admin_client)
+    assert {m["client_name"]: m["kind"] for m in day["meetings"]}["Ring me back"] == "call"
+    assert {t["title"]: t["kind"] for t in day["tasks"]}["Prepare the AMC quotation"] == "work"
+    assert admin_client.patch(f"/api/planner/meetings/{call['id']}", json={"kind": "client_meeting"}).get_json()["meeting"]["kind"] == "client_meeting"
+    assert admin_client.patch(f"/api/planner/tasks/{work['id']}", json={"kind": "site_visit"}).get_json()["task"]["kind"] == "site_visit"
+    for bad in ("site_visit", "work", "lunch"):                                  # a task's kind is not a meeting's, and the other way round
+        r = admin_client.post("/api/planner/meetings", json={"client_name": "A", "purpose": "B", "meeting_date": _day(), "kind": bad})
+        assert r.status_code == 422 and "kind" in r.get_json()["fields"]
+    for bad in ("call", "client_meeting", "lunch"):
+        r = admin_client.post("/api/planner/tasks", json={"title": "A", "task_date": _day(), "kind": bad})
+        assert r.status_code == 422 and "kind" in r.get_json()["fields"]
+
+
+def test_a_follow_up_of_a_call_is_a_call(admin_client):
+    first = _meeting(admin_client, kind="call", next_plan="Ring again", next_date=_day(9))
+    assert _day_view(admin_client, _day(9))["meetings"][0]["kind"] == "call" and first["kind"] == "call"
+
+
 def test_a_meeting_needs_a_client_a_purpose_and_a_date(admin_client):
     r = admin_client.post("/api/planner/meetings", json={})
     assert r.status_code == 422

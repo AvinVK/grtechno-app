@@ -23,6 +23,8 @@ bp = Blueprint("planner", __name__)
 api_errors(bp)
 
 STATUSES = ("planned", "done", "cancelled")
+MEETING_KINDS = ("client_meeting", "call")      # "Client meeting" and "Call to make" are meetings ...
+TASK_KINDS = ("site_visit", "work")             # ... "Site visit" and "Work to do" are tasks (kohal, 2026-11-16)
 DAY_START = 9 * 60            # the auto scheduler fills 9:00 am ...
 DAY_END = 19 * 60             # ... to 7:00 pm
 GAP = 15                      # minutes kept free between two things it places
@@ -198,6 +200,7 @@ def _meeting_fields(payload, creating):
     f.text("remark", 4000)
     f.text("next_plan", 500)
     f.choice("status", STATUSES)
+    f.choice("kind", MEETING_KINDS)
     f.date("meeting_date")
     f.date("next_date")
     f.integer("duration_min", 5, 480)
@@ -237,7 +240,7 @@ def _sync_follow_up(m):
         return
     purpose = (m.next_plan or f"Follow-up: {m.purpose}")[:300]
     if child is None:
-        child = PlannerMeeting(logged_on=today_local(), client_id=m.client_id, client_name=m.client_name, address=m.address, contact_no=m.contact_no,
+        child = PlannerMeeting(kind=m.kind, logged_on=today_local(), client_id=m.client_id, client_name=m.client_name, address=m.address, contact_no=m.contact_no,
                                purpose=purpose, place=m.place, meeting_date=m.next_date, duration_min=m.duration_min, follow_up_of_id=m.id,
                                created_by_code=g.user.code)
         db.session.add(child)
@@ -293,6 +296,7 @@ def _task_fields(payload, creating):
     f = Fields(payload)
     f.text("title", 300, required=True, label="the task")
     f.date("task_date")
+    f.choice("kind", TASK_KINDS)
     f.integer("duration_min", 5, 240)
     errors, data = f.errors, f.data
     _time_field(payload, "task_time", errors, data)
