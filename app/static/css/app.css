@@ -720,13 +720,16 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .plan-actions .btn { width: 100%; min-height: 46px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .plan-kind { padding: 0; }
 .plan-filters { display: grid; gap: 6px; margin: 12px 0 14px; }
-.card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 14px 0 0; background: var(--panel); }
+.card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; padding: 0; background: var(--panel); }
 .card-group .p-row.plan-row.has-grip { grid-template-columns: auto minmax(0, 1fr) auto; }
-.plan-hit { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 12px 8px 12px 14px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.plan-hit { min-width: 0; display: block; padding: 12px 8px 12px 14px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.plan-row.has-grip .plan-hit { padding-left: 4px; }
 .plan-hit .p-main { gap: 2px; }
-.plan-chips { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 64px; }
-.plan-chips .chip { margin: 0; white-space: nowrap; }
-.plan-check { width: 22px; height: 22px; margin: 0; }
+.plan-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 12px 14px 12px 0; }
+.plan-aside .chip { margin: 0; white-space: nowrap; }
+.plan-done { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); color: var(--ink); font: 600 13px/1 var(--font-body); white-space: nowrap; cursor: pointer; }
+.plan-done.is-on { background: var(--ok-tint); border-color: var(--ok); color: var(--ok-ink); }
+.plan-done:disabled { opacity: 0.6; cursor: default; }
 .plan-row.is-finished .plan-hit { opacity: 0.55; }
 .plan-grip { align-self: stretch; width: 36px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; user-select: none; }
 .plan-grip::before { content: ''; width: 16px; height: 24px; background: radial-gradient(circle, var(--muted) 1.6px, transparent 1.9px) 0 0 / 8px 8px; }

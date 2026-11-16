@@ -2,8 +2,8 @@
    meetings for future"). Subtabs: Day (one day's meetings and tasks as tiles the admin drags into the order he wants)
    and Upcoming (what is coming, what still waits for its remark), and Held (meetings and calls that took place, newest first, searchable). Four categories (kohal, 2026-11-16: "client meeting, site visit, call to make, work to
    do"): a Client meeting and a Call to make are meetings (they carry the client's details), a Site visit and Work to do are tasks. A "next schedule
-   plan" with a date becomes a follow-up meeting on its own (see app/planner.py). Every tile looks the same - what, a tag, and a tick at the end
-   (held / done). Admin only. */
+   plan" with a date becomes a follow-up meeting on its own (see app/planner.py). Every tile looks the same - what, a tag, and a "Mark held" /
+   "Mark done" button. Admin only. */
 (() => {
   'use strict';
 
@@ -206,30 +206,32 @@
 
   const whenLine = (dayText, time) => [dayText, time ? clock(time) : null].filter(Boolean).join(' · ');
 
-  function planRow({ key, lines, title, kind, flags, finished, tick, grip, onOpen }) {
+  function planRow({ key, lines, title, kind, flags, finished, action, grip, onOpen }) {
     return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}${grip ? ' has-grip' : ''}`, 'data-key': key },
       grip ? h('span', { class: 'plan-grip', role: 'img', 'aria-label': 'Drag to move up or down' }) : null,
       h('button', { type: 'button', class: 'plan-hit', onclick: onOpen },
-        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...lines.filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line))),
-        h('span', { class: 'plan-chips' }, h('span', { class: 'chip chip-role' }, TAG[kind]), ...flags)),
-      tick);
+        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...lines.filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line)))),
+      h('div', { class: 'plan-aside' }, h('span', { class: 'chip chip-role' }, TAG[kind]), ...flags, action));
   }
 
-  function tickBox(checked, disabled, labelText, onToggle) {
-    const box = h('input', { type: 'checkbox', class: 'plan-check', 'aria-label': labelText, checked, disabled: disabled ? '' : null });
-    box.addEventListener('change', async () => {
-      try { await onToggle(box.checked); } catch (err) { box.checked = !box.checked; toast(err.message); }
+  // The button that marks a tile finished (kohal, 2026-11-16: "for checkbox, its not clear. give text, check mark for meeting held") - a check mark and
+  // words, "✓ Mark held" until it is, then a green "✓ Held". Tap it again to take it back.
+  function doneButton(on, offText, onText, onToggle) {
+    const btn = h('button', { type: 'button', class: `plan-done${on ? ' is-on' : ''}`, 'aria-pressed': String(on) }, `✓ ${on ? onText : offText}`);
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try { await onToggle(!on); } catch (err) { toast(err.message); btn.disabled = false; }
     });
-    return box;
+    return btn;
   }
 
   function meetingRow(m, reload, { showDay = false, held = false, grip = false } = {}) {
-    const tick = tickBox(m.status === 'done', m.status === 'cancelled', `Mark the ${TAG[m.kind].toLowerCase()} with ${m.client_name} as held`, async (on) => {
+    const action = m.status === 'cancelled' ? null : doneButton(m.status === 'done', 'Mark held', 'Held', async (on) => {
       await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: on ? 'done' : 'planned' } });
       reload();
     });
     return planRow({
-      key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, tick,
+      key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, action,
       lines: [whenLine(showDay ? dayLabel(m.meeting_date) : '', m.meeting_time),
         [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
         held && m.remark ? `Remark: ${m.remark}` : null,
@@ -241,12 +243,12 @@
   }
 
   function taskRow(t, reload, { grip = false } = {}) {
-    const tick = tickBox(t.done, false, `Mark ${t.title} done`, async (on) => {
+    const action = doneButton(t.done, 'Mark done', 'Done', async (on) => {
       await api(`/api/planner/tasks/${t.id}`, { method: 'PATCH', body: { done: on } });
       reload();
     });
     return planRow({
-      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, tick, lines: [whenLine('', t.task_time)], finished: t.done,
+      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine('', t.task_time)], finished: t.done,
       flags: [t.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => taskSheet(t, { date: t.task_date }, reload),
     });
