@@ -347,21 +347,20 @@
           } catch (err) { toast(err.message); reload(); }
         });
       }
-      return h('section', { class: 'p-section' }, h('div', { class: 'p-section-head' }, h('h3', {}, heading(day.date))), list);
+      const left = [[day.meetings.filter((m) => m.status === 'planned').length, 'meeting', 'meetings'], [day.tasks.filter((t) => !t.done).length, 'task', 'tasks']]
+        .filter(([n]) => n).map(([n, one, many]) => plural(n, one, many)).join(' · ');
+      return h('section', { class: 'p-section' }, h('div', { class: 'p-section-head' }, h('h3', {}, heading(day.date)), left ? h('span', { class: 'plan-count' }, left) : null), list);
     };
 
     const earlier = d.earlier.map((e) => (e.type === 'meeting' ? meetingRow(e, reload, { showDay: true }) : taskRow(e, reload, { showDay: true })));
-    const open = today.meetings.filter((m) => m.status === 'planned').length;
-    const openTasks = today.tasks.filter((t) => !t.done).length;
     const [now, later] = [d.days[0], d.days.slice(1)];
     clear(view).append(h('div', {},
       tabs('plan'),
       h('div', { class: 'project-detail plan-page' },
-        h('p', { class: 'inv-summary' }, h('strong', {}, String(open)), ` ${open === 1 ? 'meeting or call' : 'meetings and calls'} today · ${plural(openTasks, 'task', 'tasks')} to do`),
         h('div', { class: 'plan-actions' },
           h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting'),
           h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: d.today }, reload) }, '+ Task')),
-        d.days.some((x) => x.order.length > 1) ? h('p', { class: 'hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
+        d.days.some((x) => x.order.length > 1) ? h('p', { class: 'plan-hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
         daySection(now),
         earlier.length ? group('Earlier, still open', 'These days have passed - mark each held or done, or open it to write the remark and plan the next step.', earlier) : null,
         later.map(daySection))));

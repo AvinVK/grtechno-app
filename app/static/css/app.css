@@ -708,11 +708,14 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 
 /* The meeting planner (kohal, 2026-11-16): two equal action buttons, and tiles that all share one layout - grip | who and what |
    tag and flags | tick - for a meeting, a call, a site visit and a piece of work alike. The tiles of a day are dragged by the grip. */
-.plan-page { gap: 10px; }
+.plan-page { gap: 12px; }
 .plan-page > p { margin: 0; }
-.stage-filter + .plan-page { margin-top: 12px; }
+.stage-filter + .plan-page { margin-top: 14px; }
+.plan-page > .p-section + .p-section { margin-top: 6px; }
+.plan-hint { font-size: 12.5px; line-height: 1.3; color: var(--muted); margin: -4px 0 0; }
+.plan-count { font-size: 13px; color: var(--muted); }
 .plan-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-.plan-actions .btn { width: 100%; min-height: 46px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+.plan-actions .btn { width: 100%; min-height: 44px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .plan-kind { padding: 0; }
 .plan-filters { display: grid; gap: 6px; margin: 12px 0 14px; }
 .card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; padding: 0; background: var(--panel); }
