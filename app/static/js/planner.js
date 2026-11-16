@@ -262,12 +262,14 @@
 
   // `state` colours the whole tile (kohal, 2026-11-16: "yellow for upcoming unheld and green for held, color the whole tile"): open (yellow), held (green),
   // cancelled (plain, faded).
-  function planRow({ key, lines, title, kind, flags, state, action, grip, onOpen }) {
-    return h('li', { class: `p-row plan-row is-${state}${grip ? ' has-grip' : ''}`, 'data-key': key },
+  function planRow({ key, lines, title, kind, flags, state, action, extra, grip, onOpen }) {
+    const buttons = [extra, action].filter(Boolean);                     // `extra` (Place call) sits to the left of the main button (Mark held / Mark done)
+    return h('li', { class: `p-row plan-row is-${state}${grip ? ' has-grip' : ''}${buttons.length ? ' has-actions' : ''}`, 'data-key': key },
       grip ? h('span', { class: 'plan-grip', role: 'img', 'aria-label': 'Drag to move up or down' }) : null,
       h('button', { type: 'button', class: 'plan-hit', onclick: onOpen },
         h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...lines.filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line)))),
-      h('div', { class: 'plan-aside' }, h('span', { class: 'chip chip-role' }, TAG[kind]), ...flags, action));
+      h('div', { class: 'plan-aside' }, h('span', { class: 'chip chip-role' }, TAG[kind]), ...flags),
+      buttons.length ? h('div', { class: 'plan-actions-row' }, ...buttons) : null);
   }
 
   // The button that marks a tile finished (kohal, 2026-11-16: "for checkbox, its not clear. give text, check mark for meeting held") - a check mark and
@@ -288,8 +290,12 @@
       reload();
       return true;
     });
+    // "Place call" (kohal, 2026-11-16): a plain tel: link, so the phone's own dialer opens with the number already filled in. Only for a call still to make.
+    const digits = (m.contact_no || '').replace(/[^\d+]/g, '');
+    const dial = m.kind === 'call' && m.status === 'planned' && /\d/.test(digits)
+      ? h('a', { class: 'plan-done plan-call', href: `tel:${digits}`, 'aria-label': `Place a call to ${m.client_name}` }, 'Place call') : null;
     return planRow({
-      key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, action,
+      key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, action, extra: dial,
       lines: [whenLine(showDay ? dayLabel(m.meeting_date) : '', m.meeting_time),
         [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
         held && m.remark ? `Remark: ${m.remark}` : null,
