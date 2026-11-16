@@ -174,6 +174,24 @@ def test_a_clash_is_flagged_for_two_tiles_at_the_same_time_but_a_cancelled_meeti
     assert not any(x["clash"] for x in after["meetings"] + after["tasks"])
 
 
+def test_a_meeting_and_work_to_do_can_overlap_but_a_meeting_and_a_site_visit_cannot(admin_client):
+    """kohal, 2026-11-16: "meeting and work can be parallel" - no Clash between a meeting or call and a Work to do task; everything else at one time still clashes."""
+    meeting = _meeting(admin_client, client_name="In a meeting", meeting_time="10:00")
+    work = _task(admin_client, kind="work", title="Prepare the quote", task_time="10:00")
+    day = _day_view(admin_client)
+    assert day["meetings"][0]["clash"] is False and day["tasks"][0]["clash"] is False
+    call = _meeting(admin_client, client_name="A call", kind="call", meeting_time="10:00")                 # a call is a meeting too: it clashes with the meeting, not with the work
+    day = _day_view(admin_client)
+    assert {m["client_name"]: m["clash"] for m in day["meetings"]} == {"In a meeting": True, "A call": True}
+    assert day["tasks"][0]["clash"] is False
+    admin_client.patch(f"/api/planner/meetings/{call['id']}", json={"status": "cancelled"})
+    visit = _task(admin_client, kind="site_visit", title="Site visit", task_time="10:00")
+    day = _day_view(admin_client)
+    clash = {t["title"]: t["clash"] for t in day["tasks"]}
+    assert clash == {"Prepare the quote": True, "Site visit": True} and day["meetings"][0]["clash"] is True      # only meeting-and-work is allowed to overlap
+    assert meeting["id"] and work["id"] and visit["id"]
+
+
 def test_moving_a_tile_to_another_day_puts_it_last_there_and_keeps_its_time(admin_client):
     other = _meeting(admin_client, client_name="Already there", meeting_date=_day(12))
     m = _meeting(admin_client, meeting_time="14:00")
@@ -309,8 +327,23 @@ def test_held_meetings_are_listed_newest_first_with_their_remark_and_next_plan(a
     r = admin_client.get("/api/planner/history").get_json()
     assert [m["client_name"] for m in r["meetings"]] == ["New one", "Old one"] and r["more"] is False
     assert (r["meetings"][0]["remark"], r["meetings"][0]["next_plan"]) == ("Agreed", "Send the contract")
-    _hold(admin_client, new, status="planned")                                   # unticked again: it leaves the list
-    assert [m["client_name"] for m in admin_client.get("/api/planner/history").get_json()["meetings"]] == ["Old one"]
+    r = admin_client.patch(f"/api/planner/meetings/{new['id']}", json={"status": "planned"})      # a held meeting is never reopened
+    assert r.status_code == 422
+    assert [m["client_name"] for m in admin_client.get("/api/planner/history").get_json()["meetings"]] == ["New one", "Old one"]
+
+
+def test_a_held_meeting_is_final_it_cannot_be_reopened_changed_cancelled_or_moved(admin_client):
+    """kohal, 2026-11-16: "once mark held is done, then it should not be unmarked. it should not reopen"."""
+    m = _meeting(admin_client, client_name="Held for good", meeting_date=_day(2))
+    _hold(admin_client, m, remark="Agreed")
+    url = f"/api/planner/meetings/{m['id']}"
+    for body in ({"status": "planned"}, {"status": "cancelled"}, {"status": "done"}, {"remark": "Changed my mind"}, {"meeting_date": _day(5)},
+                 {"client_name": "Someone else"}, {"next_date": _day(9)}):
+        r = admin_client.patch(url, json=body)
+        assert r.status_code == 422, body
+    saved = _day_view(admin_client, _day(2))["meetings"][0]
+    assert (saved["status"], saved["remark"], saved["client_name"], saved["next_date"]) == ("done", "Agreed", "Held for good", None)
+    assert _order(admin_client, _day(5)) == []                                                       # nothing moved, and no follow-up appeared
 
 
 def test_held_meetings_can_be_narrowed_by_date_and_by_client_or_purpose(admin_client):

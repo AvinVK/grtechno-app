@@ -718,17 +718,27 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .plan-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .plan-actions .btn { width: 100%; min-height: 44px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .plan-kind { padding: 0; }
+.plan-categories { margin-top: 2px; }
+.plan-contact-btn { justify-self: start; margin-top: -4px; }
 .plan-filters { display: grid; gap: 8px; margin: 12px 0 0; }
-.card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; padding: 0; background: var(--panel); }
+.card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; row-gap: 0; padding: 0; background: var(--panel); }
 .card-group .p-row.plan-row.has-grip { grid-template-columns: auto minmax(0, 1fr) auto; }
 .plan-hit { min-width: 0; display: block; padding: 12px 8px 12px 14px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .plan-row.has-grip .plan-hit { padding-left: 4px; }
+.plan-row.has-actions .plan-hit { padding-bottom: 4px; }
 .plan-hit .p-main { gap: 2px; }
-.plan-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 12px 14px 12px 0; }
+.plan-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 12px 14px 0 0; }
+.plan-row:not(.has-actions) .plan-aside { padding-bottom: 12px; }
+/* The buttons of a tile (Place call, Mark held / Mark done) sit in a row of their own under the text, to the right. */
+.plan-actions-row { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding: 6px 14px 12px; }
+.card-group .p-row.plan-row.has-grip .plan-actions-row { grid-column: 2 / -1; }
+.plan-grip { grid-row: 1 / span 2; }
+.plan-done.plan-call { display: inline-flex; align-items: center; text-decoration: none; border-color: var(--accent-dark); color: var(--accent-dark); }
 .plan-aside .chip { margin: 0; white-space: nowrap; }
 .plan-done { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); color: var(--ink); font: 600 13px/1 var(--font-body); white-space: nowrap; cursor: pointer; }
 .plan-done.is-on { background: var(--ok); border-color: var(--ok); color: #fff; }
 .plan-done:disabled { opacity: 0.6; cursor: default; }
+.plan-done.is-fixed { display: inline-flex; align-items: center; cursor: default; }
 /* The whole tile is coloured by where it stands: yellow while it is still to come, green once held or done. */
 .card-group .p-row.plan-row.is-open { background: var(--amber-tint); }
 .card-group .p-row.plan-row.is-held { background: var(--ok-tint); }
