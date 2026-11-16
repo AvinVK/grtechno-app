@@ -7,7 +7,7 @@ shared by the day's meetings and tasks). A time is optional and only a label; it
 date creates the follow-up meeting by itself, added to the end of that day.
 Nothing here is ever deleted: a meeting is cancelled, not removed (a task can be removed - it is only a to-do)."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
 from sqlalchemy import or_
@@ -24,8 +24,6 @@ api_errors(bp)
 STATUSES = ("planned", "done", "cancelled")
 MEETING_KINDS = ("client_meeting", "call")      # "Client meeting" and "Call to make" are meetings ...
 TASK_KINDS = ("site_visit", "work")             # ... "Site visit" and "Work to do" are tasks (kohal, 2026-11-16)
-MEETING_MINUTES = 60
-TASK_MINUTES = 30
 UPCOMING_DAYS = 60            # how far ahead the Upcoming list looks
 HISTORY_LIMIT = 200           # meetings shown at once on the Held tab - narrow it with the dates or a client's name for more
 
@@ -37,10 +35,6 @@ def _admin_only():
 
 
 # ---------- small helpers ----------
-
-def _mins(t: time) -> int:
-    return t.hour * 60 + t.minute
-
 
 def _day_or_today(raw) -> date:
     if not raw:
@@ -93,12 +87,12 @@ def _tiles(day):
 
 def _day_payload(day):
     tiles = _tiles(day)
-    spans = []                                                   # every timed thing that still stands: (start, end, key)
+    at_time = {}                                                 # a time -> the tiles set for exactly then (a cancelled meeting no longer holds its time)
     for kind, row in tiles:
         at = row.meeting_time if kind == "meeting" else row.task_time
         if at is not None and not (kind == "meeting" and row.status == "cancelled"):
-            spans.append((_mins(at), _mins(at) + row.duration_min, (kind, row.id)))
-    clashing = {key for s, e, key in spans for s2, e2, key2 in spans if key != key2 and s < e2 and s2 < e}
+            at_time.setdefault(at, []).append((kind, row.id))
+    clashing = {key for keys in at_time.values() if len(keys) > 1 for key in keys}
     return {"date": day.isoformat(), "today": today_local().isoformat(),
             "order": [[kind, row.id] for kind, row in tiles],
             "meetings": [{**row.to_dict(), "clash": ("meeting", row.id) in clashing} for kind, row in tiles if kind == "meeting"],
@@ -181,15 +175,12 @@ def _meeting_fields(payload, creating):
     f.choice("kind", MEETING_KINDS)
     f.date("meeting_date")
     f.date("next_date")
-    f.integer("duration_min", 5, 480)
     errors, data = f.errors, f.data
     _time_field(payload, "meeting_time", errors, data)
     if "meeting_date" in payload and data.get("meeting_date") is None and "meeting_date" not in errors:
         errors["meeting_date"] = "Pick the date of the meeting"
     if creating and "meeting_date" not in data and "meeting_date" not in errors:
         errors["meeting_date"] = "Pick the date of the meeting"
-    if "duration_min" in data and data["duration_min"] is None:
-        data["duration_min"] = MEETING_MINUTES
     if "client_id" in payload:
         raw = payload["client_id"]
         if raw in (None, ""):
@@ -219,7 +210,7 @@ def _sync_follow_up(m):
     purpose = (m.next_plan or f"Follow-up: {m.purpose}")[:300]
     if child is None:
         child = PlannerMeeting(kind=m.kind, logged_on=today_local(), client_id=m.client_id, client_name=m.client_name, address=m.address, contact_no=m.contact_no,
-                               purpose=purpose, place=m.place, meeting_date=m.next_date, duration_min=m.duration_min, follow_up_of_id=m.id,
+                               purpose=purpose, place=m.place, meeting_date=m.next_date, follow_up_of_id=m.id,
                                position=_next_position(m.next_date), created_by_code=g.user.code)
         db.session.add(child)
     elif child.status == "planned":
@@ -235,7 +226,6 @@ def add_meeting():
     data, errors = _meeting_fields(payload, creating=True)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    data.setdefault("duration_min", MEETING_MINUTES)
     m = PlannerMeeting(logged_on=today_local(), position=_next_position(data["meeting_date"]), created_by_code=g.user.code, **data)
     db.session.add(m)
     db.session.flush()
@@ -271,13 +261,10 @@ def _task_fields(payload, creating):
     f.text("title", 300, required=True, label="the task")
     f.date("task_date")
     f.choice("kind", TASK_KINDS)
-    f.integer("duration_min", 5, 240)
     errors, data = f.errors, f.data
     _time_field(payload, "task_time", errors, data)
     if ("task_date" in payload and data.get("task_date") is None and "task_date" not in errors) or (creating and "task_date" not in data and "task_date" not in errors):
         errors["task_date"] = "Pick the day"
-    if "duration_min" in data and data["duration_min"] is None:
-        data["duration_min"] = TASK_MINUTES
     if "done" in payload:
         if isinstance(payload["done"], bool):
             data["done"] = payload["done"]
@@ -298,7 +285,6 @@ def add_task():
     data, errors = _task_fields(_json_object(), creating=True)
     if errors:
         return jsonify(error="Check the highlighted fields", fields=errors), 422
-    data.setdefault("duration_min", TASK_MINUTES)
     t = PlannerTask(position=_next_position(data["task_date"]), created_by_code=g.user.code, **data)
     db.session.add(t)
     db.session.commit()

@@ -24,10 +24,8 @@
     const [hh, mm] = hhmm.split(':').map(Number);
     return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh >= 12 ? 'PM' : 'AM'}`;
   };
-  const span = (mins) => (mins % 60 === 0 ? `${mins / 60} hr` : mins > 60 ? `${Math.floor(mins / 60)} hr ${mins % 60} min` : `${mins} min`);
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-  const DURATIONS = [15, 30, 45, 60, 90, 120, 180].map((m) => ({ value: m, label: span(m) }));
   const STATUS = [{ value: 'planned', label: 'Planned' }, { value: 'done', label: 'Held' }, { value: 'cancelled', label: 'Cancelled' }];
   const MEETING_KINDS = [{ value: 'client_meeting', label: 'Client meeting' }, { value: 'call', label: 'Call to make' }];
   const TASK_KINDS = [{ value: 'site_visit', label: 'Site visit' }, { value: 'work', label: 'Work to do' }];
@@ -82,7 +80,6 @@
     const place = text(m.place, { maxlength: 200, placeholder: 'Where it will be held' });
     const date = dateField(m.meeting_date || defaults.date, { placeholder: 'Date', clearable: false });
     const when = timeField(m.meeting_time || '', { placeholder: 'Optional' });
-    const length = selectField(DURATIONS, m.duration_min || 60, { title: 'How long', placeholder: 'How long' });
     const status = selectField(STATUS, m.status || 'planned', { title: 'Status', placeholder: 'Status' });
     const remark = h('textarea', { rows: 3, maxlength: 4000, placeholder: 'How it went, what was decided' }, m.remark || '');
     const nextPlan = text(m.next_plan, { maxlength: 500, placeholder: 'e.g. Send the revised quote' });
@@ -101,17 +98,16 @@
     const fPlace = field('place', 'Place of meeting', place);
     const fDate = field('meeting_date', 'Date of meeting', date);
     const fTime = field('meeting_time', 'Time of meeting', when);
-    // A call has no address or place to go to - those two drop out, the labels say "call", and it defaults to a short slot.
-    const apply = (kind, fresh) => {
+    // A call has no address or place to go to - those two drop out, and the labels say "call".
+    const apply = (kind) => {
       const call = kind === 'call';
       fAddress.style.display = fPlace.style.display = call ? 'none' : '';
       relabel(fPurpose, call ? 'Purpose of call' : 'Purpose of meeting');
       relabel(fDate, call ? 'Date of call' : 'Date of meeting');
       relabel(fTime, call ? 'Time of call' : 'Time of meeting');
-      if (fresh && isNew) length.value = call ? 15 : 60;
     };
-    const kind = kindPicker(MEETING_KINDS, m.kind || 'client_meeting', (k) => apply(k, true));
-    apply(kind.value, false);
+    const kind = kindPicker(MEETING_KINDS, m.kind || 'client_meeting', apply);
+    apply(kind.value);
 
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -126,7 +122,6 @@
       fPurpose,
       fPlace,
       h('div', { class: 'field-row' }, fDate, fTime),
-      field('duration_min', 'How long', length),
       isNew ? null : field('status', 'Status', status),
       isNew ? null : field('remark', 'Remark or feedback', remark),
       field('next_plan', 'Next schedule plan', nextPlan),
@@ -142,7 +137,7 @@
       showFieldErrors(form, {});
       const body = {
         kind: kind.value, client_id: clientId, client_name: name.value, address: address.value, contact_no: contact.value, purpose: purpose.value, place: place.value,
-        meeting_date: date.value, meeting_time: when.value, duration_min: length.value, next_plan: nextPlan.value, next_date: nextDate.value,
+        meeting_date: date.value, meeting_time: when.value, next_plan: nextPlan.value, next_date: nextDate.value,
       };
       if (!isNew) Object.assign(body, { status: status.value, remark: remark.value });
       try {
@@ -167,7 +162,6 @@
     const title = h('input', { type: 'text', autocomplete: 'off', maxlength: 300, value: t.title || '' });
     const date = dateField(t.task_date || defaults.date, { placeholder: 'Day', clearable: false });
     const when = timeField(t.task_time || '', { placeholder: 'Optional' });
-    const length = selectField(DURATIONS, t.duration_min || 30, { title: 'How long', placeholder: 'How long' });
     const apply = (kind) => { title.placeholder = kind === 'site_visit' ? 'e.g. Butibori cold storage - check hydrant line' : 'e.g. Prepare the AMC quotation'; };
     const kind = kindPicker(TASK_KINDS, t.kind || 'site_visit', apply);
     apply(kind.value);
@@ -179,7 +173,6 @@
       kind.node,
       field('title', 'What', title),
       h('div', { class: 'field-row' }, field('task_date', 'Day', date), field('task_time', 'Time', when)),
-      field('duration_min', 'How long', length),
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, removeBtn, saveBtn));
     const finish = openSheet(isNew ? 'Add site visit or work' : 'Task', form);
@@ -194,7 +187,7 @@
       saveBtn.disabled = true;
       errEl.textContent = '';
       showFieldErrors(form, {});
-      const body = { kind: kind.value, title: title.value, task_date: date.value, task_time: when.value, duration_min: length.value };
+      const body = { kind: kind.value, title: title.value, task_date: date.value, task_time: when.value };
       try {
         if (isNew) await api('/api/planner/tasks', { method: 'POST', body });
         else await api(`/api/planner/tasks/${t.id}`, { method: 'PATCH', body });
@@ -211,7 +204,7 @@
 
   /* ---------- tiles: grip | what | tag and flags | tick ---------- */
 
-  const whenLine = (dayText, time, length) => [dayText, time ? `${clock(time)} · ${span(length)}` : null].filter(Boolean).join(' · ');
+  const whenLine = (dayText, time) => [dayText, time ? clock(time) : null].filter(Boolean).join(' · ');
 
   function planRow({ key, lines, title, kind, flags, finished, tick, grip, onOpen }) {
     return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}${grip ? ' has-grip' : ''}`, 'data-key': key },
@@ -237,7 +230,7 @@
     });
     return planRow({
       key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, tick,
-      lines: [whenLine(showDay ? dayLabel(m.meeting_date) : '', m.meeting_time, m.duration_min),
+      lines: [whenLine(showDay ? dayLabel(m.meeting_date) : '', m.meeting_time),
         [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
         held && m.remark ? `Remark: ${m.remark}` : null,
         held && m.next_plan ? `Next: ${m.next_plan}${m.next_date ? ` (${dayLabel(m.next_date)})` : ''}` : null],
@@ -253,7 +246,7 @@
       reload();
     });
     return planRow({
-      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, tick, lines: [whenLine('', t.task_time, t.duration_min)], finished: t.done,
+      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, tick, lines: [whenLine('', t.task_time)], finished: t.done,
       flags: [t.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => taskSheet(t, { date: t.task_date }, reload),
     });

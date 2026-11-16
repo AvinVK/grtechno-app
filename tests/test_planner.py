@@ -45,10 +45,11 @@ def test_only_the_admin_can_use_the_planner(client, manager_client, admin_client
 
 
 def test_a_meeting_keeps_every_field_of_the_meeting_sheet(admin_client):
-    m = _meeting(admin_client, meeting_time="11:30", duration_min=90)
+    m = _meeting(admin_client, meeting_time="11:30")
     assert abs((date.fromisoformat(m["logged_on"]) - date.today()).days) <= 1                          # the sheet's "Date": the day it was entered
     assert (m["client_name"], m["address"], m["contact_no"]) == ("Kalyani Warehousing", "Kamptee Road godown", "9800000001")
-    assert (m["purpose"], m["place"], m["meeting_time"], m["duration_min"], m["status"]) == ("Fire NOC discussion", "Site office", "11:30", 90, "planned")
+    assert (m["purpose"], m["place"], m["meeting_time"], m["status"]) == ("Fire NOC discussion", "Site office", "11:30", "planned")
+    assert "duration_min" not in m                                                                    # how long is no longer asked
     saved = _day_view(admin_client)["meetings"][0]
     assert saved["id"] == m["id"] and saved["contact_no"] == "9800000001"
     r = admin_client.patch(f"/api/planner/meetings/{m['id']}", json={"status": "done", "remark": "Agreed to go ahead, wants a revised quote"})
@@ -152,10 +153,10 @@ def test_the_order_must_name_real_tiles_of_that_day_once_each(admin_client):
     assert _order(admin_client, _day(11)) == [["meeting", elsewhere["id"]]]                          # nothing moved
 
 
-def test_a_clash_is_flagged_for_overlapping_times_but_a_cancelled_meeting_holds_no_slot(admin_client):
-    first = _meeting(admin_client, client_name="First one", meeting_time="10:00", duration_min=60)
+def test_a_clash_is_flagged_for_two_tiles_at_the_same_time_but_a_cancelled_meeting_holds_no_time(admin_client):
+    first = _meeting(admin_client, client_name="First one", meeting_time="10:00")
     late = _meeting(admin_client, client_name="Late one", meeting_time="15:00")
-    overlapping = _task(admin_client, task_time="10:30", duration_min=30)
+    overlapping = _task(admin_client, task_time="10:00")
     day = _day_view(admin_client)
     assert {m["id"]: m["clash"] for m in day["meetings"]} == {first["id"]: True, late["id"]: False}
     assert day["tasks"][0]["id"] == overlapping["id"] and day["tasks"][0]["clash"] is True
