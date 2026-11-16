@@ -95,8 +95,17 @@ def test_the_me_tab_has_a_planner_tile_for_the_admin_only_and_no_projects_tile(a
     html = admin_client.get("/me").get_data(as_text=True)
     assert 'class="me-tile" href="/planner"' in html
     assert 'class="me-tile" href="/projects"' not in html                    # the Projects tab is the same page (kohal, 2026-11-16)
+    tile = lambda: admin_client.get("/me").get_data(as_text=True).split('href="/planner"')[1].split("</a>")[0]      # noqa: E731
+    assert "me-tile-badge" not in tile()                                     # nothing today: no marker
     _meeting(admin_client, meeting_date=date.today().isoformat())
-    assert "meeting" in admin_client.get("/me").get_data(as_text=True).split('href="/planner"')[1].split("</a>")[0]
+    _meeting(admin_client, client_name="A call", kind="call", meeting_date=date.today().isoformat())
+    _meeting(admin_client, client_name="Another day", meeting_date=_day(3))
+    _task(admin_client, task_date=date.today().isoformat())
+    held = _meeting(admin_client, client_name="Already held", meeting_date=date.today().isoformat())
+    admin_client.patch(f"/api/planner/meetings/{held['id']}", json={"status": "done"})
+    html = tile()
+    assert '<span class="me-tile-badge" aria-label="2 planned today">2</span>' in html                 # 2 meetings and calls still planned today
+    assert "Today: 2 meetings · 1 task" in html
     assert "/planner" not in manager_client.get("/me").get_data(as_text=True)
 
 

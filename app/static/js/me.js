@@ -797,3 +797,63 @@
   load();
 })();
 
+/* Today's plan as a popup (kohal, 2026-11-16: "show meetings as popup of that day when admin opens me tab") - the admin's meetings, calls and open tasks
+   for today in the order set on the Plan tab, shown once a day on the first time Me is opened on this phone (remembered in the browser, "on the phone is
+   fine"). Nothing planned, nothing shown - and not counted as shown, so something added later the same day still pops up. Only the admin has a Planner
+   tile, which is how this knows to run. */
+(() => {
+  'use strict';
+
+  if (!document.querySelector('a.me-tile[href="/planner"]')) return;
+  const { h, api, closeOnBack } = window.LD;
+  const today = new Date().toLocaleDateString('en-CA');
+  const KEY = 'planner-popup-day';
+  try { if (window.localStorage.getItem(KEY) === today) return; } catch (err) { /* private window: it just shows every time */ }
+
+  const TAG = { client_meeting: 'Meeting', call: 'Call', site_visit: 'Site visit', work: 'Work' };
+  const clock = (hhmm) => {
+    const [hh, mm] = hhmm.split(':').map(Number);
+    return `${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh >= 12 ? 'PM' : 'AM'}`;
+  };
+
+  async function show() {
+    let d;
+    try { d = await api(`/api/planner/day?date=${today}`); } catch (err) { return; }
+    const meetings = new Map(d.meetings.map((m) => [m.id, m]));
+    const tasks = new Map(d.tasks.map((t) => [t.id, t]));
+    const rows = [];
+    d.order.forEach(([kind, id]) => {
+      if (kind === 'meeting') {
+        const m = meetings.get(id);
+        if (m.status !== 'planned') return;
+        rows.push(h('li', { class: 'p-row' },
+          h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, m.client_name),
+            h('span', { class: 'row-sub' }, [m.meeting_time ? clock(m.meeting_time) : '', m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '))),
+          h('span', { class: 'chip chip-role' }, TAG[m.kind])));
+      } else {
+        const t = tasks.get(id);
+        if (t.done) return;
+        rows.push(h('li', { class: 'p-row' },
+          h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, t.title), t.task_time ? h('span', { class: 'row-sub' }, clock(t.task_time)) : null),
+          h('span', { class: 'chip chip-role' }, TAG[t.kind])));
+      }
+    });
+    if (!rows.length) return;
+    try { window.localStorage.setItem(KEY, today); } catch (err) { /* see above */ }
+
+    const overlay = h('div', { class: 'confirm-overlay sheet-overlay' });
+    const finish = closeOnBack(() => overlay.remove());
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+    const dayName = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    overlay.append(h('div', { class: 'amount-sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': "Today's plan" },
+      h('h2', {}, "Today's plan"),
+      h('p', { class: 'hint' }, dayName),
+      h('ul', { class: 'card-group plan-today-list' }, rows),
+      h('div', { class: 'confirm-actions' },
+        h('button', { class: 'btn', type: 'button', onclick: () => finish() }, 'Close'),
+        h('a', { class: 'btn primary', href: '/planner' }, 'Open plan'))));
+    document.body.append(overlay);
+  }
+
+  show();
+})();

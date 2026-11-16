@@ -23,7 +23,7 @@
   {% if not extra_tiles %}<p class="sb-empty">No services are turned on yet.</p>{% endif %}
   {% endfor %}
   {% for t in extra_tiles %}
-  <a class="me-tile" href="{{ t.href }}">{{ icon(t.icon) }}<span class="me-tile-name">{{ t.name }}</span>{% if t.sum %}<span class="me-tile-sum">{{ t.sum }}</span>{% endif %}</a>
+  <a class="me-tile" href="{{ t.href }}">{{ icon(t.icon) }}<span class="me-tile-name">{{ t.name }}</span>{% if t.badge %}<span class="me-tile-badge" aria-label="{{ t.badge }} planned today">{{ t.badge }}</span>{% endif %}{% if t.sum %}<span class="me-tile-sum">{{ t.sum }}</span>{% endif %}</a>
   {% endfor %}
 </div>
 {%- endmacro %}

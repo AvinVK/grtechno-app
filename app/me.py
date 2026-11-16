@@ -121,9 +121,13 @@ def _extra_tiles():
     # project manager given Inventory lost their own Petrol tile (reported 2026-11-05).
     if g.user.is_admin:
         # The meeting planner (kohal, 2026-11-16) - admin only, see app/planner.py.
-        from .models import PlannerMeeting
-        n = PlannerMeeting.query.filter(PlannerMeeting.meeting_date == today_local(), PlannerMeeting.status == "planned").count()
-        tiles.append({"href": "/planner", "icon": "schedule", "name": "Planner", "sum": f"{n} meeting{'' if n == 1 else 's'} today" if n else None})
+        from .models import PlannerMeeting, PlannerTask
+        today = today_local()
+        n = PlannerMeeting.query.filter(PlannerMeeting.meeting_date == today, PlannerMeeting.status == "planned").count()
+        open_tasks = PlannerTask.query.filter(PlannerTask.task_date == today, PlannerTask.done.is_(False)).count()
+        line = " · ".join(x for x in (f"{n} meeting{'' if n == 1 else 's'}" if n else "", f"{open_tasks} task{'' if open_tasks == 1 else 's'}" if open_tasks else "") if x)
+        # The badge (kohal, 2026-11-16: "a marker on the planner block with count of meetings today") counts today's meetings and calls still planned.
+        tiles.append({"href": "/planner", "icon": "schedule", "name": "Planner", "sum": f"Today: {line}" if line else None, "badge": n or None})
     manager = bool(tiles)
     worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker is not None and worker.wage_amount is not None:
