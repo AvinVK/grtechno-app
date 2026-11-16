@@ -88,13 +88,28 @@ def _tiles(day):
 
 # ---------- reading a day ----------
 
+def _can_overlap(a, b) -> bool:
+    """A meeting or call and a piece of work to do can happen at the same time (kohal, 2026-11-16: "meeting and work can be parallel") - no clash between
+    them. Anything else set for the same time (two meetings, a meeting and a site visit, two site visits) is."""
+    (kind_a, row_a), (kind_b, row_b) = a, b
+    if kind_a == kind_b:
+        return False
+    task = row_a if kind_a == "task" else row_b
+    return task.kind == "work"
+
+
 def _payload_of(day, tiles):
     at_time = {}                                                 # a time -> the tiles set for exactly then (a cancelled meeting no longer holds its time)
     for kind, row in tiles:
         at = row.meeting_time if kind == "meeting" else row.task_time
         if at is not None and not (kind == "meeting" and row.status == "cancelled"):
-            at_time.setdefault(at, []).append((kind, row.id))
-    clashing = {key for keys in at_time.values() if len(keys) > 1 for key in keys}
+            at_time.setdefault(at, []).append((kind, row))
+    clashing = set()
+    for same_time in at_time.values():
+        for i, a in enumerate(same_time):
+            for b in same_time[i + 1:]:
+                if not _can_overlap(a, b):
+                    clashing.update({(a[0], a[1].id), (b[0], b[1].id)})
     return {"date": day.isoformat(),
             "order": [[kind, row.id] for kind, row in tiles],
             "meetings": [{**row.to_dict(), "clash": ("meeting", row.id) in clashing} for kind, row in tiles if kind == "meeting"],
