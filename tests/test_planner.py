@@ -213,18 +213,57 @@ def test_clearing_the_next_date_cancels_a_follow_up_that_is_still_only_planned(a
     assert _day_view(admin_client, _day(12))["meetings"][0]["status"] == "done"                      # one that took place is never touched
 
 
-def test_upcoming_lists_what_is_ahead_in_tile_order_and_what_still_needs_a_remark(app, admin_client):
-    second = _meeting(admin_client, client_name="Second tile", meeting_date=_day(4))
-    first = _meeting(admin_client, client_name="First tile", meeting_date=_day(4))
-    admin_client.post("/api/planner/order", json={"date": _day(4), "items": [["meeting", first["id"]], ["meeting", second["id"]]]})
-    cancelled = _meeting(admin_client, client_name="Cancelled", meeting_date=_day(5))
+def _agenda(c):
+    return c.get("/api/planner/agenda").get_json()
+
+
+def test_the_plan_always_shows_today_first_even_when_nothing_is_planned(admin_client):
+    r = _agenda(admin_client)
+    assert [d["date"] for d in r["days"]] == [r["today"]] and r["days"][0]["order"] == [] and r["earlier"] == []
+
+
+def test_the_plan_lists_today_then_each_later_day_with_meetings_and_tasks_in_tile_order(admin_client):
+    today = date.today().isoformat()
+    soon = _meeting(admin_client, client_name="Today one", meeting_date=today)
+    later_m = _meeting(admin_client, client_name="Later meeting", meeting_date=_day(4))
+    later_t = _task(admin_client, title="Later task", task_date=_day(4))
+    first = _meeting(admin_client, client_name="Dragged first", meeting_date=_day(4))
+    admin_client.post("/api/planner/order", json={"date": _day(4), "items": [["meeting", first["id"]], ["task", later_t["id"]], ["meeting", later_m["id"]]]})
+    _meeting(admin_client, client_name="Nine days on", meeting_date=_day(9))
+    r = _agenda(admin_client)
+    assert [d["date"] for d in r["days"]] == [today, _day(4), _day(9)]                                # a day with nothing planned is not listed
+    assert r["days"][0]["order"] == [["meeting", soon["id"]]]
+    assert r["days"][1]["order"] == [["meeting", first["id"]], ["task", later_t["id"]], ["meeting", later_m["id"]]]
+    assert [m["client_name"] for m in r["days"][1]["meetings"]] == ["Dragged first", "Later meeting"]
+    assert r["days"][1]["tasks"][0]["title"] == "Later task"
+
+
+def test_a_new_meeting_for_a_later_date_shows_under_that_date_and_not_today(admin_client):
+    today = date.today().isoformat()
+    _meeting(admin_client, client_name="For today", meeting_date=today)
+    moved = _meeting(admin_client, client_name="Moves down", meeting_date=_day(6))
+    r = _agenda(admin_client)
+    assert [m["client_name"] for m in r["days"][0]["meetings"]] == ["For today"]
+    assert [m["client_name"] for m in r["days"][1]["meetings"]] == ["Moves down"] and r["days"][1]["date"] == _day(6)
+    admin_client.patch(f"/api/planner/meetings/{moved['id']}", json={"meeting_date": today})              # and rescheduling to today brings it up
+    r = _agenda(admin_client)
+    assert [d["date"] for d in r["days"]] == [today] and len(r["days"][0]["meetings"]) == 2
+
+
+def test_earlier_lists_past_meetings_still_planned_and_past_tasks_not_done_oldest_first(admin_client):
+    old_meeting = _meeting(admin_client, client_name="Old meeting", meeting_date=_day(-8))
+    old_task = _task(admin_client, title="Old task", task_date=_day(-5))
+    newer = _meeting(admin_client, client_name="Newer meeting", meeting_date=_day(-2))
+    held = _meeting(admin_client, client_name="Held already", meeting_date=_day(-3))
+    admin_client.patch(f"/api/planner/meetings/{held['id']}", json={"status": "done"})
+    cancelled = _meeting(admin_client, client_name="Cancelled", meeting_date=_day(-4))
     admin_client.patch(f"/api/planner/meetings/{cancelled['id']}", json={"status": "cancelled"})
-    past = _meeting(admin_client, client_name="Past", meeting_date=_day(-3))                           # logging a meeting that already happened is allowed
-    r = admin_client.get("/api/planner/upcoming").get_json()
-    assert [m["id"] for m in r["meetings"]] == [first["id"], second["id"]]
-    assert [m["id"] for m in r["needs_remark"]] == [past["id"]]
-    admin_client.patch(f"/api/planner/meetings/{past['id']}", json={"status": "done", "remark": "Done"})
-    assert admin_client.get("/api/planner/upcoming").get_json()["needs_remark"] == []
+    finished = _task(admin_client, title="Finished task", task_date=_day(-6))
+    admin_client.patch(f"/api/planner/tasks/{finished['id']}", json={"done": True})
+    earlier = _agenda(admin_client)["earlier"]
+    assert [(e["type"], e["id"]) for e in earlier] == [("meeting", old_meeting["id"]), ("task", old_task["id"]), ("meeting", newer["id"])]
+    admin_client.patch(f"/api/planner/meetings/{old_meeting['id']}", json={"status": "done", "remark": "Done"})
+    assert [e["id"] for e in _agenda(admin_client)["earlier"] if e["type"] == "meeting"] == [newer["id"]]
 
 
 def test_tasks_can_be_ticked_and_removed(admin_client):

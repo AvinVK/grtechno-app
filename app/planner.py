@@ -24,7 +24,8 @@ api_errors(bp)
 STATUSES = ("planned", "done", "cancelled")
 MEETING_KINDS = ("client_meeting", "call")      # "Client meeting" and "Call to make" are meetings ...
 TASK_KINDS = ("site_visit", "work")             # ... "Site visit" and "Work to do" are tasks (kohal, 2026-11-16)
-UPCOMING_DAYS = 60            # how far ahead the Upcoming list looks
+AGENDA_DAYS = 365             # how far ahead the plan looks
+EARLIER_LIMIT = 100           # how many past, still-open items the plan lists
 HISTORY_LIMIT = 200           # meetings shown at once on the Held tab - narrow it with the dates or a client's name for more
 
 
@@ -76,27 +77,32 @@ def _next_position(day) -> int:
     return top + 1
 
 
-def _tiles(day):
-    """The day's meetings and tasks in tile order: by position, then meetings before tasks, then oldest first (rows from before positions all sit at 0)."""
-    meetings = PlannerMeeting.query.filter_by(meeting_date=day).all()
-    tasks = PlannerTask.query.filter_by(task_date=day).all()
+def _in_tile_order(meetings, tasks):
+    """Meetings and tasks of one day in tile order: by position, then meetings before tasks, then oldest first (rows from before positions all sit at 0)."""
     return sorted([("meeting", m) for m in meetings] + [("task", t) for t in tasks], key=lambda x: (x[1].position, x[0] != "meeting", x[1].id))
+
+
+def _tiles(day):
+    return _in_tile_order(PlannerMeeting.query.filter_by(meeting_date=day).all(), PlannerTask.query.filter_by(task_date=day).all())
 
 
 # ---------- reading a day ----------
 
-def _day_payload(day):
-    tiles = _tiles(day)
+def _payload_of(day, tiles):
     at_time = {}                                                 # a time -> the tiles set for exactly then (a cancelled meeting no longer holds its time)
     for kind, row in tiles:
         at = row.meeting_time if kind == "meeting" else row.task_time
         if at is not None and not (kind == "meeting" and row.status == "cancelled"):
             at_time.setdefault(at, []).append((kind, row.id))
     clashing = {key for keys in at_time.values() if len(keys) > 1 for key in keys}
-    return {"date": day.isoformat(), "today": today_local().isoformat(),
+    return {"date": day.isoformat(),
             "order": [[kind, row.id] for kind, row in tiles],
             "meetings": [{**row.to_dict(), "clash": ("meeting", row.id) in clashing} for kind, row in tiles if kind == "meeting"],
             "tasks": [{**row.to_dict(), "clash": ("task", row.id) in clashing} for kind, row in tiles if kind == "task"]}
+
+
+def _day_payload(day):
+    return {**_payload_of(day, _tiles(day)), "today": today_local().isoformat()}
 
 
 @bp.get("/planner")
@@ -109,16 +115,27 @@ def day():
     return jsonify(_day_payload(_day_or_today(request.args.get("date"))))
 
 
-@bp.get("/api/planner/upcoming")
-def upcoming():
-    """What is coming (planned meetings from today, with the day's open task count) and what still waits for its remark - planned meetings of past days."""
+@bp.get("/api/planner/agenda")
+def agenda():
+    """The plan, in one scroll (kohal, 2026-11-16: "club day and upcoming tabs"): `earlier` - meetings still planned and tasks not done from days gone
+    by, oldest first; then `days` - today (always, even empty) and every later day that has anything, each with its tiles in the order dragged."""
     today = today_local()
-    ahead = (PlannerMeeting.query.filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_date >= today,
-                                         PlannerMeeting.meeting_date <= today + timedelta(days=UPCOMING_DAYS))
-             .order_by(PlannerMeeting.meeting_date, PlannerMeeting.position, PlannerMeeting.id).all())
-    waiting = (PlannerMeeting.query.filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_date < today)
-               .order_by(PlannerMeeting.meeting_date.desc(), PlannerMeeting.id).limit(50).all())
-    return jsonify(today=today.isoformat(), meetings=[m.to_dict() for m in ahead], needs_remark=[m.to_dict() for m in waiting])
+    end = today + timedelta(days=AGENDA_DAYS)
+    meetings = PlannerMeeting.query.filter(PlannerMeeting.meeting_date >= today, PlannerMeeting.meeting_date <= end).all()
+    tasks = PlannerTask.query.filter(PlannerTask.task_date >= today, PlannerTask.task_date <= end).all()
+    by_day = {today: ([], [])}
+    for m in meetings:
+        by_day.setdefault(m.meeting_date, ([], []))[0].append(m)
+    for t in tasks:
+        by_day.setdefault(t.task_date, ([], []))[1].append(t)
+    days = [_payload_of(day, _in_tile_order(*by_day[day])) for day in sorted(by_day)]
+    old_meetings = (PlannerMeeting.query.filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_date < today)
+                    .order_by(PlannerMeeting.meeting_date.desc(), PlannerMeeting.id.desc()).limit(EARLIER_LIMIT).all())
+    old_tasks = (PlannerTask.query.filter(PlannerTask.done.is_(False), PlannerTask.task_date < today)
+                 .order_by(PlannerTask.task_date.desc(), PlannerTask.id.desc()).limit(EARLIER_LIMIT).all())
+    earlier = sorted([("meeting", m.meeting_date, m.id, m.to_dict()) for m in old_meetings] + [("task", t.task_date, t.id, t.to_dict()) for t in old_tasks],
+                     key=lambda x: (x[1], x[0] != "meeting", x[2]))[-EARLIER_LIMIT:]
+    return jsonify(today=today.isoformat(), days=days, earlier=[{"type": kind, **data} for kind, _day, _id, data in earlier])
 
 
 def _optional_day(name):

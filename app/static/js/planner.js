@@ -1,20 +1,16 @@
 /* The admin's meeting planner and scheduler (kohal, 2026-11-16: "a meeting planner and scheduler (auto and manual scheduler) for admin to plan the day and
-   meetings for future"). Subtabs: Day (one day's meetings and tasks as tiles the admin drags into the order he wants)
-   and Upcoming (what is coming, what still waits for its remark), and Held (meetings and calls that took place, newest first, searchable). Four categories (kohal, 2026-11-16: "client meeting, site visit, call to make, work to
+   meetings for future"). Two tabs: Plan (today at the top, then each coming day, every day's meetings and tasks as tiles the admin drags into the order he
+   wants; anything from earlier days still open sits after today - kohal: "club day and upcoming tabs") and Held (meetings and calls that took place, newest
+   first, searchable). Four categories (kohal, 2026-11-16: "client meeting, site visit, call to make, work to
    do"): a Client meeting and a Call to make are meetings (they carry the client's details), a Site visit and Work to do are tasks. A "next schedule
    plan" with a date becomes a follow-up meeting on its own (see app/planner.py). Every tile looks the same - what, a tag, and a "Mark held" /
    "Mark done" button. Admin only. */
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, field, showFieldErrors, selectField, searchField, dateField, timeField, pickDate, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, field, showFieldErrors, selectField, searchField, dateField, timeField, closeOnBack } = window.LD;
   const view = $('#view');
 
-  const todayIso = () => new Date().toLocaleDateString('en-CA');
-  const shiftDay = (iso, by) => {
-    const [y, m, d] = iso.split('-').map(Number);
-    return new Date(y, m - 1, d + by).toLocaleDateString('en-CA');
-  };
   const dayLabel = (iso) => {
     const [y, m, d] = iso.split('-').map(Number);
     return new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -33,8 +29,7 @@
 
   function tabs(active) {
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Planner' },
-      h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'day' ? 'page' : null }, 'Day'),
-      h('a', { class: 'filter-chip', href: '#upcoming', 'aria-current': active === 'upcoming' ? 'page' : null }, 'Upcoming'),
+      h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'plan' ? 'page' : null }, 'Plan'),
       h('a', { class: 'filter-chip', href: '#held', 'aria-current': active === 'held' ? 'page' : null }, 'Held'));
   }
 
@@ -242,13 +237,13 @@
     });
   }
 
-  function taskRow(t, reload, { grip = false } = {}) {
+  function taskRow(t, reload, { showDay = false, grip = false } = {}) {
     const action = doneButton(t.done, 'Mark done', 'Done', async (on) => {
       await api(`/api/planner/tasks/${t.id}`, { method: 'PATCH', body: { done: on } });
       reload();
     });
     return planRow({
-      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine('', t.task_time)], finished: t.done,
+      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine(showDay ? dayLabel(t.task_date) : '', t.task_time)], finished: t.done,
       flags: [t.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => taskSheet(t, { date: t.task_date }, reload),
     });
@@ -322,67 +317,54 @@
     });
   }
 
-  /* ---------- Day ---------- */
+  /* ---------- The plan: today at the top, then each coming day ---------- */
 
-  async function showDay(day) {
+  async function showPlan() {
     clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
     let d;
-    try { d = await api(`/api/planner/day?date=${encodeURIComponent(day)}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
-    const reload = () => showDay(day);
-    // The date bar: ‹ the day › in one card, like the calendar's own header - tap the day to pick another from the calendar.
-    const ahead = Math.round((new Date(`${day}T00:00:00`) - new Date(`${d.today}T00:00:00`)) / 86400000);
-    const hint = ahead === 0 ? 'Today' : ahead === 1 ? 'Tomorrow' : ahead === -1 ? 'Yesterday' : ahead > 0 ? `In ${ahead} days` : `${-ahead} days ago`;
-    const [dy, dm, dd] = day.split('-').map(Number);
-    const step = (by, text) => h('button', { class: 'cal-nav', type: 'button', 'aria-label': text, onclick: () => showDay(shiftDay(day, by)) }, by < 0 ? '‹' : '›');
-    const dateBar = h('div', { class: 'plan-nav' }, step(-1, 'Previous day'),
-      h('button', { class: 'plan-date', type: 'button', 'aria-label': 'Pick a day', onclick: async () => { const picked = await pickDate(day, { clearable: false }); if (picked) showDay(picked); } },
-        h('strong', {}, new Date(dy, dm - 1, dd).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })), h('small', {}, hint)),
-      step(1, 'Next day'));
+    try { d = await api('/api/planner/agenda'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
+    const reload = showPlan;
+    const today = d.days.find((x) => x.date === d.today);
+    const thisYear = d.today.slice(0, 4);
+    const dayName = (iso) => {
+      const [y, m, dd] = iso.split(('-')).map(Number);
+      return new Date(y, m - 1, dd).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', ...(String(y) === thisYear ? {} : { year: 'numeric' }) });
+    };
+    const ahead = (iso) => Math.round((new Date(`${iso}T00:00:00`) - new Date(`${d.today}T00:00:00`)) / 86400000);
+    const heading = (iso) => (iso === d.today ? `Today · ${dayName(iso)}` : ahead(iso) === 1 ? `Tomorrow · ${dayName(iso)}` : dayName(iso));
 
-    const meetings = new Map(d.meetings.map((m) => [m.id, m]));
-    const tasks = new Map(d.tasks.map((t) => [t.id, t]));
-    const grip = d.order.length > 1;
-    const tiles = d.order.map(([kind, id]) => (kind === 'meeting' ? meetingRow(meetings.get(id), reload, { grip }) : taskRow(tasks.get(id), reload, { grip })));
-    const list = h('ul', { class: 'card-group plan-list' }, tiles);
-    if (grip) {
-      makeSortable(list, async (keys) => {
-        try {
-          await api('/api/planner/order', { method: 'POST', body: { date: day, items: keys.map((k) => { const [kind, id] = k.split(':'); return [kind, Number(id)]; }) } });
-        } catch (err) { toast(err.message); reload(); }
-      });
-    }
+    // One list of tiles per day, each dragged on its own - the order is kept per day.
+    const daySection = (day) => {
+      const meetings = new Map(day.meetings.map((m) => [m.id, m]));
+      const tasks = new Map(day.tasks.map((t) => [t.id, t]));
+      const grip = day.order.length > 1;
+      const tiles = day.order.map(([kind, id]) => (kind === 'meeting' ? meetingRow(meetings.get(id), reload, { grip }) : taskRow(tasks.get(id), reload, { grip })));
+      const list = tiles.length ? h('ul', { class: 'card-group plan-list' }, tiles) : h('p', { class: 'hint' }, 'Nothing planned for today. Add a meeting, a call, a site visit or some work.');
+      if (grip) {
+        makeSortable(list, async (keys) => {
+          try {
+            await api('/api/planner/order', { method: 'POST', body: { date: day.date, items: keys.map((k) => { const [kind, id] = k.split(':'); return [kind, Number(id)]; }) } });
+          } catch (err) { toast(err.message); reload(); }
+        });
+      }
+      return h('section', { class: 'p-section' }, h('div', { class: 'p-section-head' }, h('h3', {}, heading(day.date))), list);
+    };
 
-    const open = d.meetings.filter((m) => m.status === 'planned').length;
-    const openTasks = d.tasks.filter((t) => !t.done).length;
+    const earlier = d.earlier.map((e) => (e.type === 'meeting' ? meetingRow(e, reload, { showDay: true }) : taskRow(e, reload, { showDay: true })));
+    const open = today.meetings.filter((m) => m.status === 'planned').length;
+    const openTasks = today.tasks.filter((t) => !t.done).length;
+    const [now, later] = [d.days[0], d.days.slice(1)];
     clear(view).append(h('div', {},
-      tabs('day'),
+      tabs('plan'),
       h('div', { class: 'project-detail plan-page' },
-        dateBar,
-        h('p', { class: 'inv-summary' }, h('strong', {}, String(open)), ` ${open === 1 ? 'meeting or call' : 'meetings and calls'} · ${plural(openTasks, 'task', 'tasks')} to do`),
+        h('p', { class: 'inv-summary' }, h('strong', {}, String(open)), ` ${open === 1 ? 'meeting or call' : 'meetings and calls'} today · ${plural(openTasks, 'task', 'tasks')} to do`),
         h('div', { class: 'plan-actions' },
-          h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: day }, reload) }, '+ Meeting'),
-          h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: day }, reload) }, '+ Task')),
-        grip ? h('p', { class: 'hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
-        tiles.length ? list : h('p', { class: 'hint' }, 'Nothing planned for this day yet. Add a meeting, a call, a site visit or some work.'))));
-  }
-
-  /* ---------- Upcoming ---------- */
-
-  async function showUpcoming() {
-    clear(view).append(h('p', { class: 'loading' }, 'Loading…'));
-    let d;
-    try { d = await api('/api/planner/upcoming'); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
-    const reload = showUpcoming;
-    const byDay = new Map();
-    d.meetings.forEach((m) => { if (!byDay.has(m.meeting_date)) byDay.set(m.meeting_date, []); byDay.get(m.meeting_date).push(m); });
-    clear(view).append(h('div', {},
-      tabs('upcoming'),
-      h('div', { class: 'project-detail plan-page' },
-        h('div', { class: 'plan-actions' }, h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting')),
-        d.needs_remark.length ? group('Waiting for your remark', 'These dates have passed - open one to say how it went, and plan the next step.',
-          d.needs_remark.map((m) => meetingRow(m, reload, { showDay: true }))) : null,
-        byDay.size ? [...byDay].map(([day, list]) => group(day === d.today ? `Today · ${dayLabel(day)}` : dayLabel(day), null, list.map((m) => meetingRow(m, reload)))) :
-          h('p', { class: 'hint' }, 'No meetings are planned ahead. Add one, or write a next plan with a date on a meeting.'))));
+          h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting'),
+          h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: d.today }, reload) }, '+ Task')),
+        d.days.some((x) => x.order.length > 1) ? h('p', { class: 'hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
+        daySection(now),
+        earlier.length ? group('Earlier, still open', 'These days have passed - mark each held or done, or open it to write the remark and plan the next step.', earlier) : null,
+        later.map(daySection))));
   }
 
   /* ---------- Held: meetings and calls that took place ---------- */
@@ -428,9 +410,7 @@
   }
 
   function route() {
-    if (window.location.hash === '#upcoming') showUpcoming();
-    else if (window.location.hash === '#held') showHeld();
-    else showDay(todayIso());
+    if (window.location.hash === '#held') showHeld(); else showPlan();
   }
   window.addEventListener('hashchange', route);
   route();
