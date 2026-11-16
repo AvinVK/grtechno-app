@@ -104,10 +104,24 @@
     const kind = kindPicker(MEETING_KINDS, m.kind || 'client_meeting', apply);
     apply(kind.value);
 
+    // What was said and what comes next belong to a meeting that has been held (kohal, 2026-11-16: "the scheduled part should be only once the meeting is
+    // getting marked as held") - a new meeting does not ask for them, and an existing one shows them only while its Status is Held. Marking a meeting held
+    // from the list asks for them in a bottom form instead (heldSheet).
+    const heldPart = h('div', { class: 'plan-held-part' },
+      field('remark', 'Remark or feedback', remark),
+      field('next_plan', 'Next schedule plan', nextPlan),
+      field('next_date', 'Next meeting on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }));
+    const showHeldPart = () => { heldPart.style.display = status.value === 'done' ? '' : 'none'; };
+    status.addEventListener('change', showHeldPart);
+    showHeldPart();
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add' : 'Save');
+    // A held meeting is only looked at (kohal, 2026-11-16: "when clicking on held meeting or tasks, have the form as read only") - to change it, un-tick
+    // "✓ Held" on its tile first.
+    const readOnly = !isNew && m.status === 'done';
     const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
+      readOnly ? h('p', { class: 'hint' }, 'This meeting has been held, so it is view only. Tap "✓ Held" on its tile to reopen it.') : null,
       isNew || !m.logged_on ? null : h('p', { class: 'hint' }, `Logged on ${dayLabel(m.logged_on)}${m.follow_up_of_id ? ' · a follow-up of an earlier meeting' : ''}`),
       kind.node,
       fPick,
@@ -118,12 +132,15 @@
       fPlace,
       h('div', { class: 'field-row' }, fDate, fTime),
       isNew ? null : field('status', 'Status', status),
-      isNew ? null : field('remark', 'Remark or feedback', remark),
-      field('next_plan', 'Next schedule plan', nextPlan),
-      field('next_date', 'Next one on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }),
+      isNew ? null : heldPart,
       errEl,
-      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
-    const finish = openSheet(isNew ? 'Add meeting or call' : (kind.value === 'call' ? 'Call' : 'Meeting'), form);
+      h('div', { class: 'confirm-actions' }, cancelBtn, readOnly ? null : saveBtn));
+    if (readOnly) {
+      fPick.style.display = 'none';
+      form.querySelectorAll('input, textarea, button:not(.btn)').forEach((el) => { el.disabled = true; });
+      cancelBtn.textContent = 'Close';
+    }
+    const finish = openSheet(isNew ? 'Add meeting or call' : `${kind.value === 'call' ? 'Call' : 'Meeting'}${readOnly ? ' · held' : ''}`, form);
     cancelBtn.onclick = () => finish();
     form.onsubmit = async (e) => {
       e.preventDefault();
@@ -132,9 +149,9 @@
       showFieldErrors(form, {});
       const body = {
         kind: kind.value, client_id: clientId, client_name: name.value, address: address.value, contact_no: contact.value, purpose: purpose.value, place: place.value,
-        meeting_date: date.value, meeting_time: when.value, next_plan: nextPlan.value, next_date: nextDate.value,
+        meeting_date: date.value, meeting_time: when.value,
       };
-      if (!isNew) Object.assign(body, { status: status.value, remark: remark.value });
+      if (!isNew) Object.assign(body, { status: status.value, remark: remark.value, next_plan: nextPlan.value, next_date: nextDate.value });
       try {
         if (isNew) await api('/api/planner/meetings', { method: 'POST', body });
         else await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body });
@@ -162,15 +179,21 @@
     apply(kind.value);
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
-    const removeBtn = isNew ? null : h('button', { class: 'btn danger', type: 'button' }, 'Remove');
+    const readOnly = !isNew && t.done;                                  // a finished task is only looked at, like a held meeting
+    const removeBtn = isNew || readOnly ? null : h('button', { class: 'btn danger', type: 'button' }, 'Remove');
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add' : 'Save');
     const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
+      readOnly ? h('p', { class: 'hint' }, 'This task is done, so it is view only. Tap "✓ Done" on its tile to reopen it.') : null,
       kind.node,
       field('title', 'What', title),
       h('div', { class: 'field-row' }, field('task_date', 'Day', date), field('task_time', 'Time', when)),
       errEl,
-      h('div', { class: 'confirm-actions' }, cancelBtn, removeBtn, saveBtn));
-    const finish = openSheet(isNew ? 'Add site visit or work' : 'Task', form);
+      h('div', { class: 'confirm-actions' }, cancelBtn, removeBtn, readOnly ? null : saveBtn));
+    if (readOnly) {
+      form.querySelectorAll('input, textarea, button:not(.btn)').forEach((el) => { el.disabled = true; });
+      cancelBtn.textContent = 'Close';
+    }
+    const finish = openSheet(isNew ? 'Add site visit or work' : `Task${readOnly ? ' · done' : ''}`, form);
     cancelBtn.onclick = () => finish();
     if (removeBtn) {
       removeBtn.onclick = async () => {
@@ -197,12 +220,50 @@
     if (isNew) title.focus();
   }
 
+  /* "✓ Mark held" opens this form from the bottom (kohal, 2026-11-16: "when clicked on the marked as held button, it should show scheduled part form from
+     bottom side"): how it went, the next schedule plan and - if there is one - the date of the next meeting, saved together with marking the meeting held. */
+  function heldSheet(m, done) {
+    const remark = h('textarea', { rows: 3, maxlength: 4000, placeholder: 'How it went, what was decided' }, m.remark || '');
+    const nextPlan = h('input', { type: 'text', autocomplete: 'off', maxlength: 500, placeholder: 'e.g. Send the revised quote', value: m.next_plan || '' });
+    const nextDate = dateField(m.next_date || '', { placeholder: 'No date yet' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, '✓ Mark held');
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
+      h('p', { class: 'hint' }, [m.client_name, m.purpose].filter(Boolean).join(' · ')),
+      field('remark', 'Remark or feedback', remark),
+      field('next_plan', 'Next schedule plan', nextPlan),
+      field('next_date', 'Next meeting on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    const finish = openSheet(m.kind === 'call' ? 'Call held' : 'Meeting held', form);
+    cancelBtn.onclick = () => finish();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      try {
+        await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: 'done', remark: remark.value, next_plan: nextPlan.value, next_date: nextDate.value } });
+        finish();
+        toast(nextDate.value ? 'Marked held - next meeting added' : 'Marked held');
+        done();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    remark.focus();
+  }
+
   /* ---------- tiles: grip | what | tag and flags | tick ---------- */
 
   const whenLine = (dayText, time) => [dayText, time ? clock(time) : null].filter(Boolean).join(' · ');
 
-  function planRow({ key, lines, title, kind, flags, finished, action, grip, onOpen }) {
-    return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}${grip ? ' has-grip' : ''}`, 'data-key': key },
+  // `state` colours the whole tile (kohal, 2026-11-16: "yellow for upcoming unheld and green for held, color the whole tile"): open (yellow), held (green),
+  // cancelled (plain, faded).
+  function planRow({ key, lines, title, kind, flags, state, action, grip, onOpen }) {
+    return h('li', { class: `p-row plan-row is-${state}${grip ? ' has-grip' : ''}`, 'data-key': key },
       grip ? h('span', { class: 'plan-grip', role: 'img', 'aria-label': 'Drag to move up or down' }) : null,
       h('button', { type: 'button', class: 'plan-hit', onclick: onOpen },
         h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...lines.filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line)))),
@@ -215,15 +276,17 @@
     const btn = h('button', { type: 'button', class: `plan-done${on ? ' is-on' : ''}`, 'aria-pressed': String(on) }, `✓ ${on ? onText : offText}`);
     btn.addEventListener('click', async () => {
       btn.disabled = true;
-      try { await onToggle(!on); } catch (err) { toast(err.message); btn.disabled = false; }
+      try { if ((await onToggle(!on)) === false) btn.disabled = false; } catch (err) { toast(err.message); btn.disabled = false; }   // false: it only opened a form
     });
     return btn;
   }
 
   function meetingRow(m, reload, { showDay = false, held = false, grip = false } = {}) {
     const action = m.status === 'cancelled' ? null : doneButton(m.status === 'done', 'Mark held', 'Held', async (on) => {
-      await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: on ? 'done' : 'planned' } });
+      if (on) { heldSheet(m, reload); return false; }                    // marking it held asks how it went and what comes next
+      await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: 'planned' } });
       reload();
+      return true;
     });
     return planRow({
       key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, action,
@@ -231,7 +294,7 @@
         [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
         held && m.remark ? `Remark: ${m.remark}` : null,
         held && m.next_plan ? `Next: ${m.next_plan}${m.next_date ? ` (${dayLabel(m.next_date)})` : ''}` : null],
-      finished: held ? false : m.status !== 'planned',
+      state: m.status === 'done' ? 'held' : m.status === 'cancelled' ? 'cancelled' : 'open',
       flags: [m.status === 'cancelled' ? h('span', { class: 'chip chip-off' }, 'Cancelled') : null, m.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => meetingSheet(m, { date: m.meeting_date }, reload),
     });
@@ -243,7 +306,7 @@
       reload();
     });
     return planRow({
-      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine(showDay ? dayLabel(t.task_date) : '', t.task_time)], finished: t.done,
+      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine(showDay ? dayLabel(t.task_date) : '', t.task_time)], state: t.done ? 'held' : 'open',
       flags: [t.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => taskSheet(t, { date: t.task_date }, reload),
     });
@@ -360,6 +423,7 @@
         h('div', { class: 'plan-actions' },
           h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting'),
           h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: d.today }, reload) }, '+ Task')),
+        h('p', { class: 'plan-legend' }, h('span', { class: 'plan-key is-open' }, 'Upcoming, not held yet'), h('span', { class: 'plan-key is-held' }, 'Held or done')),
         d.days.some((x) => x.order.length > 1) ? h('p', { class: 'plan-hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
         daySection(now),
         earlier.length ? group('Earlier, still open', 'These days have passed - mark each held or done, or open it to write the remark and plan the next step.', earlier) : null,
