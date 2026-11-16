@@ -117,7 +117,11 @@
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add' : 'Save');
+    // A held meeting is only looked at (kohal, 2026-11-16: "when clicking on held meeting or tasks, have the form as read only") - to change it, un-tick
+    // "✓ Held" on its tile first.
+    const readOnly = !isNew && m.status === 'done';
     const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
+      readOnly ? h('p', { class: 'hint' }, 'This meeting has been held, so it is view only. Tap "✓ Held" on its tile to reopen it.') : null,
       isNew || !m.logged_on ? null : h('p', { class: 'hint' }, `Logged on ${dayLabel(m.logged_on)}${m.follow_up_of_id ? ' · a follow-up of an earlier meeting' : ''}`),
       kind.node,
       fPick,
@@ -130,8 +134,13 @@
       isNew ? null : field('status', 'Status', status),
       isNew ? null : heldPart,
       errEl,
-      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
-    const finish = openSheet(isNew ? 'Add meeting or call' : (kind.value === 'call' ? 'Call' : 'Meeting'), form);
+      h('div', { class: 'confirm-actions' }, cancelBtn, readOnly ? null : saveBtn));
+    if (readOnly) {
+      fPick.style.display = 'none';
+      form.querySelectorAll('input, textarea, button:not(.btn)').forEach((el) => { el.disabled = true; });
+      cancelBtn.textContent = 'Close';
+    }
+    const finish = openSheet(isNew ? 'Add meeting or call' : `${kind.value === 'call' ? 'Call' : 'Meeting'}${readOnly ? ' · held' : ''}`, form);
     cancelBtn.onclick = () => finish();
     form.onsubmit = async (e) => {
       e.preventDefault();
@@ -170,15 +179,21 @@
     apply(kind.value);
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
-    const removeBtn = isNew ? null : h('button', { class: 'btn danger', type: 'button' }, 'Remove');
+    const readOnly = !isNew && t.done;                                  // a finished task is only looked at, like a held meeting
+    const removeBtn = isNew || readOnly ? null : h('button', { class: 'btn danger', type: 'button' }, 'Remove');
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add' : 'Save');
     const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
+      readOnly ? h('p', { class: 'hint' }, 'This task is done, so it is view only. Tap "✓ Done" on its tile to reopen it.') : null,
       kind.node,
       field('title', 'What', title),
       h('div', { class: 'field-row' }, field('task_date', 'Day', date), field('task_time', 'Time', when)),
       errEl,
-      h('div', { class: 'confirm-actions' }, cancelBtn, removeBtn, saveBtn));
-    const finish = openSheet(isNew ? 'Add site visit or work' : 'Task', form);
+      h('div', { class: 'confirm-actions' }, cancelBtn, removeBtn, readOnly ? null : saveBtn));
+    if (readOnly) {
+      form.querySelectorAll('input, textarea, button:not(.btn)').forEach((el) => { el.disabled = true; });
+      cancelBtn.textContent = 'Close';
+    }
+    const finish = openSheet(isNew ? 'Add site visit or work' : `Task${readOnly ? ' · done' : ''}`, form);
     cancelBtn.onclick = () => finish();
     if (removeBtn) {
       removeBtn.onclick = async () => {
@@ -245,8 +260,10 @@
 
   const whenLine = (dayText, time) => [dayText, time ? clock(time) : null].filter(Boolean).join(' · ');
 
-  function planRow({ key, lines, title, kind, flags, finished, action, grip, onOpen }) {
-    return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}${grip ? ' has-grip' : ''}`, 'data-key': key },
+  // `state` colours the whole tile (kohal, 2026-11-16: "yellow for upcoming unheld and green for held, color the whole tile"): open (yellow), held (green),
+  // cancelled (plain, faded).
+  function planRow({ key, lines, title, kind, flags, state, action, grip, onOpen }) {
+    return h('li', { class: `p-row plan-row is-${state}${grip ? ' has-grip' : ''}`, 'data-key': key },
       grip ? h('span', { class: 'plan-grip', role: 'img', 'aria-label': 'Drag to move up or down' }) : null,
       h('button', { type: 'button', class: 'plan-hit', onclick: onOpen },
         h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...lines.filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line)))),
@@ -277,7 +294,7 @@
         [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
         held && m.remark ? `Remark: ${m.remark}` : null,
         held && m.next_plan ? `Next: ${m.next_plan}${m.next_date ? ` (${dayLabel(m.next_date)})` : ''}` : null],
-      finished: held ? false : m.status !== 'planned',
+      state: m.status === 'done' ? 'held' : m.status === 'cancelled' ? 'cancelled' : 'open',
       flags: [m.status === 'cancelled' ? h('span', { class: 'chip chip-off' }, 'Cancelled') : null, m.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => meetingSheet(m, { date: m.meeting_date }, reload),
     });
@@ -289,7 +306,7 @@
       reload();
     });
     return planRow({
-      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine(showDay ? dayLabel(t.task_date) : '', t.task_time)], finished: t.done,
+      key: `task:${t.id}`, title: t.title, kind: t.kind, grip, action, lines: [whenLine(showDay ? dayLabel(t.task_date) : '', t.task_time)], state: t.done ? 'held' : 'open',
       flags: [t.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => taskSheet(t, { date: t.task_date }, reload),
     });
@@ -406,6 +423,7 @@
         h('div', { class: 'plan-actions' },
           h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: d.today }, reload) }, '+ Meeting'),
           h('button', { class: 'btn', type: 'button', onclick: () => taskSheet(null, { date: d.today }, reload) }, '+ Task')),
+        h('p', { class: 'plan-legend' }, h('span', { class: 'plan-key is-open' }, 'Upcoming, not held yet'), h('span', { class: 'plan-key is-held' }, 'Held or done')),
         d.days.some((x) => x.order.length > 1) ? h('p', { class: 'plan-hint' }, 'Hold the dots on a tile and drag it up or down.') : null,
         daySection(now),
         earlier.length ? group('Earlier, still open', 'These days have passed - mark each held or done, or open it to write the remark and plan the next step.', earlier) : null,

@@ -727,9 +727,18 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .plan-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 12px 14px 12px 0; }
 .plan-aside .chip { margin: 0; white-space: nowrap; }
 .plan-done { min-height: 34px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); color: var(--ink); font: 600 13px/1 var(--font-body); white-space: nowrap; cursor: pointer; }
-.plan-done.is-on { background: var(--ok-tint); border-color: var(--ok); color: var(--ok-ink); }
+.plan-done.is-on { background: var(--ok); border-color: var(--ok); color: #fff; }
 .plan-done:disabled { opacity: 0.6; cursor: default; }
-.plan-row.is-finished .plan-hit { opacity: 0.55; }
+/* The whole tile is coloured by where it stands: yellow while it is still to come, green once held or done. */
+.card-group .p-row.plan-row.is-open { background: var(--amber-tint); }
+.card-group .p-row.plan-row.is-held { background: var(--ok-tint); }
+.plan-row.is-cancelled .plan-hit { opacity: 0.55; }
+.plan-aside .chip-today { background: var(--panel); box-shadow: inset 0 0 0 1px var(--amber); }
+.plan-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--muted); }
+.plan-key::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.plan-key.is-open::before { background: var(--amber-tint); box-shadow: inset 0 0 0 1px var(--warn); }
+.plan-key.is-held::before { background: var(--ok-tint); box-shadow: inset 0 0 0 1px var(--ok); }
+.plan-legend + .plan-hint { margin-top: -6px; }
 .plan-grip { align-self: stretch; width: 36px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; user-select: none; }
 .plan-grip::before { content: ''; width: 16px; height: 24px; background: radial-gradient(circle, var(--muted) 1.6px, transparent 1.9px) 0 0 / 8px 8px; }
 .plan-list.is-sorting { user-select: none; }
