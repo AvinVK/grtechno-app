@@ -93,9 +93,23 @@
     const fPlace = field('place', 'Place of meeting', place);
     const fDate = field('meeting_date', 'Date of meeting', date);
     const fTime = field('meeting_time', 'Time of meeting', when);
+    // "Choose from phone's contacts" under the number of a call (kohal, 2026-11-16) - opens the phone's own contact list; the admin picks one contact and only
+    // that number (and the name, if none is typed yet) comes into the form, never the whole phone book. Chrome on Android over HTTPS can do this; elsewhere
+    // the button says so and the number is typed as before.
+    const contactBtn = h('button', { class: 'btn small plan-contact-btn', type: 'button' }, "Choose from phone's contacts");
+    contactBtn.onclick = async () => {
+      if (!(navigator.contacts && window.ContactsManager)) { toast("This browser can't open the phone's contacts - type the number instead"); return; }
+      try {
+        const [chosen] = await navigator.contacts.select(['name', 'tel'], { multiple: false });
+        if (!chosen) return;                                            // closed without choosing
+        if (chosen.tel && chosen.tel[0]) contact.value = chosen.tel[0].trim().slice(0, 40);
+        if (chosen.name && chosen.name[0] && !name.value.trim()) name.value = chosen.name[0];
+      } catch (err) { toast("Could not open the phone's contacts"); }
+    };
     // A call has no address or place to go to - those two drop out, and the labels say "call".
     const apply = (kind) => {
       const call = kind === 'call';
+      contactBtn.style.display = call ? '' : 'none';
       fAddress.style.display = fPlace.style.display = call ? 'none' : '';
       relabel(fPurpose, call ? 'Purpose of call' : 'Purpose of meeting');
       relabel(fDate, call ? 'Date of call' : 'Date of meeting');
@@ -128,6 +142,7 @@
       field('client_name', 'Client name', name),
       fAddress,
       field('contact_no', 'Contact no', contact),
+      contactBtn,
       fPurpose,
       fPlace,
       h('div', { class: 'field-row' }, fDate, fTime),
@@ -137,6 +152,7 @@
       h('div', { class: 'confirm-actions' }, cancelBtn, readOnly ? null : saveBtn));
     if (readOnly) {
       fPick.style.display = 'none';
+      contactBtn.style.display = 'none';
       form.querySelectorAll('input, textarea, button:not(.btn)').forEach((el) => { el.disabled = true; });
       cancelBtn.textContent = 'Close';
     }
