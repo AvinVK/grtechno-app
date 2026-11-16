@@ -1,6 +1,6 @@
 /* The admin's meeting planner and scheduler (kohal, 2026-11-16: "a meeting planner and scheduler (auto and manual scheduler) for admin to plan the day and
    meetings for future"). Two subtabs: Day (one day's meetings and tasks in time order, with "Auto-arrange" to give the ones without a time a free slot)
-   and Upcoming (what is coming, what still waits for its remark). Four categories (kohal, 2026-11-16: "client meeting, site visit, call to make, work to
+   and Upcoming (what is coming, what still waits for its remark), and Held (meetings and calls that took place, newest first, searchable). Four categories (kohal, 2026-11-16: "client meeting, site visit, call to make, work to
    do"): a Client meeting and a Call to make are meetings (they carry the client's details), a Site visit and Work to do are tasks. A "next schedule
    plan" with a date becomes a follow-up meeting on its own (see app/planner.py). Every row looks the same - time, what, a tag, and a tick at the end
    (held / done). Admin only. */
@@ -36,7 +36,8 @@
   function tabs(active) {
     return h('div', { class: 'stage-filter', role: 'group', 'aria-label': 'Planner' },
       h('a', { class: 'filter-chip', href: '#', 'aria-current': active === 'day' ? 'page' : null }, 'Day'),
-      h('a', { class: 'filter-chip', href: '#upcoming', 'aria-current': active === 'upcoming' ? 'page' : null }, 'Upcoming'));
+      h('a', { class: 'filter-chip', href: '#upcoming', 'aria-current': active === 'upcoming' ? 'page' : null }, 'Upcoming'),
+      h('a', { class: 'filter-chip', href: '#held', 'aria-current': active === 'held' ? 'page' : null }, 'Held'));
   }
 
   /* ---------- the bottom sheet both forms use ---------- */
@@ -214,7 +215,7 @@
     return h('li', { class: `p-row plan-row${finished ? ' is-finished' : ''}` },
       h('button', { type: 'button', class: 'plan-hit', onclick: onOpen },
         h('span', { class: `plan-time${time ? '' : ' is-empty'}` }, dayText || (time ? clock(time) : 'No time'), h('small', {}, dayText ? (time ? clock(time) : 'No time') : span(length))),
-        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), sub ? h('span', { class: 'row-sub' }, sub) : null),
+        h('span', { class: 'p-main' }, h('span', { class: 'row-title' }, title), ...[].concat(sub || []).filter(Boolean).map((line) => h('span', { class: 'row-sub' }, line))),
         h('span', { class: 'plan-chips' }, h('span', { class: 'chip chip-role' }, TAG[kind]), ...flags)),
       tick);
   }
@@ -227,7 +228,7 @@
     return box;
   }
 
-  function meetingRow(m, reload, { showDay = false } = {}) {
+  function meetingRow(m, reload, { showDay = false, held = false } = {}) {
     const tick = tickBox(m.status === 'done', m.status === 'cancelled', `Mark the ${TAG[m.kind].toLowerCase()} with ${m.client_name} as held`, async (on) => {
       await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: on ? 'done' : 'planned' } });
       reload();
@@ -235,8 +236,10 @@
     return planRow({
       time: m.meeting_time, length: m.duration_min, dayText: showDay ? dayLabel(m.meeting_date) : null,
       title: m.client_name,
-      sub: [m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
-      kind: m.kind, finished: m.status !== 'planned', tick,
+      sub: [[m.purpose, m.kind === 'call' ? m.contact_no : m.place].filter(Boolean).join(' · '),
+        held && m.remark ? `Remark: ${m.remark}` : null,
+        held && m.next_plan ? `Next: ${m.next_plan}${m.next_date ? ` (${dayLabel(m.next_date)})` : ''}` : null],
+      kind: m.kind, finished: held ? false : m.status !== 'planned', tick,
       flags: [m.status === 'cancelled' ? h('span', { class: 'chip chip-off' }, 'Cancelled') : null, m.clash ? h('span', { class: 'chip chip-today' }, 'Clash') : null],
       onOpen: () => meetingSheet(m, { date: m.meeting_date }, reload),
     });
@@ -336,8 +339,52 @@
           h('p', { class: 'hint' }, 'No meetings are planned ahead. Add one, or write a next plan with a date on a meeting.'))));
   }
 
+  /* ---------- Held: meetings and calls that took place ---------- */
+
+  function showHeld() {
+    const mine = { from: '', to: '', q: '' };
+    const from = dateField('', { placeholder: 'From', clearable: true });
+    const to = dateField('', { placeholder: 'To', clearable: true });
+    const search = h('input', { type: 'search', autocomplete: 'off', placeholder: 'Search a client or purpose' });
+    const list = h('div', {});
+    let ticket = 0;
+    const reload = () => draw();
+
+    async function draw() {
+      const mineTicket = ++ticket;
+      clear(list).append(h('p', { class: 'loading' }, 'Loading…'));
+      const q = new URLSearchParams();
+      Object.entries(mine).forEach(([k, v]) => { if (v) q.set(k, v); });
+      let d;
+      try { d = await api(`/api/planner/history?${q}`); } catch (err) { if (mineTicket === ticket) clear(list).append(h('p', { class: 'empty-state' }, err.message)); return; }
+      if (mineTicket !== ticket) return;
+      const n = d.meetings.length;
+      const filtered = mine.from || mine.to || mine.q;
+      clear(list).append(
+        n ? h('p', { class: 'inv-summary' }, h('strong', {}, d.more ? `${n}+` : String(n)), ` held ${n === 1 && !d.more ? 'meeting or call' : 'meetings and calls'}${d.more ? ' (newest first - narrow it down to see older ones)' : ''}`) : null,
+        n ? h('ul', { class: 'card-group' }, d.meetings.map((m) => meetingRow(m, reload, { showDay: true, held: true })))
+          : h('p', { class: 'hint' }, filtered ? 'Nothing held matches that.' : 'Nothing has been marked held yet. Tick a meeting or call once it has taken place and it shows up here.'));
+    }
+
+    from.addEventListener('change', () => { mine.from = from.value || ''; draw(); });
+    to.addEventListener('change', () => { mine.to = to.value || ''; draw(); });
+    let timer = null;
+    search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { mine.q = search.value.trim(); draw(); }, 300); });
+
+    clear(view).append(h('div', {},
+      tabs('held'),
+      h('div', { class: 'project-detail' },
+        h('div', { class: 'plan-filters' },
+          h('div', { class: 'field-row' }, field('from', 'From', from), field('to', 'To', to)),
+          field('q', 'Client or purpose', search)),
+        list)));
+    draw();
+  }
+
   function route() {
-    if (window.location.hash === '#upcoming') showUpcoming(); else showDay(todayIso());
+    if (window.location.hash === '#upcoming') showUpcoming();
+    else if (window.location.hash === '#held') showHeld();
+    else showDay(todayIso());
   }
   window.addEventListener('hashchange', route);
   route();

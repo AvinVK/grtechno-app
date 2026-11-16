@@ -12,6 +12,7 @@ Nothing here is ever deleted: a meeting is cancelled, not removed (a task can be
 from datetime import date, datetime, time, timedelta
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
+from sqlalchemy import or_
 
 from .auth import visible_clients
 from .extensions import db
@@ -32,6 +33,7 @@ STEP = 5                      # times are picked in 5-minute steps (the app's ti
 MEETING_MINUTES = 60
 TASK_MINUTES = 30
 UPCOMING_DAYS = 60            # how far ahead the Upcoming list and "auto-arrange all" look
+HISTORY_LIMIT = 200           # meetings shown at once on the Held tab - narrow it with the dates or a client's name for more
 
 
 @bp.before_request
@@ -176,6 +178,35 @@ def upcoming():
     waiting = (PlannerMeeting.query.filter(PlannerMeeting.status == "planned", PlannerMeeting.meeting_date < today)
                .order_by(PlannerMeeting.meeting_date.desc(), PlannerMeeting.id).limit(50).all())
     return jsonify(today=today.isoformat(), meetings=[m.to_dict() for m in ahead], needs_remark=[m.to_dict() for m in waiting])
+
+
+def _optional_day(name):
+    raw = request.args.get(name)
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        abort(422, "Give the dates as YYYY-MM-DD")
+
+
+@bp.get("/api/planner/history")
+def history():
+    """Meetings and calls already held, newest first (kohal, 2026-11-16: "where do i see held meetings?") - from/to narrow it by date, q by the client's
+    name or the purpose; at most HISTORY_LIMIT come back, `more` says there were others."""
+    query = PlannerMeeting.query.filter(PlannerMeeting.status == "done")
+    start, end = _optional_day("from"), _optional_day("to")
+    if start:
+        query = query.filter(PlannerMeeting.meeting_date >= start)
+    if end:
+        query = query.filter(PlannerMeeting.meeting_date <= end)
+    text = (request.args.get("q") or "").strip()[:100]
+    if text:
+        like = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"        # a typed % or _ is just a character
+        query = query.filter(or_(PlannerMeeting.client_name.ilike(like, escape="\\"), PlannerMeeting.purpose.ilike(like, escape="\\")))
+    rows = (query.order_by(PlannerMeeting.meeting_date.desc(), PlannerMeeting.meeting_time.is_(None), PlannerMeeting.meeting_time.desc(), PlannerMeeting.id.desc())
+            .limit(HISTORY_LIMIT + 1).all())
+    return jsonify(meetings=[m.to_dict() for m in rows[:HISTORY_LIMIT]], more=len(rows) > HISTORY_LIMIT, limit=HISTORY_LIMIT)
 
 
 @bp.get("/api/planner/clients")

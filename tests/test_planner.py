@@ -248,3 +248,58 @@ def test_the_contact_and_address_are_stored_encrypted(app, admin_client):
         raw = db.session.execute(db.text("select address, contact_no from planner_meetings where id = :i"), {"i": m["id"]}).one()
         assert "9800000001" not in raw[1] and "Kamptee" not in raw[0]
         assert db.session.get(PlannerMeeting, m["id"]).contact_no == "9800000001"
+
+
+def _hold(c, meeting, **over):
+    return c.patch(f"/api/planner/meetings/{meeting['id']}", json={"status": "done", **over}).get_json()["meeting"]
+
+
+def test_held_meetings_are_listed_newest_first_with_their_remark_and_next_plan(admin_client):
+    old = _meeting(admin_client, client_name="Old one", meeting_date=_day(-20))
+    new = _meeting(admin_client, client_name="New one", meeting_date=_day(-2))
+    _hold(admin_client, old, remark="Wants a discount")
+    _hold(admin_client, new, remark="Agreed", next_plan="Send the contract")
+    _meeting(admin_client, client_name="Still planned", meeting_date=_day(-1))
+    cancelled = _meeting(admin_client, client_name="Cancelled", meeting_date=_day(-3))
+    admin_client.patch(f"/api/planner/meetings/{cancelled['id']}", json={"status": "cancelled"})
+    r = admin_client.get("/api/planner/history").get_json()
+    assert [m["client_name"] for m in r["meetings"]] == ["New one", "Old one"] and r["more"] is False
+    assert (r["meetings"][0]["remark"], r["meetings"][0]["next_plan"]) == ("Agreed", "Send the contract")
+    _hold(admin_client, new, status="planned")                                   # unticked again: it leaves the list
+    assert [m["client_name"] for m in admin_client.get("/api/planner/history").get_json()["meetings"]] == ["Old one"]
+
+
+def test_held_meetings_can_be_narrowed_by_date_and_by_client_or_purpose(admin_client):
+    a = _meeting(admin_client, client_name="Sahyadri Cold Storage", purpose="Hydrant review", meeting_date=_day(-10))
+    b = _meeting(admin_client, client_name="Orange City Hospital", purpose="Alarm AMC", meeting_date=_day(-5))
+    c = _meeting(admin_client, client_name="100% Textiles_Co", purpose="Handover", meeting_date=_day(-1))
+    for m in (a, b, c):
+        _hold(admin_client, m)
+
+    def names(**q):
+        r = admin_client.get("/api/planner/history", query_string=q)
+        assert r.status_code == 200
+        return [m["client_name"] for m in r.get_json()["meetings"]]
+
+    assert names(**{"from": _day(-6)}) == ["100% Textiles_Co", "Orange City Hospital"]
+    assert names(to=_day(-6)) == ["Sahyadri Cold Storage"]
+    assert names(**{"from": _day(-6), "to": _day(-2)}) == ["Orange City Hospital"]
+    assert names(q="hospital") == ["Orange City Hospital"]                                 # any case
+    assert names(q="alarm") == ["Orange City Hospital"]                                    # the purpose too
+    assert names(q="100%") == ["100% Textiles_Co"] and names(q="%") == ["100% Textiles_Co"]  # a typed % is a character, not "anything"
+    assert names(q="_") == ["100% Textiles_Co"]
+    assert names(q="nobody") == []
+    assert admin_client.get("/api/planner/history?from=soon").status_code == 422
+
+
+def test_the_held_list_is_capped_and_says_when_there_are_more(admin_client, monkeypatch):
+    from app import planner
+    monkeypatch.setattr(planner, "HISTORY_LIMIT", 2)
+    for i in range(3):
+        _hold(admin_client, _meeting(admin_client, client_name=f"M{i}", meeting_date=_day(-i - 1)))
+    r = admin_client.get("/api/planner/history").get_json()
+    assert [m["client_name"] for m in r["meetings"]] == ["M0", "M1"] and r["more"] is True and r["limit"] == 2
+
+
+def test_the_held_list_is_for_the_admin_only(client, admin_client):
+    assert client.get("/api/planner/history").status_code == 403

@@ -715,6 +715,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .plan-actions.two { grid-template-columns: repeat(2, 1fr); }
 .plan-actions .btn { width: 100%; min-height: 46px; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
 .plan-kind { padding: 0; }
+.plan-filters { display: grid; gap: 6px; margin: 12px 0 14px; }
 .card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 0 14px 0 0; }
 .plan-hit { min-width: 0; display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 12px 8px 12px 14px; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .plan-time { display: flex; flex-direction: column; gap: 2px; font-weight: 600; font-size: 14px; line-height: 1.25; }
