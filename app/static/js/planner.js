@@ -104,6 +104,16 @@
     const kind = kindPicker(MEETING_KINDS, m.kind || 'client_meeting', apply);
     apply(kind.value);
 
+    // What was said and what comes next belong to a meeting that has been held (kohal, 2026-11-16: "the scheduled part should be only once the meeting is
+    // getting marked as held") - a new meeting does not ask for them, and an existing one shows them only while its Status is Held. Marking a meeting held
+    // from the list asks for them in a bottom form instead (heldSheet).
+    const heldPart = h('div', { class: 'plan-held-part' },
+      field('remark', 'Remark or feedback', remark),
+      field('next_plan', 'Next schedule plan', nextPlan),
+      field('next_date', 'Next meeting on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }));
+    const showHeldPart = () => { heldPart.style.display = status.value === 'done' ? '' : 'none'; };
+    status.addEventListener('change', showHeldPart);
+    showHeldPart();
     const errEl = h('p', { class: 'err', role: 'alert' });
     const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
     const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Add' : 'Save');
@@ -118,9 +128,7 @@
       fPlace,
       h('div', { class: 'field-row' }, fDate, fTime),
       isNew ? null : field('status', 'Status', status),
-      isNew ? null : field('remark', 'Remark or feedback', remark),
-      field('next_plan', 'Next schedule plan', nextPlan),
-      field('next_date', 'Next one on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }),
+      isNew ? null : heldPart,
       errEl,
       h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
     const finish = openSheet(isNew ? 'Add meeting or call' : (kind.value === 'call' ? 'Call' : 'Meeting'), form);
@@ -132,9 +140,9 @@
       showFieldErrors(form, {});
       const body = {
         kind: kind.value, client_id: clientId, client_name: name.value, address: address.value, contact_no: contact.value, purpose: purpose.value, place: place.value,
-        meeting_date: date.value, meeting_time: when.value, next_plan: nextPlan.value, next_date: nextDate.value,
+        meeting_date: date.value, meeting_time: when.value,
       };
-      if (!isNew) Object.assign(body, { status: status.value, remark: remark.value });
+      if (!isNew) Object.assign(body, { status: status.value, remark: remark.value, next_plan: nextPlan.value, next_date: nextDate.value });
       try {
         if (isNew) await api('/api/planner/meetings', { method: 'POST', body });
         else await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body });
@@ -197,6 +205,42 @@
     if (isNew) title.focus();
   }
 
+  /* "✓ Mark held" opens this form from the bottom (kohal, 2026-11-16: "when clicked on the marked as held button, it should show scheduled part form from
+     bottom side"): how it went, the next schedule plan and - if there is one - the date of the next meeting, saved together with marking the meeting held. */
+  function heldSheet(m, done) {
+    const remark = h('textarea', { rows: 3, maxlength: 4000, placeholder: 'How it went, what was decided' }, m.remark || '');
+    const nextPlan = h('input', { type: 'text', autocomplete: 'off', maxlength: 500, placeholder: 'e.g. Send the revised quote', value: m.next_plan || '' });
+    const nextDate = dateField(m.next_date || '', { placeholder: 'No date yet' });
+    const errEl = h('p', { class: 'err', role: 'alert' });
+    const cancelBtn = h('button', { class: 'btn', type: 'button' }, 'Cancel');
+    const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, '✓ Mark held');
+    const form = h('form', { novalidate: true, class: 'amount-sheet-form' },
+      h('p', { class: 'hint' }, [m.client_name, m.purpose].filter(Boolean).join(' · ')),
+      field('remark', 'Remark or feedback', remark),
+      field('next_plan', 'Next schedule plan', nextPlan),
+      field('next_date', 'Next meeting on', nextDate, { hint: 'With a date, the next meeting is added to the end of that day by itself.' }),
+      errEl,
+      h('div', { class: 'confirm-actions' }, cancelBtn, saveBtn));
+    const finish = openSheet(m.kind === 'call' ? 'Call held' : 'Meeting held', form);
+    cancelBtn.onclick = () => finish();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      saveBtn.disabled = true;
+      errEl.textContent = '';
+      showFieldErrors(form, {});
+      try {
+        await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: 'done', remark: remark.value, next_plan: nextPlan.value, next_date: nextDate.value } });
+        finish();
+        toast(nextDate.value ? 'Marked held - next meeting added' : 'Marked held');
+        done();
+      } catch (err) {
+        if (err.fields) showFieldErrors(form, err.fields); else errEl.textContent = err.message;
+        saveBtn.disabled = false;
+      }
+    };
+    remark.focus();
+  }
+
   /* ---------- tiles: grip | what | tag and flags | tick ---------- */
 
   const whenLine = (dayText, time) => [dayText, time ? clock(time) : null].filter(Boolean).join(' · ');
@@ -215,15 +259,17 @@
     const btn = h('button', { type: 'button', class: `plan-done${on ? ' is-on' : ''}`, 'aria-pressed': String(on) }, `✓ ${on ? onText : offText}`);
     btn.addEventListener('click', async () => {
       btn.disabled = true;
-      try { await onToggle(!on); } catch (err) { toast(err.message); btn.disabled = false; }
+      try { if ((await onToggle(!on)) === false) btn.disabled = false; } catch (err) { toast(err.message); btn.disabled = false; }   // false: it only opened a form
     });
     return btn;
   }
 
   function meetingRow(m, reload, { showDay = false, held = false, grip = false } = {}) {
     const action = m.status === 'cancelled' ? null : doneButton(m.status === 'done', 'Mark held', 'Held', async (on) => {
-      await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: on ? 'done' : 'planned' } });
+      if (on) { heldSheet(m, reload); return false; }                    // marking it held asks how it went and what comes next
+      await api(`/api/planner/meetings/${m.id}`, { method: 'PATCH', body: { status: 'planned' } });
       reload();
+      return true;
     });
     return planRow({
       key: `meeting:${m.id}`, title: m.client_name, kind: m.kind, grip, action,
