@@ -15,14 +15,15 @@
 {% macro services(nav_modules, summaries={}, extra_tiles=[]) -%}
 <div class="me-tiles">
   {# No plain Inventory tile (kohal, 2026-11-14: "remove inventory and have only inventory report block in me tab") - the Inventory tab in the
-     bottom bar still opens it; the Inventory report tile comes in with the extra tiles below. #}
-  {% for m in nav_modules if m.key != 'inventory' %}
+     bottom bar still opens it; the Inventory report tile comes in with the extra tiles below. Nor a Projects tile (kohal, 2026-11-16: "remove project
+     in me tab. its just a duplicated tab") - the Projects tab in the bottom bar is the same page. #}
+  {% for m in nav_modules if m.key not in ('inventory', 'projects') %}
   <a class="me-tile" href="{{ '/client-analysis' if m.key == 'clients' else '/lead-analysis' if m.key == 'leads' else m.path }}">{{ icon(m.icon) }}<span class="me-tile-name">{{ label(m) }}</span>{% if summaries.get(m.key) %}<span class="me-tile-sum">{{ summaries[m.key] }}</span>{% endif %}</a>
   {% else %}
   {% if not extra_tiles %}<p class="sb-empty">No services are turned on yet.</p>{% endif %}
   {% endfor %}
   {% for t in extra_tiles %}
-  <a class="me-tile" href="{{ t.href }}">{{ icon(t.icon) }}<span class="me-tile-name">{{ t.name }}</span>{% if t.sum %}<span class="me-tile-sum">{{ t.sum }}</span>{% endif %}</a>
+  <a class="me-tile" href="{{ t.href }}">{{ icon(t.icon) }}<span class="me-tile-name">{{ t.name }}</span>{% if t.badge %}<span class="me-tile-badge" aria-label="{{ t.badge }} planned today">{{ t.badge }}</span>{% endif %}{% if t.sum %}<span class="me-tile-sum">{{ t.sum }}</span>{% endif %}</a>
   {% endfor %}
 </div>
 {%- endmacro %}

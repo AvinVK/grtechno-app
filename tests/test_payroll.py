@@ -135,22 +135,20 @@ def test_a_daily_wage_worker_gets_exactly_two_rows_this_month(app, admin_client)
     assert all(r["employment_type"] == "daily_wages" and r["months"] is None for r in rows)
 
 
-def test_earned_is_present_days_plus_uncredited_sundays_within_the_slot(app, admin_client):
+def test_earned_is_the_days_worked_only_and_no_unworked_sunday_is_credited(app, admin_client):
+    """Daily wages are paid for days worked only (2026-11-09: "no Sunday credit or Sunday off") - this used to credit every Sunday nobody worked."""
     start, end = complete_slot()
     sunday = a_sunday_in(start, end)
-    other_sunday_candidates = [start + timedelta(days=i) for i in range((end - start).days + 1)
-                               if (start + timedelta(days=i)).weekday() == 6 and start + timedelta(days=i) != sunday]
     worked_day = a_weekday_in(start, end)
     with app.app_context():
         w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
-        # Present on an ordinary weekday, and on one of the slot's Sundays (worked that Sunday) - the
-        # other Sunday in the slot (if there are two) is left alone to be credited.
+        # Present on an ordinary weekday, and on one of the slot's Sundays (worked that Sunday) - any other Sunday is simply not worked, so not paid.
         present_days = [worked_day, sunday]
         present(w, *present_days)
         extend_data_until(end)
         wid = w.id
     row = next(r for r in rows_for(admin_client.get("/api/payroll/overview").get_json(), wid) if r["period_start"] == start.isoformat())
-    expected_days = len(set(present_days)) + len(other_sunday_candidates)   # the worked Sunday isn't double-credited
+    expected_days = len(set(present_days))
     assert row["days"] == expected_days
     assert row["earned"] == 500.0 * expected_days
 
@@ -164,11 +162,9 @@ def test_a_worked_sunday_is_not_paid_twice(app, admin_client):
         extend_data_until(end)
         wid = w.id
     row = next(r for r in rows_for(admin_client.get("/api/payroll/overview").get_json(), wid) if r["period_start"] == start.isoformat())
-    # However many Sundays the slot has, the worked one counts once (as present), every other one is
-    # credited - never (worked + credited) for the same day.
-    sundays_in_slot = sum(1 for i in range((end - start).days + 1) if (start + timedelta(days=i)).weekday() == 6)
-    assert row["days"] == sundays_in_slot
-    assert row["earned"] == 500.0 * sundays_in_slot
+    # A Sunday that was worked is one paid day - no matter how many Sundays the slot has, the others are not worked and not paid.
+    assert row["days"] == 1
+    assert row["earned"] == 500.0
 
 
 def test_days_before_first_seen_are_not_credited(app, admin_client):
@@ -183,9 +179,7 @@ def test_days_before_first_seen_are_not_credited(app, admin_client):
         extend_data_until(end)
         wid = w.id
     row = next(r for r in rows_for(admin_client.get("/api/payroll/overview").get_json(), wid) if r["period_start"] == start.isoformat())
-    sundays_after_joining = sum(
-        1 for i in range((end - joined).days + 1) if (joined + timedelta(days=i)).weekday() == 6)
-    assert row["days"] == sundays_after_joining
+    assert row["days"] == 0 and row["earned"] == 0.0            # nothing worked, and nothing credited for the Sunday before they joined
 
 
 def test_a_worker_with_no_first_seen_still_gets_credited_for_real_attendance(app, admin_client):
@@ -230,9 +224,8 @@ def test_contractor_uses_the_same_day_rate_math_as_daily_wages(app, admin_client
         wid = w.id
     row = next(r for r in rows_for(admin_client.get("/api/payroll/overview").get_json(), wid) if r["period_start"] == start.isoformat())
     assert row["employment_type"] == "contractor"
-    sundays_in_slot = sum(1 for i in range((end - start).days + 1) if (start + timedelta(days=i)).weekday() == 6)
-    assert row["days"] == 1 + sundays_in_slot
-    assert row["earned"] == 700.0 * (1 + sundays_in_slot)
+    assert row["days"] == 1
+    assert row["earned"] == 700.0
 
 
 # ---------- salary: one flat monthly row, unsplit ----------
@@ -408,7 +401,7 @@ def test_an_absent_weekday_is_zero_pay(app, admin_client):
     assert d["present"] is False and d["pay"] == 0.0 and d["not_yet"] is False
 
 
-def test_an_unworked_sunday_is_credited_in_the_day_list_too(app, admin_client):
+def test_an_unworked_sunday_is_not_credited_in_the_day_list_either(app, admin_client):
     start, end = complete_slot()
     sunday = a_sunday_in(start, end)
     with app.app_context():
@@ -417,7 +410,7 @@ def test_an_unworked_sunday_is_credited_in_the_day_list_too(app, admin_client):
         wid = w.id
     res = admin_client.get(f"/api/payroll/days?worker_id={wid}&start={start.isoformat()}&end={end.isoformat()}")
     d = day_in(res.get_json()["days"], sunday.isoformat())
-    assert d["present"] is False and d["is_sunday"] is True and d["pay"] == 500.0
+    assert d["present"] is False and d["is_sunday"] is True and d["pay"] == 0.0
 
 
 def test_a_day_before_first_seen_is_not_yet_and_a_sunday_there_is_not_credited(app, admin_client):
@@ -547,12 +540,6 @@ def test_periods_go_back_to_first_seen_current_first(app, admin_client):
 def test_periods_each_carry_their_own_earned_paid_outstanding(app, admin_client):
     start, end = complete_slot()
     worked_day = a_weekday_in(start, end)
-    sundays = 0
-    d = start
-    while d <= end:
-        if d.weekday() == 6 and d != worked_day:
-            sundays += 1
-        d += timedelta(days=1)
     with app.app_context():
         w = daily_wage_worker(wage_amount=Decimal("500"), first_seen=start)
         present(w, worked_day)
@@ -563,7 +550,7 @@ def test_periods_each_carry_their_own_earned_paid_outstanding(app, admin_client)
     res = admin_client.get(f"/api/payroll/periods?worker_id={wid}")
     assert res.status_code == 200
     row = next(p for p in res.get_json()["periods"] if p["period_start"] == start.isoformat())
-    expected_earned = 500.0 * (1 + sundays)
+    expected_earned = 500.0                                       # the one day worked
     assert row["earned"] == expected_earned and row["paid"] == 200.0 and row["outstanding"] == expected_earned - 200.0
 
 

@@ -16,7 +16,6 @@ from .auth import (
     can_manage_fooding,
     visible_clients,
     visible_leads,
-    visible_projects,
 )
 from .constants import COMMISSION_ROLE_KEY, OPEN_STAGES
 from .extensions import db
@@ -31,7 +30,6 @@ from .models import (
     Lead,
     LeadSurvey,
     MaterialMovement,
-    Project,
     SiteCategory,
     SiteCategoryRequest,
     WorkAssignment,
@@ -69,9 +67,6 @@ def _summaries(keys) -> dict:
     if "clients" in keys:
         n = visible_clients().count()
         out["clients"] = f"{n} client{'' if n == 1 else 's'}"
-    if "projects" in keys:
-        n = visible_projects().filter(Project.status == "running").count()
-        out["projects"] = f"{n} running"
     return out
 
 
@@ -124,6 +119,15 @@ def _extra_tiles():
     # An admin or accountant has the tiles above and no wage / fooding / petrol of their own to show; everyone else gets theirs
     # below. The Suppliers tile (kohal, 2026-11-04) goes on either list - it must not be what decides which one applies, or a
     # project manager given Inventory lost their own Petrol tile (reported 2026-11-05).
+    if g.user.is_admin:
+        # The meeting planner (kohal, 2026-11-16) - admin only, see app/planner.py.
+        from .models import PlannerMeeting, PlannerTask
+        today = today_local()
+        n = PlannerMeeting.query.filter(PlannerMeeting.meeting_date == today, PlannerMeeting.status == "planned").count()
+        open_tasks = PlannerTask.query.filter(PlannerTask.task_date == today, PlannerTask.done.is_(False)).count()
+        line = " · ".join(x for x in (f"{n} meeting{'' if n == 1 else 's'}" if n else "", f"{open_tasks} task{'' if open_tasks == 1 else 's'}" if open_tasks else "") if x)
+        # The badge (kohal, 2026-11-16: "a marker on the planner block with count of meetings today") counts today's meetings and calls still planned.
+        tiles.append({"href": "/planner", "icon": "schedule", "name": "Planner", "sum": f"Today: {line}" if line else None, "badge": n or None})
     manager = bool(tiles)
     worker = Worker.query.filter_by(user_code=g.user.code).first()
     if worker is not None and worker.wage_amount is not None:
