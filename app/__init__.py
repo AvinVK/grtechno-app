@@ -55,6 +55,7 @@ def create_app(config_object=Config):
     from .holidays import bp as holidays_bp
     from .slips import bp as slips_bp
     from .workplan import bp as workplan_bp
+    from .planner import bp as planner_bp
     from .client_portal import bp as client_portal_bp
     from .me import bp as me_bp
     from .modules import bp as modules_bp, modules_for
@@ -98,6 +99,7 @@ def create_app(config_object=Config):
     app.register_blueprint(holidays_bp)
     app.register_blueprint(slips_bp)
     app.register_blueprint(workplan_bp)
+    app.register_blueprint(planner_bp)
     app.register_blueprint(client_portal_bp)
     app.register_blueprint(me_bp)
     app.register_blueprint(views_bp)

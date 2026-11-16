@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Planner - Leads{% endblock %}
+{% block body_class %}page-plain{% endblock %}
+
+{% block page_title %}Planner{% endblock %}
+
+{% block content %}
+<main id="view" class="view" tabindex="-1"><p class="loading">Loading…</p></main>
+<script src="{{ asset('js/planner.js') }}" defer></script>
+{% endblock %}

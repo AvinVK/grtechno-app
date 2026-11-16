@@ -1877,6 +1877,67 @@ class AnnouncementRecipient(db.Model):
     user = db.relationship("User")
 
 
+class PlannerMeeting(db.Model):
+    """The admin's meeting planner (kohal, 2026-11-16: "a meeting planner and scheduler (auto and manual scheduler) for admin to plan the day and
+    meetings for future") - one row per meeting with the fields of his meeting sheet: the date it was logged, client name, address, contact no,
+    purpose, place, date and time of the meeting, the remark or feedback afterwards, and the next scheduled plan. Admin only (see app/planner.py).
+    The time may be left empty - the auto scheduler then fits it into a free slot of its day. A "next plan" with a date becomes a follow-up meeting
+    of its own (follow_up_of_id points back at the meeting it came from). A meeting is never deleted, only marked cancelled."""
+
+    __tablename__ = "planner_meetings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    logged_on = db.Column(db.Date, nullable=False)                                   # the sheet's "Date" - the day it was entered
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
+    client_name = db.Column(db.String(160), nullable=False)
+    address = db.Column(EncryptedText, nullable=False, default="", server_default="")
+    contact_no = db.Column(EncryptedText, nullable=False, default="", server_default="")
+    purpose = db.Column(db.String(300), nullable=False, default="", server_default="")
+    place = db.Column(db.String(200), nullable=False, default="", server_default="")
+    meeting_date = db.Column(db.Date, nullable=False, index=True)
+    meeting_time = db.Column(db.Time, nullable=True)                                 # None = not placed yet, the auto scheduler can place it
+    duration_min = db.Column(db.Integer, nullable=False, default=60, server_default="60")
+    status = db.Column(db.String(10), nullable=False, default="planned", server_default="planned")     # planned | done | cancelled
+    remark = db.Column(db.Text, nullable=False, default="", server_default="")        # remark or feedback of the meeting
+    next_plan = db.Column(db.String(500), nullable=False, default="", server_default="")
+    next_date = db.Column(db.Date, nullable=True)
+    follow_up_of_id = db.Column(db.Integer, db.ForeignKey("planner_meetings.id", ondelete="SET NULL"), nullable=True)
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    client = db.relationship("Client")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "logged_on": self.logged_on.isoformat(), "client_id": self.client_id, "client_name": self.client_name,
+            "address": self.address, "contact_no": self.contact_no, "purpose": self.purpose, "place": self.place,
+            "meeting_date": self.meeting_date.isoformat(), "meeting_time": self.meeting_time.strftime("%H:%M") if self.meeting_time else None,
+            "duration_min": self.duration_min, "status": self.status, "remark": self.remark,
+            "next_plan": self.next_plan, "next_date": self.next_date.isoformat() if self.next_date else None,
+            "follow_up_of_id": self.follow_up_of_id,
+        }
+
+
+class PlannerTask(db.Model):
+    """A simple to-do on the admin's planner day (call someone, check something) - untimed until the auto scheduler or the admin gives it a time."""
+
+    __tablename__ = "planner_tasks"
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_date = db.Column(db.Date, nullable=False, index=True)
+    title = db.Column(db.String(300), nullable=False)
+    task_time = db.Column(db.Time, nullable=True)
+    duration_min = db.Column(db.Integer, nullable=False, default=30, server_default="30")
+    done = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
+    created_by_code = db.Column(db.String(4), db.ForeignKey("users.code", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "task_date": self.task_date.isoformat(), "title": self.title,
+                "task_time": self.task_time.strftime("%H:%M") if self.task_time else None, "duration_min": self.duration_min, "done": self.done}
+
+
 class Worker(db.Model):
     """A field worker or office staff member who does not sign in to the app - tracked instead from the
     WhatsApp group they mark their attendance in. Separate from User: becomes a User only if ever given
