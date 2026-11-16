@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const { $, h, clear, api, toast, field, showFieldErrors, selectField, searchField, dateField, timeField, closeOnBack } = window.LD;
+  const { $, h, clear, api, toast, field, showFieldErrors, selectField, searchField, dateField, timeField, pickDate, closeOnBack } = window.LD;
   const view = $('#view');
 
   const todayIso = () => new Date().toLocaleDateString('en-CA');
@@ -327,9 +327,15 @@
     let d;
     try { d = await api(`/api/planner/day?date=${encodeURIComponent(day)}`); } catch (err) { clear(view).append(h('p', { class: 'empty-state' }, err.message)); return; }
     const reload = () => showDay(day);
-    const pickDate = dateField(day, { placeholder: 'Day', clearable: false });
-    pickDate.addEventListener('change', () => { if (pickDate.value) showDay(pickDate.value); });
-    const step = (by, text) => h('button', { class: 'btn', type: 'button', 'aria-label': text, onclick: () => showDay(shiftDay(day, by)) }, by < 0 ? '‹' : '›');
+    // The date bar: ‹ the day › in one card, like the calendar's own header - tap the day to pick another from the calendar.
+    const ahead = Math.round((new Date(`${day}T00:00:00`) - new Date(`${d.today}T00:00:00`)) / 86400000);
+    const hint = ahead === 0 ? 'Today' : ahead === 1 ? 'Tomorrow' : ahead === -1 ? 'Yesterday' : ahead > 0 ? `In ${ahead} days` : `${-ahead} days ago`;
+    const [dy, dm, dd] = day.split('-').map(Number);
+    const step = (by, text) => h('button', { class: 'cal-nav', type: 'button', 'aria-label': text, onclick: () => showDay(shiftDay(day, by)) }, by < 0 ? '‹' : '›');
+    const dateBar = h('div', { class: 'plan-nav' }, step(-1, 'Previous day'),
+      h('button', { class: 'plan-date', type: 'button', 'aria-label': 'Pick a day', onclick: async () => { const picked = await pickDate(day, { clearable: false }); if (picked) showDay(picked); } },
+        h('strong', {}, new Date(dy, dm - 1, dd).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })), h('small', {}, hint)),
+      step(1, 'Next day'));
 
     const meetings = new Map(d.meetings.map((m) => [m.id, m]));
     const tasks = new Map(d.tasks.map((t) => [t.id, t]));
@@ -349,7 +355,7 @@
     clear(view).append(h('div', {},
       tabs('day'),
       h('div', { class: 'project-detail plan-page' },
-        h('div', { class: 'plan-nav' }, step(-1, 'Previous day'), pickDate, step(1, 'Next day')),
+        dateBar,
         h('p', { class: 'inv-summary' }, h('strong', {}, String(open)), ` ${open === 1 ? 'meeting or call' : 'meetings and calls'} · ${plural(openTasks, 'task', 'tasks')} to do`),
         h('div', { class: 'plan-actions' },
           h('button', { class: 'btn', type: 'button', onclick: () => meetingSheet(null, { date: day }, reload) }, '+ Meeting'),
