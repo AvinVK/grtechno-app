@@ -1045,13 +1045,62 @@ def test_paying_a_supplier_reduces_what_is_owed_and_debits_the_account(admin_cli
     assert [(r["reason"], r["kind"], r["amount"]) for r in rows] == [("Supplier payment", "debit", 40.0)]
 
 
-def test_a_supplier_cannot_be_paid_more_than_is_owed(admin_client):
+def _pay(c, sid, amount, **over):
+    return c.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": amount, "payment_account": "GR BB", "mode": "Cash", **over})
+
+
+def test_paying_above_what_is_due_is_refused_until_the_admin_confirms_it_as_an_advance(admin_client):
+    """kohal, 2026-11-21: the most to pay is what is due, but the admin can pay above it - the extra is an advance given to the supplier."""
+    sid = _owed_supplier(admin_client)                                     # owes 100
+    res = _pay(admin_client, sid, "101")
+    assert res.status_code == 422 and "advance" in res.get_json()["fields"]["amount"] and "100" in res.get_json()["fields"]["amount"]
+    detail = admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()
+    assert detail["credit"] == 100.0 and detail["advance"] == 0.0 and detail["payments"] == []            # nothing was recorded
+    res = _pay(admin_client, sid, "101", confirm_advance="yes")                                           # only a real true counts
+    assert res.status_code == 422
+    res = _pay(admin_client, sid, "130", confirm_advance=True)
+    assert res.status_code == 201 and res.get_json()["advance_added"] == 30.0
+    assert (res.get_json()["credit"], res.get_json()["advance"], res.get_json()["paid"]) == (0.0, 30.0, 130.0)
+    rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
+    assert [(r["reason"], r["kind"], r["amount"]) for r in rows] == [("Supplier payment", "debit", 130.0)]   # the whole 130 left the account
+
+
+def test_a_payment_when_nothing_is_due_is_all_advance_and_a_payment_within_the_due_needs_no_confirmation(admin_client):
     sid = _owed_supplier(admin_client)
-    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "101", "payment_account": "GR BB", "mode": "Cash"})
-    assert res.status_code == 422 and "amount" in res.get_json()["fields"]
-    admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "100", "payment_account": "GR BB", "mode": "Cash"})
-    res = admin_client.post(f"/api/inventory/suppliers/{sid}/payments", json={"amount": "1", "payment_account": "GR BB", "mode": "Cash"})
-    assert res.status_code == 422 and "owed" in res.get_json()["fields"]["amount"]
+    res = _pay(admin_client, sid, "100")                                                                  # exactly what is due: no confirmation
+    assert res.status_code == 201 and res.get_json()["advance_added"] == 0.0 and res.get_json()["advance"] == 0.0
+    res = _pay(admin_client, sid, "1")
+    assert res.status_code == 422 and "Nothing is due" in res.get_json()["fields"]["amount"]
+    res = _pay(admin_client, sid, "25", confirm_advance=True)
+    assert res.status_code == 201 and res.get_json()["advance_added"] == 25.0 and res.get_json()["advance"] == 25.0
+    res = _pay(admin_client, sid, "10", confirm_advance=True)                                             # a second advance adds to the first
+    assert res.get_json()["advance"] == 35.0 and res.get_json()["advance_added"] == 10.0
+    assert _pay(admin_client, sid, "0", confirm_advance=True).status_code == 422                          # still needs a real amount
+
+
+def test_the_advance_is_shown_in_the_suppliers_list_and_set_off_by_the_next_credit_purchase(admin_client):
+    sid = _owed_supplier(admin_client, qty=10, rate=10)                                                    # owes 100
+    _pay(admin_client, sid, "160", confirm_advance=True)                                                   # 60 advance
+    listing = admin_client.get("/api/inventory/suppliers/credit").get_json()
+    row = next(r for r in listing["suppliers"] if r["id"] == sid)
+    assert (row["credit"], row["advance"]) == (0.0, 60.0) and listing["total"] == 0.0 and listing["total_advance"] == 60.0
+    material = add_material(admin_client, name="More pipes")
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 4, "rate": 10, "supplier_id": sid})      # buys 40 on credit
+    detail = admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()
+    assert (detail["credit"], detail["advance"]) == (0.0, 20.0)                                            # 60 advance - 40 bought
+    admin_client.post(f"/api/inventory/materials/{material['id']}/stock-in", json={"quantity": 5, "rate": 10, "supplier_id": sid})      # buys 50 more
+    detail = admin_client.get(f"/api/inventory/suppliers/{sid}/credit").get_json()
+    assert (detail["credit"], detail["advance"]) == (30.0, 0.0)                                            # the advance is used up, 30 is due again
+    assert admin_client.get("/api/inventory/suppliers/credit").get_json()["total_advance"] == 0.0
+
+
+def test_one_suppliers_advance_is_not_netted_against_what_another_is_owed(admin_client):
+    owed = _owed_supplier(admin_client, qty=10, rate=10)                                                   # owes 100
+    other = admin_client.post("/api/inventory/suppliers", json={"name": "Advance Co"}).get_json()["supplier"]["id"]
+    assert _pay(admin_client, other, "40", confirm_advance=True).status_code == 201
+    listing = admin_client.get("/api/inventory/suppliers/credit").get_json()
+    assert listing["total"] == 100.0 and listing["total_advance"] == 40.0
+    assert next(r for r in listing["suppliers"] if r["id"] == other)["advance"] == 40.0 and owed
 
 
 def test_a_supplier_payment_needs_an_account_and_a_mode(admin_client):

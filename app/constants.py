@@ -9,8 +9,9 @@ CLOSED_STAGES = (WON, LOST)
 # client, or pays wages or salary, picks one of these. It replaces the old Cash / Cheque / UPI list (same stored
 # column, so nothing is migrated); entries already saved with an old mode keep it and are still accepted when a
 # schedule is saved again.
-# Three Dhanbad accounts added 2026-11-06 (kohal: "Cash Dhanbad, Yes bank, GR BB Dhanbad new"), written in capitals like the rest.
-PAYMENT_ACCOUNTS = ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB", "CASH DHANBAD", "YES BANK", "GR BB DHANBAD NEW"]
+# Three Dhanbad accounts added 2026-11-06 (kohal: "Cash Dhanbad, Yes bank, GR BB Dhanbad new"), written in capitals like the rest; GR YES BANK on 2026-11-21
+# (kohal: "add GR Yes bank account") - next to the other GR banks, and in addition to YES BANK, whose entries stay where they are.
+PAYMENT_ACCOUNTS = ["VK PP BB", "GR CANARA BANK", "VK GPAY SBI", "GR BB", "CASH", "GR BOB", "GR YES BANK", "CASH DHANBAD", "YES BANK", "GR BB DHANBAD NEW"]
 PAYMENT_MODES = PAYMENT_ACCOUNTS
 LEGACY_PAYMENT_MODES = ["Cash", "Cheque", "Bank transfer", "UPI", "Other", "Online/UPI"]
 ACCEPTED_PAYMENT_MODES = PAYMENT_ACCOUNTS + LEGACY_PAYMENT_MODES

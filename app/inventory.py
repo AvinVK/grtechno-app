@@ -499,12 +499,15 @@ def supplier_credit_list():
     paid = {}
     for p in SupplierPayment.query.all():
         paid[p.supplier_id] = paid.get(p.supplier_id, Decimal("0")) + p.amount
-    rows = [{"id": s.id, "name": s.name, "credit": float((s.opening_balance or 0) + bought.get(s.id, 0) - paid.get(s.id, 0)),
-             "purchases": count.get(s.id, 0), "starting": float(s.opening_balance or 0)}
-            for s in Supplier.query.order_by(Supplier.name).all()]
-    rows.sort(key=lambda r: (-r["credit"], r["name"].lower()))
-    return jsonify(suppliers=rows, total=round(sum(r["credit"] for r in rows), 2), can_edit=g.user.is_admin,
-                   currency=settings_for_client()["currency"])
+    rows = []
+    for s in Supplier.query.order_by(Supplier.name).all():
+        owed = (s.opening_balance or 0) + bought.get(s.id, 0) - paid.get(s.id, 0)
+        # Paid more than was owed = an advance given to the supplier (kohal, 2026-11-21): shown beside, not netted against, what other suppliers are owed.
+        rows.append({"id": s.id, "name": s.name, "credit": float(max(owed, 0)), "advance": float(max(-owed, 0)),
+                     "purchases": count.get(s.id, 0), "starting": float(s.opening_balance or 0)})
+    rows.sort(key=lambda r: (-r["credit"], -r["advance"], r["name"].lower()))
+    return jsonify(suppliers=rows, total=round(sum(r["credit"] for r in rows), 2), total_advance=round(sum(r["advance"] for r in rows), 2),
+                   can_edit=g.user.is_admin, currency=settings_for_client()["currency"])
 
 
 def _supplier_has_history(supplier_id):
@@ -521,8 +524,10 @@ def _supplier_detail(supplier):
     opening, bought, paid = _owed(supplier)
     payments = (SupplierPayment.query.filter_by(supplier_id=supplier.id)
                 .order_by(SupplierPayment.entry_date.desc(), SupplierPayment.id.desc()).all())
+    owed = opening + bought - paid
     return dict(
-        name=supplier.name, credit=float(opening + bought - paid), starting=float(opening), bought=float(bought), paid=float(paid),
+        # credit: what is due to them; advance: what they hold in advance (paid above what was due) - it is set off against the next credit purchases.
+        name=supplier.name, credit=float(max(owed, 0)), advance=float(max(-owed, 0)), starting=float(opening), bought=float(bought), paid=float(paid),
         phone=supplier.phone or "", upi_id=supplier.upi_id or "", contact_person=supplier.contact_person or "",
         email=supplier.email or "", gstin=supplier.gstin or "", address=supplier.address or "",
         can_pay=g.user.is_admin, can_edit=g.user.is_admin,
@@ -562,7 +567,10 @@ def delete_supplier(supplier_id):
 @bp.post("/api/inventory/suppliers/<int:supplier_id>/payments")
 def pay_supplier(supplier_id):
     """Pay a supplier part or all of what is owed (kohal, 2026-11-04) - the admin's alone, since it goes out through
-    the bank accounts. The contact number and UPI ID shown on the form are saved on the supplier if changed."""
+    the bank accounts. The contact number and UPI ID shown on the form are saved on the supplier if changed.
+    What is due is the usual most to pay, but the admin may pay more (kohal, 2026-11-21): the part above what is due is an advance given to the supplier,
+    shown on the Suppliers tab and set off by their next credit purchases. Because it can be a slip of the finger, going above what is due is only done when
+    the request says `confirm_advance: true` - otherwise it is refused with the figures, for the page to ask."""
     if not g.user.is_admin:
         abort(403, "Only the admin can pay a supplier - it is paid out through the bank accounts.")
     supplier = db.session.get(Supplier, supplier_id)
@@ -582,16 +590,20 @@ def pay_supplier(supplier_id):
         if key not in f.data and key not in errors:
             errors[key] = msg
     opening, bought, paid = _owed(supplier)
-    owed = opening + bought - paid
+    due = max(opening + bought - paid, Decimal("0"))
     amount = f.data.get("amount")
+    advance_added = Decimal("0")
     if "amount" not in errors:
-        shown = f"{owed:,.2f}".rstrip("0").rstrip(".")
         if amount is None or amount <= 0:
             errors["amount"] = "Enter an amount greater than 0"
-        elif owed <= 0:
-            errors["amount"] = "Nothing is owed to this supplier"
-        elif amount > owed:
-            errors["amount"] = f"Only {settings_for_client()['currency']}{shown} is owed to this supplier"
+        elif amount > due:
+            advance_added = (amount - due).quantize(Decimal("0.01"))
+            if payload.get("confirm_advance") is not True:
+                cur = settings_for_client()["currency"]
+                shown = f"{due:,.2f}".rstrip("0").rstrip(".")
+                extra = f"{advance_added:,.2f}".rstrip("0").rstrip(".")
+                errors["amount"] = (f"Only {cur}{shown} is due to this supplier - {cur}{extra} of this would be an advance" if due > 0
+                                    else f"Nothing is due to this supplier - {cur}{extra} of this would be an advance")
     upi = f.data.get("upi_id") or ""
     if upi and not UPI_ID.match(upi):
         errors["upi_id"] = "Enter a UPI ID like name@bank"
@@ -604,7 +616,7 @@ def pay_supplier(supplier_id):
                               created_by_code=g.user.code)
     db.session.add(payment)
     db.session.commit()
-    return jsonify(payment=payment.to_dict(), **_supplier_detail(supplier)), 201
+    return jsonify(payment=payment.to_dict(), advance_added=float(advance_added), **_supplier_detail(supplier)), 201
 
 
 @bp.patch("/api/inventory/materials/<int:material_id>")

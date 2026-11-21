@@ -720,6 +720,7 @@ input:disabled, textarea:disabled { background: var(--track); color: var(--muted
 .plan-kind { padding: 0; }
 .plan-categories { margin-top: 2px; }
 .plan-contact-btn { justify-self: start; margin-top: -4px; }
+.supplier-advance { color: var(--ok-ink); }
 .plan-filters { display: grid; gap: 8px; margin: 12px 0 0; }
 .card-group .p-row.plan-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; row-gap: 0; padding: 0; background: var(--panel); }
 .card-group .p-row.plan-row.has-grip { grid-template-columns: auto minmax(0, 1fr) auto; }
