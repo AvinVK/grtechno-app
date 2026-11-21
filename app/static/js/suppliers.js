@@ -87,6 +87,7 @@
     showAdd(!!data.can_edit);
     clear(view).append(h('div', { class: 'project-detail' },
       stat('Total credit owed to suppliers', money(data.total, cur)),
+      data.total_advance ? stat('Advance given to suppliers', money(data.total_advance, cur)) : null,
       h('section', { class: 'p-section' },
         data.suppliers.length
           ? h('ul', { class: 'card-group' }, data.suppliers.map((s) => h('li', {},
@@ -94,7 +95,7 @@
                 h('span', { class: 'p-main' },
                   h('span', { class: 'row-title' }, s.name),
                   h('span', { class: 'row-sub' }, [s.purchases ? `${s.purchases} credit purchase${s.purchases === 1 ? '' : 's'}` : 'No credit purchases', s.starting ? `starting ${money(s.starting, cur)}` : null].filter(Boolean).join(' · '))),
-                h('span', { class: 'row-value' }, money(s.credit, cur))))))
+                s.advance ? h('span', { class: 'row-value supplier-advance' }, `Advance ${money(s.advance, cur)}`) : h('span', { class: 'row-value' }, money(s.credit, cur))))))
           : h('p', { class: 'hint' }, 'No suppliers yet - they are added when you stock in material on credit.'))));
   }
 
@@ -106,7 +107,7 @@
     const nameInput = h('input', { type: 'text', value: data.name, readonly: true });
     const phoneInput = h('input', { type: 'text', inputmode: 'tel', maxlength: 40, autocomplete: 'off', value: data.phone, placeholder: 'Contact number' });
     const upiInput = h('input', { type: 'text', maxlength: 80, autocomplete: 'off', value: data.upi_id, placeholder: 'name@bank' });
-    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: `Up to ${money(data.credit, cur)}` });
+    const amountInput = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', placeholder: data.credit > 0 ? `Due ${money(data.credit, cur)}` : 'Amount' });
     const accountSel = selectField(data.payment_accounts.map((a) => ({ value: a, label: a })), '', { title: 'Paid from', placeholder: 'Choose an account' });
     const modeSel = selectField(data.pay_modes.map((m) => ({ value: m, label: m })), '', { title: 'Mode of payment', placeholder: 'Choose a mode' });
     const dateInput = dateField(todayIso());
@@ -138,12 +139,23 @@
         errEl.textContent = '';
         showFieldErrors(form, {});
         saveBtn.disabled = true;
+        // Above what is due, the extra is an advance to the supplier - say so and ask before it goes out (the server asks for the same confirmation).
+        const typed = Number(String(amountInput.value).replace(/,/g, ''));
+        const extra = Number.isFinite(typed) ? typed - data.credit : 0;
+        let confirmAdvance = false;
+        if (extra > 0.004) {
+          const sure = await confirm(data.credit > 0
+            ? `${money(typed, cur)} is more than the ${money(data.credit, cur)} due to ${data.name}. The extra ${money(extra, cur)} will be recorded as an advance given to them.`
+            : `Nothing is due to ${data.name}. The whole ${money(typed, cur)} will be recorded as an advance given to them.`, { ok: 'Pay as advance', title: 'Pay above what is due?' });
+          if (!sure) { saveBtn.disabled = false; return; }
+          confirmAdvance = true;
+        }
         try {
-          await api(`/api/inventory/suppliers/${id}/payments`, { method: 'POST', body: {
+          const res = await api(`/api/inventory/suppliers/${id}/payments`, { method: 'POST', body: {
             amount: amountInput.value, payment_account: accountSel.value, mode: modeSel.value, phone: phoneInput.value,
-            upi_id: upiInput.value.trim(), entry_date: dateInput.value, note: noteInput.value,
+            upi_id: upiInput.value.trim(), entry_date: dateInput.value, note: noteInput.value, confirm_advance: confirmAdvance,
           } });
-          toast('Payment saved');
+          toast(res.advance_added ? `Payment saved - ${money(res.advance_added, cur)} of it is an advance` : 'Payment saved');
           finish();
           onDone();
         } catch (err) {
@@ -155,7 +167,9 @@
       field('supplier_name', 'Supplier', nameInput, { wide: true }),
       field('phone', 'Contact', phoneInput, { wide: true }),
       field('upi_id', 'UPI ID', upiInput, { wide: true }),
-      field('amount', 'Amount', amountInput, { wide: true }),
+      field('amount', 'Amount', amountInput, { wide: true,
+        hint: data.credit > 0 ? `${money(data.credit, cur)} is due. Paying more is allowed - the extra is recorded as an advance to ${data.name}.`
+          : `Nothing is due to ${data.name}. A payment now is recorded as an advance.` }),
       field('payment_account', 'Paid from', accountSel, { wide: true }),
       field('mode', 'Mode of payment', modeSel, { wide: true }),
       payBox,
@@ -195,11 +209,12 @@
     const cur = data.currency;
     clear(view).append(h('div', { class: 'project-detail' },
       data.can_pay ? h('div', { class: 'supplier-actions' },
-        h('button', { class: 'btn small primary', type: 'button', disabled: data.credit <= 0, onclick: () => openPaySheet(id, data, () => showSupplier(id)) }, 'Make payment'),
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => openPaySheet(id, data, () => showSupplier(id)) }, 'Make payment'),
         data.can_edit ? h('button', { class: 'btn small', type: 'button', onclick: () => openSupplierSheet({ ...data, id }, () => showSupplier(id)) }, 'Edit details') : null) : null,
       h('div', { class: 'p-head' }, h('h2', {}, data.name)),
       detailsCard(data),
-      stat('Credit owed', money(data.credit, cur)),
+      data.advance ? stat('Advance given', money(data.advance, cur)) : stat('Credit owed', money(data.credit, cur)),
+      data.advance ? h('p', { class: 'hint' }, 'Paid in advance - it is set off against your next credit purchases from this supplier.') : null,
       data.paid || data.starting ? h('p', { class: 'hint' }, [data.starting ? `Starting balance ${money(data.starting, cur)}` : null,
         `Bought ${money(data.bought, cur)} on credit`, data.paid ? `Paid ${money(data.paid, cur)}` : null].filter(Boolean).join(' · ')) : null,
       data.payments.length ? h('section', { class: 'p-section' },
