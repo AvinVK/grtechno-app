@@ -13,6 +13,10 @@
   // itself open once reached (min() clamps at the end); a closed (Won/Lost) lead opens nothing.
   function nextStageIndex(lead) {
     const i = STAGE_ORDER.indexOf(lead.stage);
+    // A lead sitting at Negotiation with no finalized round is still *in* Negotiation: that step is the current one (its rounds and
+    // "+ Add new round" open), and Work order & advance stays the upcoming one until a round is finalized. Without this the page showed
+    // Work order & advance as current - locked, with Negotiation shown as an untappable "upcoming" row, so nothing could be done.
+    if (STAGE_ORDER[i] === 'Negotiation' && !(lead.negotiations || []).some((n) => n.finalized)) return i;
     return i === -1 ? -1 : Math.min(i + 1, STAGE_ORDER.length - 1);
   }
   const SNOOZE = [['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]];
