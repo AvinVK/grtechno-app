@@ -94,8 +94,8 @@ DEFAULT_SETTINGS = {
     "country_code": "91",
 }
 
-# What an "Other expenses" purchase was for (kohal, 2026-11-09: "add these categories in office expense form").
+# What an "Other expenses" purchase was for (kohal, 2026-11-09: "add these categories in office expense form"); Bank EMI and Self expenses added 2026-11-25.
 EXPENSE_HEADS = [
     "Office expenses", "Dhanbad office expenses", "Chandrapur office expenses", "Travelling expenses", "Fooding exp",
-    "Stationery and printing", "Mobile expenses", "Misc expenses",
+    "Stationery and printing", "Mobile expenses", "Bank EMI", "Self expenses", "Misc expenses",
 ]

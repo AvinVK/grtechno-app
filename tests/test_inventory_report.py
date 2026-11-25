@@ -206,8 +206,8 @@ def test_the_excel_has_a_sheet_for_each_report_for_the_dates_and_material_picked
 def test_inventory_is_a_subtab_of_the_reports_page_and_nothing_else_is_left_behind(client, admin_client):
     """kohal, 2026-11-14: "have inventory report as a subtab in reports block in me tab"."""
     reports = admin_client.get("/api/reports").get_json()["reports"]
-    assert [r["key"] for r in reports] == ["leads", "payroll", "projects", "inventory"]
-    assert [r.get("range", False) for r in reports] == [False, False, False, True]               # picked by dates, not by month
+    assert [r["key"] for r in reports] == ["leads", "payroll", "projects", "inventory", "transactions"]
+    assert [r.get("range", False) for r in reports] == [False, False, False, True, True]               # picked by dates, not by month
     res = admin_client.get("/inventory-report")
     assert res.status_code == 302 and res.headers["Location"].endswith("/reports#inventory")      # an old bookmark still lands on it
     page = admin_client.get("/me").data

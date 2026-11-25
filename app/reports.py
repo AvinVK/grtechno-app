@@ -442,6 +442,21 @@ def _inventory_filename(args):
     return filename(args)
 
 
+def _transactions_sheets(args):
+    from . import transactions_report
+    return transactions_report.sheets(args)
+
+
+def _transactions_filename(args, extension="xlsx"):
+    from . import transactions_report
+    return transactions_report.filename(args, extension)
+
+
+def _transactions_pdf(args):
+    from . import transactions_report
+    return transactions_report.pdf(args)
+
+
 REPORTS = {
     "leads": {"title": "Leads", "about": "New leads, site surveys, quotes, negotiations, wins and losses, and every stage move.",
               "build": leads_report},
@@ -452,6 +467,9 @@ REPORTS = {
     # Picked by a date range (and a material), not a month - three reports in one workbook (kohal, 2026-11-14); see app/inventory_report.py.
     "inventory": {"title": "Inventory", "about": "Stock in and stock out (allocated to projects) day by day between two dates, and the inventory status on any day.",
                   "range": True, "build": _inventory_sheets, "filename": _inventory_filename},
+    # Also picked by a date range - and the only report that can be downloaded as a PDF too (kohal, 2026-11-25); see app/transactions_report.py.
+    "transactions": {"title": "Transactions", "about": "Every rupee received and every rupee spent, whichever account it went through, day by day between two dates.",
+              "range": True, "build": _transactions_sheets, "filename": _transactions_filename, "pdf": _transactions_pdf},
 }
 
 
@@ -468,8 +486,16 @@ def list_reports():
     for _ in range(24):                                         # this month and the 23 before it
         months.append({"value": f"{y}-{m:02d}", "label": _month_label(y, m)})
         y, m = (y, m - 1) if m > 1 else (y - 1, 12)
-    return jsonify(reports=[{"key": k, "title": r["title"], "about": r["about"], "filters": r.get("filters", []), "range": r.get("range", False)} for k, r in REPORTS.items()],
+    return jsonify(reports=[{"key": k, "title": r["title"], "about": r["about"], "filters": r.get("filters", []), "range": r.get("range", False), "pdf": "pdf" in r}
+                            for k, r in REPORTS.items()],
                    months=months, current=months[0]["value"])
+
+
+@bp.get("/api/reports/transactions/view")
+def transactions_view():
+    """The Transactions report as shown on the Reports page (the downloads are /api/reports/transactions, as Excel or PDF)."""
+    from . import transactions_report
+    return jsonify(transactions_report.report(request.args))
 
 
 @bp.get("/api/reports/<name>")
@@ -478,6 +504,11 @@ def download(name):
     if report is None:
         abort(404)
     if report.get("range"):                                     # picked by dates, not a month (the Inventory report)
+        if request.args.get("format") == "pdf":                 # the same figures as a PDF, for the reports that have one
+            if "pdf" not in report:
+                abort(422, "This report is only available as an Excel file")
+            return Response(report["pdf"](request.args), mimetype="application/pdf", headers={
+                "Content-Disposition": f'attachment; filename="{report["filename"](request.args, "pdf")}"', "Cache-Control": "no-store"})
         return Response(build_workbook(report["build"](request.args)), mimetype=XLSX_TYPE, headers={
             "Content-Disposition": f'attachment; filename="{report["filename"](request.args)}"', "Cache-Control": "no-store"})
     year, month = _month_or_default(request.args.get("month"))

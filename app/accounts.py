@@ -21,6 +21,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from flask import Blueprint, abort, g, jsonify, render_template, request
+from sqlalchemy import true
 
 from .constants import PAYMENT_ACCOUNTS
 from .extensions import db
@@ -51,9 +52,9 @@ def _name(code):
     return user.name if user else None
 
 
-def _row(kind, when, amount, reason, party, detail="", requested_by=None, approved_by=None, transfer_id=None):
+def _row(kind, when, amount, reason, party, detail="", requested_by=None, approved_by=None, transfer_id=None, account=""):
     return {"kind": kind, "date": _day(when), "amount": float(amount), "reason": reason, "party": party,
-            "detail": detail, "requested_by": requested_by, "approved_by": approved_by, "transfer_id": transfer_id}
+            "detail": detail, "requested_by": requested_by, "approved_by": approved_by, "transfer_id": transfer_id, "account": account or ""}
 
 
 def _worker_reason(worker):
@@ -77,62 +78,74 @@ def ledger(account, opening=None):
     return rows
 
 
+def all_rows():
+    """Every debit and credit on file, whichever account it went through - or none at all (an entry from before the account list existed has an
+    older mode, or none). Self transfers are not in it: they only move money between the admin's own accounts. Each row says which account it
+    used. This is what the Transactions report is built from (kohal, 2026-11-25: "every and any expense and every and any received")."""
+    return _all_rows(None)
+
+
 def _all_rows(account):
+    """The rows of one account, or - with account None - of every account (see all_rows). The query for each kind is the same either way;
+    only the "went through this account" condition is dropped."""
     rows = []
+    on = lambda column: true() if account is None else column == account          # noqa: E731
 
-    for p in ProjectPayment.query.filter(ProjectPayment.mode == account, ProjectPayment.paid_date.isnot(None)).all():
+    for p in ProjectPayment.query.filter(on(ProjectPayment.mode), ProjectPayment.paid_date.isnot(None)).all():
         rows.append(_row("credit", p.paid_date, p.amount, "Project payment", p.project.client.name,
-                         f"{p.project.code} · {p.label}"))
-    for lead in Lead.query.filter(Lead.advance_mode == account, Lead.advance_amount.isnot(None), Lead.advance_date.isnot(None)).all():
+                         f"{p.project.code} · {p.label}", account=p.mode))
+    for lead in Lead.query.filter(on(Lead.advance_mode), Lead.advance_amount.isnot(None), Lead.advance_date.isnot(None)).all():
         rows.append(_row("credit", lead.advance_date, lead.advance_amount, "Lead advance",
-                         lead.company or lead.contact_name, lead.contact_name if lead.company else ""))
+                         lead.company or lead.contact_name, lead.contact_name if lead.company else "", account=lead.advance_mode))
 
-    for p in WorkerPayment.query.filter(WorkerPayment.mode == account, WorkerPayment.paid_date.isnot(None)).all():
-        rows.append(_row("debit", p.paid_date, p.amount, _worker_reason(p.worker), p.worker.name, p.label))
-    for a in SalaryAdvance.query.filter_by(payment_account=account).all():
+    for p in WorkerPayment.query.filter(on(WorkerPayment.mode), WorkerPayment.paid_date.isnot(None)).all():
+        rows.append(_row("debit", p.paid_date, p.amount, _worker_reason(p.worker), p.worker.name, p.label, account=p.mode))
+    for a in SalaryAdvance.query.filter(on(SalaryAdvance.payment_account)).all():
         rows.append(_row("debit", a.given_date, a.amount, "Salary advance", a.worker.name, f"Taken back over {a.months} {'pay period' if a.unit == 'fortnight' else 'month'}{'s' if a.months != 1 else ''}",
-                         requested_by=a.created_by.name if a.created_by else None))
-    for e in FoodingEntry.query.filter_by(kind="allot", status="approved", payment_mode=account).all():
+                         requested_by=a.created_by.name if a.created_by else None, account=a.payment_account))
+    for e in FoodingEntry.query.filter(FoodingEntry.kind == "allot", FoodingEntry.status == "approved", on(FoodingEntry.payment_mode)).all():
         rows.append(_row("debit", e.entry_date, e.amount, "Fooding", e.account.worker.name,
-                         requested_by=e.created_by.name if e.created_by else None, approved_by=_name(e.decided_by_code)))
-    for t in CashTopup.query.filter_by(payment_mode=account).all():
+                         requested_by=e.created_by.name if e.created_by else None, approved_by=_name(e.decided_by_code), account=e.payment_mode))
+    for t in CashTopup.query.filter(on(CashTopup.payment_mode)).all():
         rows.append(_row("debit", t.entry_date, t.amount, "Cash given for purchases", t.account.worker.name, t.note,
-                         requested_by=t.created_by.name if t.created_by else None))
-    for e in PetrolEntry.query.filter_by(cash_status="paid", cash_mode=account).all():
+                         requested_by=t.created_by.name if t.created_by else None, account=t.payment_mode))
+    for e in PetrolEntry.query.filter(PetrolEntry.cash_status == "paid", on(PetrolEntry.cash_mode)).all():
         rows.append(_row("debit", e.cash_decided_at or e.work_date, e.amount or Decimal("0"), "Petrol", e.user.name if e.user else "",
                          f"Ride of {e.work_date.strftime('%d %b %Y')}", requested_by=e.user.name if e.user else None,
-                         approved_by=_name(e.cash_decided_by_code)))
-    for o in PetrolPayout.query.filter_by(status="paid", payment_account=account).all():
+                         approved_by=_name(e.cash_decided_by_code), account=e.cash_mode))
+    for o in PetrolPayout.query.filter(PetrolPayout.status == "paid", on(PetrolPayout.payment_account)).all():
         rows.append(_row("debit", o.decided_at, o.amount_paid or Decimal("0"), "Petrol", o.user.name if o.user else "", "Petrol payment",
-                         requested_by=o.user.name if o.user else None, approved_by=_name(o.decided_by_code)))
-    for m in MaterialMovement.query.filter_by(kind="in", status="approved", payment_mode="cash", payment_account=account).all():
+                         requested_by=o.user.name if o.user else None, approved_by=_name(o.decided_by_code), account=o.payment_account))
+    for m in MaterialMovement.query.filter(MaterialMovement.kind == "in", MaterialMovement.status == "approved", MaterialMovement.payment_mode == "cash",
+                                           on(MaterialMovement.payment_account)).all():
         rows.append(_row("debit", m.entry_date, m.total_cost or m.amount, "Inventory purchase",
                          m.supplier.name if m.supplier else "", m.material.name,
-                         requested_by=m.created_by.name if m.created_by else None, approved_by=_name(m.approved_by_code)))
+                         requested_by=m.created_by.name if m.created_by else None, approved_by=_name(m.approved_by_code), account=m.payment_account))
 
-    for p in AdminPurchase.query.filter_by(payment_account=account).all():
+    for p in AdminPurchase.query.filter(on(AdminPurchase.payment_account)).all():
         rows.append(_row("debit", p.entry_date, p.amount, "Material purchase" if p.category == "material" else (p.expense_head or "Other expense"),
-                         p.supplier, p.material_name, requested_by=p.created_by.name if p.created_by else None))
+                         p.supplier, p.material_name, requested_by=p.created_by.name if p.created_by else None, account=p.payment_account))
 
-    for c in CommissionPayment.query.filter_by(payment_account=account).all():
+    for c in CommissionPayment.query.filter(on(CommissionPayment.payment_account)).all():
         e = c.expense
         if e.kind == "expense":                         # a plain expense on a project another team runs (kohal, 2026-11-14)
             rows.append(_row("debit", c.paid_date, c.amount, "Project expense", e.person_name,
-                             f"{e.project.code} · {e.project.title} · {e.note}", requested_by=c.created_by.name if c.created_by else None))
+                             f"{e.project.code} · {e.project.title} · {e.note}", requested_by=c.created_by.name if c.created_by else None,
+                             account=c.payment_account))
             continue
         rows.append(_row("debit", c.paid_date, c.amount, "Commission", e.given_to, f"{e.project.code} · {e.project.title}",
-                         requested_by=c.created_by.name if c.created_by else None))
+                         requested_by=c.created_by.name if c.created_by else None, account=c.payment_account))
 
-    for p in SupplierPayment.query.filter_by(payment_account=account).all():
+    for p in SupplierPayment.query.filter(on(SupplierPayment.payment_account)).all():
         rows.append(_row("debit", p.entry_date, p.amount, "Supplier payment", p.supplier.name, f"{p.mode}{' · ' + p.note if p.note else ''}",
-                         requested_by=p.created_by.name if p.created_by else None))
+                         requested_by=p.created_by.name if p.created_by else None, account=p.payment_account))
 
     # Self transfers: the same row is the debit of the account it left and the credit of the one it reached.
-    for t in AccountTransfer.query.filter((AccountTransfer.from_account == account) | (AccountTransfer.to_account == account)).all():
+    for t in ([] if account is None else AccountTransfer.query.filter((AccountTransfer.from_account == account) | (AccountTransfer.to_account == account)).all()):
         out = t.from_account == account
         rows.append(_row("debit" if out else "credit", t.entry_date, t.amount, "Self transfer",
                          t.to_account if out else t.from_account, t.note,
-                         requested_by=t.created_by.name if t.created_by else None, transfer_id=t.id))
+                         requested_by=t.created_by.name if t.created_by else None, transfer_id=t.id, account=account))
 
     rows.sort(key=lambda r: r["date"] or "", reverse=True)
     return rows
