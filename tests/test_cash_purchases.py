@@ -922,6 +922,17 @@ def test_a_material_with_broken_stock_history_gets_a_clear_message_not_a_server_
     assert db.session.get(CashPurchase, eid).status == "pending" and MaterialMovement.query.count() == 1
 
 
+def test_bank_emi_and_self_expenses_are_kinds_of_expense(app, admin_client):
+    """kohal, 2026-11-25: "in admin purchase > other expenses > expense type add Bank emi and self expenses as well"."""
+    heads = admin_client.get("/api/admin-purchases").get_json()["expense_heads"]
+    assert "Bank EMI" in heads and "Self expenses" in heads and heads[-1] == "Misc expenses"
+    for head, amount in (("Bank EMI", "15000"), ("Self expenses", "800")):
+        res = admin_client.post("/api/admin-purchases", json={"category": "other", "expense_head": head, "material_name": head, "amount": amount, "payment_account": "GR BB"})
+        assert res.status_code == 201 and res.get_json()["entry"]["expense_head"] == head
+    rows = admin_client.get("/api/accounts/detail", query_string={"name": "GR BB"}).get_json()["entries"]
+    assert sorted((r["reason"], r["amount"]) for r in rows) == [("Bank EMI", 15000.0), ("Self expenses", 800.0)]
+
+
 def test_the_admin_purchase_says_which_kind_of_expense(app, admin_client):
     """kohal, 2026-11-09: "only in the admin purchase, these categories should be visible" - required there for Other expenses,
     not asked of an employee's own logged purchase."""
